@@ -100,6 +100,13 @@ runner_upgrades:
 weakening:
   requires: trusted_human_approval
   detects: [rule_removed, rule_loosened, baseline_raised, native_suppressions_added, unpruned_suppressions_allowed, coverage_floor_lowered, skip_without_reason]
+protected_files:                  # passed to each role workflow's gh-aw safe outputs by factory-run
+  policy: request-review          # gh-aw default; request-review | blocked | fallback-to-issue | allowed
+  exclude:                        # per pipeline; everything not listed stays protected
+    product_work: []
+    gardening: []
+    hardening: [".factory/guardrails/", "/pyproject.toml"]   # rooted paths found at setup
+    definition: [".factory/definition/"]
 ```
 
 - `guardrails:tighten` means the PR may add rules or tighten them; any change detected under `weakening.detects` still needs a trusted human.
@@ -107,6 +114,7 @@ weakening:
 - **Baselines and coverage are one-way for everyone:** any pipeline may lower a count in `baselines.json` or raise `floor_pct` in `coverage.json`; the opposite direction is a weakening.
 - **Declared test edits:** a factory PR that modifies or deletes an existing test file not listed in its spec's `tests_changed` fails the `factory/policy` check. New test files are always allowed.
 - **Untrusted text:** comments and issue bodies from untrusted authors are removed before anything is put into a prompt.
+- **`protected_files` is gh-aw's check, not the factory's.** gh-aw protects dependency manifests (by basename, anywhere), `.github/`, engine instruction files and every top-level dot-folder — `.factory/` included — and by default has the App submit an automatic `REQUEST_CHANGES` review on a PR that touches one. `exclude` entries match by basename or path prefix; a leading `/` makes it an exact repo-root path, so `/pyproject.toml` opts in the root file while `lib/foo/pyproject.toml` stays protected. Because the role workflows are `workflow_call` workflows and gh-aw accepts an expression for `protected-files`, `factory-run` passes the calling pipeline's policy. `.github/` is never excluded, in any pipeline. This is deliberately redundant with the `paths` rules above: two layers, different code.
 
 ## Role definitions (`roles/<role>.yaml`)
 
@@ -407,6 +415,7 @@ Every adapter returns this report for every agent step; cost tracking, the run f
 - `exit`: `ok` | `error` | `timeout` | `refused`.
 - Tokens come from the harness's own session log, read with memex after the step; the cost the log records is kept, and only when it records none is cost computed from tokens with the bundled LiteLLM price table. A step with no token data fails adapter conformance tests.
 - The normalized transcript is JSONL with one event per line: `{ "t": "…", "type": "user|assistant|tool_call|tool_result", "content": … }`.
+- **Nothing large passes between roles as a job output.** Because roles are `workflow_call` jobs, their results travel as GitHub Actions job outputs, which are capped at 1 MB in total per workflow run. A role writes its step report, spec or findings to `factory-data` (or a workflow artifact) and returns only ids: the run id, the work-item id and the artifact id. Any role tempted to return a diff, a transcript or a file list in a job output writes it to `factory-data` instead.
 
 ## Versioning and migration
 
