@@ -62,7 +62,7 @@ The goal is to catch every past correction and turn the recurring ones into guar
 
 | Source | How it's found | What counts as a correction |
 | --- | --- | --- |
-| **Past chats with AI coding agents** | Each adapter's `findLocalSessions()` lists local transcripts for this repo across all five supported harnesses | A user turn that rejects or redirects the agent's work ("no", "don't", "instead", "that's wrong"), or an undo of an agent edit |
+| **Past chats with AI coding agents** | memex (the open-source session reader the runner bundles) lists and reads local transcripts for this repo across all five supported harnesses | A user turn that rejects or redirects the agent's work ("no", "don't", "instead", "that's wrong"), or an undo of an agent edit |
 | PR review comments | GitHub API, all merged and closed PRs | A comment that requested a change which the author then made |
 | Reverts | `git log` | Any revert commit, plus the commit it reverted |
 | Fix commits | `git log` | Commits whose message says fix/hotfix that touch code changed in the previous 14 days |

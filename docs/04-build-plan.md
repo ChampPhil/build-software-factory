@@ -20,7 +20,7 @@ The smallest version where a real repo gets a factory that turns issues into ver
 
 **Scope**
 
-- **Skill:** all seven phases for one harness (Claude Code) and three languages (TypeScript, JavaScript, Python). Correction mining from Claude Code sessions, PR review comments, reverts and prose rules.
+- **Skill:** all seven phases for one harness (Claude Code, run over ACP with usage read by memex, so the other four drop into the same path) and three languages (TypeScript, JavaScript, Python). Correction mining from Claude Code sessions, PR review comments, reverts and prose rules.
 - **Runner:** `intake` (issues and comments, work-item files, duplicate shortlist), `run` (product work, runner-side pushes, live status refs, next-item dispatch), `policy` (the `factory/policy` check from main's workflow: path rules, test-edit check, approvals), `gates` (static rules, per-file ratchet, weakening check, tests or the repo's own test check, diff and total coverage, runtime verification; deterministic gates only on human PRs), `merge-queue` (event-driven), `rollup` (end-of-workflow step plus daily sweep), `sync-settings` (adds checks, never removes rules). Workflows pinned to a runner commit SHA, with Dependabot configured to open upgrade PRs.
 - **Rule packs:** text and regex, structured-data schema, syntax tree, canonical form, types and dependency graph.
 - **Security:** per-job down-scoped App tokens; no GitHub token inside the sandbox; sandbox network limited to the model API and package registries; untrusted text stripped from prompts.
@@ -63,7 +63,7 @@ Adds the two codebase pipelines, conflict handling, the free-private fallback an
 - **Definition flow, minimal:** a context line from a human correction opens a definition PR directly (no benchmark).
 - **Tests:** mutation testing on changed lines.
 - **Rule packs:** call graph, control flow and clone detection added.
-- **Harnesses:** Cursor CLI, Kilo Code, pi and Hermes Agent adapters, with local session hooks and correction mining for all five. Hooks ask each developer once before capturing anything.
+- **Harnesses:** Cursor CLI, Kilo Code, pi and Hermes Agent adapters (each an ACP command plus a memex source), with local session hooks and correction mining for all five. Hooks ask each developer once before capturing anything.
 - **Data:** private data repo option, so public repos can store session transcripts somewhere non-public.
 - **Languages:** Go and Java rule packs.
 - **Runner:** `garden`, `conflicts`, `audit`, triage-based duplicate handling and follow-ups, budget shares, CI-failure-on-main trigger, monthly media squash.

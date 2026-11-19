@@ -119,16 +119,22 @@ The factory acts on GitHub as its own GitHub App, created during setup and insta
 
 ## Agent CLI adapters
 
-Every supported harness (Hermes Agent, Claude Code, Kilo Code, pi, Cursor CLI) is wrapped by an adapter that implements one interface, so the runner never depends on a specific harness.
+Every supported harness (Hermes Agent, Claude Code, Kilo Code, pi, Cursor CLI) sits behind one interface, so the runner never depends on a specific harness. The factory doesn't hand-write five wrappers: it builds on two existing open-source pieces.
+
+| Job | Built on | Why |
+| --- | --- | --- |
+| Run one agent step | **Agent Client Protocol (ACP)**, through its official TypeScript SDK | One protocol for all five: Cursor and Hermes speak it natively (`hermes acp`); Claude Code, pi and Kilo through their ACP adapters. Session updates (messages, tool calls, plans) arrive in one shared format, which becomes the normalized transcript |
+| Tokens and cost of a step | **memex** (MIT), reading the harness's own session log in the sandbox after the step | ACP's `usage_update` is stable but its cost field is optional, per-turn token counts aren't in the stable protocol yet, and agents' support has been uneven, so ACP can't be the source of truth for cost. Each harness's own log holds the real token counts, and memex reads token usage for all five |
+| Read past local sessions (setup's correction mining, `bsf contribute-corrections`) | **memex** | It already knows where every harness stores sessions (for example `~/.local/share/kilo/kilo.db`, Hermes's `state.db`) and returns their history as JSONL |
+| Price tokens | A bundled **LiteLLM** price table | A cost the harness logs is kept; a price is estimated from tokens only when the log has none |
 
 ```ts
 interface HarnessAdapter {
   id: "claude-code" | "cursor-cli" | "kilo-code" | "pi" | "hermes-agent";
-  install(env: SandboxEnv): Promise<void>;          // install the CLI inside the sandbox
-  runStep(req: StepRequest): Promise<StepReport>;    // run one agent step headlessly
-  normalizeTranscript(raw: string): TranscriptEvent[]; // harness format → shared format
-  localHook(): HookInstall;                          // config that captures local sessions
-  findLocalSessions(repoPath: string): SessionRef[];  // for correction mining at setup
+  install(env: SandboxEnv): Promise<void>;   // install the CLI and its ACP entry point in the sandbox
+  acpCommand(req: StepRequest): string[];    // how to start the agent as an ACP server
+  memexSource: string;                       // memex source name for this harness's sessions
+  localHook(): HookInstall;                  // config that captures local sessions
 }
 
 interface StepRequest {
@@ -141,10 +147,12 @@ interface StepRequest {
 }
 ```
 
-- **`StepReport` is mandatory and identical for every harness:** exit status, normalized transcript path, files changed, tokens in/out/cached, cost in USD, duration (format in Schemas & Contracts). An adapter that can't report cost isn't shippable.
-- **Headless only in CI.** Each adapter runs its CLI in non-interactive mode inside the sandbox with the model API key from secrets.
-- **Same adapter, two jobs.** `localHook()` and `findLocalSessions()` reuse the adapter's knowledge of the harness's transcript format for local capture and for setup's correction mining.
-- **Adding a harness** = one new adapter folder plus a fixture test; nothing else changes.
+The runner does the rest the same way for every harness: it starts the agent with `acpCommand`, sends the prompt over ACP, records the session updates as the transcript, and when the step ends reads tokens and cost with memex (`memexSource`), prices them, and writes the `StepReport`.
+
+- **`StepReport` is mandatory and identical for every harness:** exit status, normalized transcript path, files changed, tokens in/out/cached, cost in USD, duration (format in Schemas & Contracts). A harness whose step yields no token data fails conformance and isn't shippable.
+- **Headless only in CI.** Each agent runs non-interactively inside the sandbox with the model API key from secrets. Claude Code, Kilo Code, pi and Hermes Agent all accept an Anthropic API key directly, so one key covers four of the five; Cursor CLI needs a Cursor account and its own key.
+- **Dependencies are pinned.** The ACP SDK, each harness's ACP adapter and memex are pinned to exact versions in the runner release, and the adapter conformance suite runs a real step per harness on every release, so a change in any of them shows up as a failing test, not wrong numbers.
+- **Adding a harness** = one adapter entry (its ACP command and memex source) plus a fixture test, as long as ACP and memex support it.
 
 ## Data flow
 

@@ -402,7 +402,7 @@ Every adapter returns this report for every agent step; cost tracking, the run f
 ```
 
 - `exit`: `ok` | `error` | `timeout` | `refused`.
-- When a harness doesn't report cost directly, the adapter computes it from token counts and a bundled per-model price table; a step with no token data fails adapter conformance tests.
+- Tokens come from the harness's own session log, read with memex after the step; the cost the log records is kept, and only when it records none is cost computed from tokens with the bundled LiteLLM price table. ACP's `usage_update`, when an agent sends it, feeds the Live view but is never the source of truth. A step with no token data fails adapter conformance tests.
 - The normalized transcript is JSONL with one event per line: `{ "t": "…", "type": "user|assistant|tool_call|tool_result", "content": … }`.
 
 ## Versioning and migration
