@@ -217,9 +217,54 @@ describe("role workflows", () => {
     expect(on.workflow_call.inputs["commit"]).toBeDefined();
   });
 
-  it("the verifier never pushes code: its outputs are a verdict and evidence", () => {
-    const on = frontmatter("verifier")["on"] as { workflow_call: { outputs: Record<string, unknown> } };
-    expect(Object.keys(on.workflow_call.outputs)).toEqual(["verdict", "evidence"]);
+  it("no role declares workflow_call outputs, because gh-aw does not accept them", () => {
+    // gh-aw's workflow_call takes inputs and secrets only. So roles cannot
+    // return a value as a job output; they exchange results by uploading an
+    // artifact under a deterministic name within the run, which the next
+    // role's pre-agent-steps downloads.
+    for (const role of ROLES) {
+      const on = frontmatter(role)["on"] as { workflow_call: Record<string, unknown> };
+      expect(Object.keys(on.workflow_call), `${role} declares outputs`).not.toContain("outputs");
+    }
+  });
+
+  it("every role uploads its step report as an artifact, which is how results travel", () => {
+    for (const role of ROLES) {
+      const post = frontmatter(role)["post-steps"] as { run?: string; uses?: string }[] | undefined;
+      const text = JSON.stringify(post ?? []);
+      expect(text, `${role} writes no step report`).toContain("step-report");
+    }
+  });
+
+  it("the verifier never pushes code: it has no PR-writing safe output", () => {
+    const so = frontmatter("verifier")["safe-outputs"] as Record<string, unknown>;
+    expect(so).not.toHaveProperty("create-pull-request");
+    expect(so).not.toHaveProperty("push-to-pull-request-branch");
+    expect(so).toHaveProperty("upload-artifact");
+  });
+
+  it("the sandbox runtime is a literal, since gh-aw takes no expression there", () => {
+    // Posture is therefore a compile-time decision: phase 2 picks it, phase 6
+    // writes it in before compiling, and changing it later needs a recompile.
+    for (const role of ROLES) {
+      const sandbox = frontmatter(role)["sandbox"] as { agent?: { runtime?: string } } | undefined;
+      const runtime = sandbox?.agent?.runtime;
+      if (runtime !== undefined) {
+        expect(runtime, `${role} runtime is an expression`).not.toContain("${{");
+        expect(["docker", "docker-sudo-iptables", "cloud-hypervisor", "nvx"]).toContain(runtime);
+      }
+    }
+  });
+
+  it("no role sets allowed-files, which is an exclusive allowlist that would refuse normal source files", () => {
+    for (const role of ROLES) {
+      const so = (frontmatter(role)["safe-outputs"] ?? {}) as Record<string, Record<string, unknown>>;
+      for (const [name, cfg] of Object.entries(so)) {
+        if (cfg !== null && typeof cfg === "object") {
+          expect(cfg["allowed-files"], `${role}.${name} sets allowed-files`).toBeUndefined();
+        }
+      }
+    }
   });
 
   it("every role can be run in staged mode, so acceptance tests need not spend on writes", () => {

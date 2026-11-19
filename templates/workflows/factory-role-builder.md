@@ -39,20 +39,11 @@ on:
         required: false
         default: request-review
         type: string
-      allowed_files:
-        description: Positive path allowlist for this pipeline's safe outputs
-        required: false
-        default: ''
-        type: string
       staged:
         description: Preview mode — emit step summaries instead of GitHub API calls
         required: false
         default: false
         type: boolean
-    outputs:
-      step_report:
-        description: Artifact id of this step's StepReport
-        value: ${{ jobs.agent.outputs.step_report }}
     secrets:
       MODEL_API_KEY:
         required: true
@@ -98,7 +89,6 @@ timeout-minutes: 45
 tools:
   bash: [":*"]
   edit:
-  read:
 
 safe-outputs:
   # Attempt 1 opens the draft PR; later attempts push to its branch.
@@ -109,14 +99,12 @@ safe-outputs:
     labels: [factory:in-progress]
     protected-files:
       policy: ${{ inputs.protected_files_policy }}
-    allowed-files: ${{ inputs.allowed_files }}
     staged: ${{ inputs.staged }}
     if-no-changes: error
   push-to-pull-request-branch:
     target: ${{ inputs.pr_number }}
     protected-files:
       policy: ${{ inputs.protected_files_policy }}
-    allowed-files: ${{ inputs.allowed_files }}
     staged: ${{ inputs.staged }}
   add-comment:
     staged: ${{ inputs.staged }}

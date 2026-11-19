@@ -30,13 +30,6 @@ on:
         required: false
         default: false
         type: boolean
-    outputs:
-      verdict:
-        description: pass | fail
-        value: ${{ jobs.agent.outputs.verdict }}
-      evidence:
-        description: Artifact id of the screenshots, clips and traces
-        value: ${{ jobs.agent.outputs.evidence }}
     secrets:
       MODEL_API_KEY:
         required: true
@@ -67,11 +60,14 @@ network:
 sandbox:
   agent:
     id: awf
-    # Set by setup to docker-sudo-iptables where the app needs an Actions
+    # gh-aw takes no expression here: runtime is a literal, so the posture is
+    # a COMPILE-TIME decision. Phase 2 of setup decides it and phase 6 writes
+    # the literal in before compiling; changing it later needs a recompile.
+    # docker-sudo-iptables is required where the app needs an Actions
     # services: sidecar, because every other profile rejects published service
-    # connectivity (spike §4a). The weaker profile runs AWF with host
-    # privileges, so setup tells the user which posture their repo gets.
-    runtime: ${{ vars.FACTORY_SANDBOX_RUNTIME }}
+    # connectivity (spike §4a), and it runs AWF with host privileges — so
+    # setup tells the user which posture their repo gets, and why.
+    runtime: docker  # setup rewrites to docker-sudo-iptables where required
     mounts:
       - ${{ github.workspace }}:/workspace:rw
 
@@ -79,7 +75,6 @@ timeout-minutes: 45
 
 tools:
   bash: [":*"]
-  read:
   playwright:
 
 safe-outputs:

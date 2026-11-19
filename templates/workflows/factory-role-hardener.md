@@ -19,18 +19,10 @@ on:
         required: false
         default: request-review
         type: string
-      allowed_files:
-        required: false
-        default: ''
-        type: string
       staged:
         required: false
         default: false
         type: boolean
-    outputs:
-      result:
-        description: Artifact id of this role's output, written to factory-data
-        value: ${{ jobs.agent.outputs.result }}
     secrets:
       MODEL_API_KEY:
         required: true
@@ -70,7 +62,6 @@ timeout-minutes: 45
 tools:
   bash: [":*"]
   edit:
-  read:
 
 safe-outputs:
   create-pull-request:
@@ -84,7 +75,6 @@ safe-outputs:
     # REQUEST_CHANGES review (spike §6).
     protected-files:
       policy: ${{ inputs.protected_files_policy }}
-    allowed-files: ${{ inputs.allowed_files }}
     staged: ${{ inputs.staged }}
   add-comment:
     staged: ${{ inputs.staged }}

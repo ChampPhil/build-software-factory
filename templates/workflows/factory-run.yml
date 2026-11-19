@@ -48,7 +48,6 @@ jobs:
     outputs:
       pipeline: ${{ steps.plan.outputs.pipeline }}
       protected_files_policy: ${{ steps.plan.outputs.protected_files_policy }}
-      allowed_files: ${{ steps.plan.outputs.allowed_files }}
       needs_triage: ${{ steps.plan.outputs.needs_triage }}
       proceed: ${{ steps.plan.outputs.proceed }}
     steps:
@@ -101,7 +100,6 @@ jobs:
       pr_number: ${{ fromJSON(inputs.pr_number) }}
       gate_failures: ${{ inputs.gate_failures }}
       protected_files_policy: ${{ needs.plan.outputs.protected_files_policy }}
-      allowed_files: ${{ needs.plan.outputs.allowed_files }}
     secrets: inherit
 
   # The builder's safe output pushes with the factory App's token, which starts
