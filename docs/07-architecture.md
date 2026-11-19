@@ -172,6 +172,8 @@ Every supported harness (Hermes Agent, Claude Code, Kilo Code, pi, Cursor CLI) r
 | Claude Code, pi | gh-aw's built-in engines |
 | Kilo Code, Cursor CLI, Hermes Agent | `engine.command` with `args`, `env` and `cwd`, running the CLI in its headless mode; the engine definition and its setup steps ship in `/adapters` |
 
+- **The sandbox posture is a compile-time decision.** gh-aw accepts no expression for `sandbox.agent.runtime` — it is a literal from a four-value enum — so the posture cannot come from a repo variable. Phase 2 of setup decides it and phase 6 writes the literal in before compiling; changing it afterwards needs a recompile, which is the recompiler App's job or the skill's repair mode.
+- **`allowed-files` is not usable as a per-pipeline allowlist.** It takes a literal array and is *exclusive*: every file in a patch must match it, so anything unlisted is refused, including ordinary source files. It also accepts no expression. The per-pipeline path allowlist therefore stays with `factory/policy` and gh-aw's `protected-files`, and no role sets `allowed-files`.
 - **`engine.command` skips gh-aw's engine installer, not its sandbox**, so each adapter for these three ships setup steps that install the CLI itself. gh-aw's `engine.harness` can replace prompt delivery entirely, but a replacement owns its own retry, timeout and tool-policy behavior, so adapters stay on `command` + `args` and keep gh-aw's.
 - **Only the App's safe-output token is a write path.** Each role workflow sets `safe-outputs.github-app` to the factory App, so every safe output is applied with that token and its pushes start `factory-gates`.
 

@@ -415,7 +415,7 @@ Every adapter returns this report for every agent step; cost tracking, the run f
 - `exit`: `ok` | `error` | `timeout` | `refused`.
 - Tokens come from the harness's own session log, read with memex after the step; the cost the log records is kept, and only when it records none is cost computed from tokens with the bundled LiteLLM price table. A step with no token data fails adapter conformance tests.
 - The normalized transcript is JSONL with one event per line: `{ "t": "…", "type": "user|assistant|tool_call|tool_result", "content": … }`.
-- **Nothing large passes between roles as a job output.** Because roles are `workflow_call` jobs, their results travel as GitHub Actions job outputs, which are capped at 1 MB in total per workflow run. A role writes its step report, spec or findings to `factory-data` (or a workflow artifact) and returns only ids: the run id, the work-item id and the artifact id. Any role tempted to return a diff, a transcript or a file list in a job output writes it to `factory-data` instead.
+- **Nothing passes between roles as a job output, because gh-aw does not allow it.** gh-aw's `workflow_call` accepts `inputs` and `secrets` only — there is no `outputs` — so a role workflow cannot return a value to its caller at all. Results travel as workflow artifacts under deterministic names within the run (`step-report-<role>-<attempt>`, `verification-<attempt>`), which the next role's `pre-agent-steps` downloads, and anything durable goes to `factory-data`. This is stricter than a size limit: `factory-run` cannot read a role's result in an expression, so every decision that depends on one is made by a deterministic `bsf` step that fetches the artifact itself.
 
 ## Versioning and migration
 

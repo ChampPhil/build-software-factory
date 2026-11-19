@@ -186,3 +186,31 @@ This gives the factory defense in depth it was not designed for: gh-aw's protect
 2. **4a** — whether a `pre-agent-steps` `docker run` dependency is reachable from inside AWF on the default Docker profile, which would avoid `docker-sudo-iptables` for `py-api`.
 3. **§6** — that a hardening role workflow with `protected-files.exclude: [.factory/guardrails/]` opens a PR with no `REQUEST_CHANGES`, and that one *without* the exclusion does get one.
 4. That `gh aw compile` accepts the seven role workflows as written, which could not be run in this session.
+
+## Addendum, Nov 19: validated against gh-aw's own frontmatter schema
+
+`gh aw compile` still has not run, but the seven role workflows are now
+validated in the test suite against gh-aw's own `main_workflow_schema.json`,
+vendored at `runner/vendor/` from the same commit. That is what the compiler
+checks first, so a workflow failing it would certainly fail compilation. All
+seven pass. They did not at first — it found four things the design had wrong:
+
+1. **`workflow_call` accepts `inputs` and `secrets` only — there is no
+   `outputs`.** A role cannot return a value to its caller. Results travel as
+   workflow artifacts under deterministic names, and every decision that
+   depends on one is made by a deterministic `bsf` step that fetches it. This
+   tightens item 3 rather than undermining it: the roles are still jobs, still
+   sequenced by `needs:`, still isolated by construction.
+2. **`sandbox.agent.runtime` takes no expression.** The posture is a literal,
+   so it is decided at compile time, not from a repo variable (§4a). Changing
+   it later needs a recompile.
+3. **`allowed-files` is an exclusive allowlist of literal globs**, which
+   refuses every unlisted file including ordinary source. Not usable per
+   pipeline; the path allowlist stays with `factory/policy`.
+4. **`read` is not a gh-aw tool.** The valid set is `bash`, `edit`, `github`,
+   `grep`, `playwright`, `web-fetch`, `web-search` and the memory and queue
+   tools.
+
+What the schema does *not* constrain, so these tests cannot catch it: `engine`
+as a bare string is a catalog lookup rather than an enum, so an unknown engine
+id validates here and fails only at compile time.
