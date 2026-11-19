@@ -20,7 +20,7 @@ The factory runs three fixed pipelines (product work, gardening, hardening) plus
 - **The verifier never sees the builder's transcript,** only the spec and the result, so no agent grades its own work.
 - Each role's model comes from `factory.yaml`; prompts come from `roles/<role>.yaml`.
 - **No role sees untrusted text.** Issue bodies and comments from untrusted authors are stripped before a prompt is built; an accepted outside issue is passed in clearly marked as user-supplied.
-- **No role holds a GitHub token.** Agents work in the sandbox; the runner pushes and comments on their behalf.
+- **Each role is a gh-aw workflow.** Every role runs in its own GitHub Agentic Workflows (gh-aw) job: a read-only sandbox behind gh-aw's network firewall, inside the repo's devcontainer. No role holds a write token; its only way to change anything (push code, open a PR, comment, label) is gh-aw safe outputs, checked by gh-aw's threat detection before a separate job applies them. `factory-run` (deterministic) dispatches the role workflows in order and collects their results.
 
 ## Intake: trust, work items, routing, the ledger
 
@@ -50,21 +50,22 @@ The factory runs three fixed pipelines (product work, gardening, hardening) plus
 
 Every pipeline that produces code ends in the same loop: the builder writes, the factory runs two gates, and only code that passes both is cleared.
 
-1. **Builder writes code** in the sandbox, running the fast local checks as it goes. Each attempt is pushed by the runner to the work item's `factory/*` branch.
-2. **The push starts `factory-gates`**, a separate job with no builder in it. Results are recorded against the commit, so when the draft PR opens on that same commit its checks are already green and nothing re-runs. The path and test-edit rules are checked by `factory/policy`, which runs from main's copy of its workflow so a PR can't change it.
+1. **Builder writes code** in the sandbox, running the fast local checks as it goes. Each attempt reaches the work item's `factory/*` branch through gh-aw safe outputs: the first as a draft PR (`create-pull-request`, labelled `factory:in-progress`), later ones with `push-to-pull-request-branch`.
+2. **The push starts `factory-gates`**, a separate job with no builder in it. Results are recorded against the commit, so nothing re-runs for the same commit. The path and test-edit rules are checked by `factory/policy`, which runs from main's copy of its workflow so a PR can't change it.
 3. **Gate 1 — static:**
-   - path and test-edit rules: the runner applies the `factory/policy` rules to the diff before pushing, so a factory attempt that breaks them counts as a failed Gate 1 attempt (the check itself re-runs once the PR opens)
+   - path and test-edit rules: `factory/policy` runs on the draft PR from main's copy of its workflow; a factory attempt that breaks them counts as a failed Gate 1 attempt
    - all static rules (repo tools + `.factory/guardrails/rules`)
-   - ratchet against `baselines.json`: no rule's count may rise in any file
+   - ratchet: no rule's count may rise in any file, read from each linter's native baseline (for example ESLint's `eslint-suppressions.json`) or, for tools without one, from `baselines.json`
    - weakening check
    - suppression control
 4. **Gate 2 — verification** (in a fresh sandbox):
    - full test suite (or, where the repo already has a CI test check that runs on factory branches, that check's result on the same commit; if it hasn't reported within 15 minutes, the gate runs the tests itself)
    - coverage: diff coverage ≥ 80% (the main check), total ≥ floor (one point below the highest total reached), skips within cap
    - formal checks where installed
-   - **agent runtime verification**: the verifier starts the app per the runbook, exercises the change with real dev tools (browser automation, console, network, database), and records screenshots and video
+   - mutation testing on changed lines (from v0.2), with each language's existing tool (StrykerJS, Stryker.NET, cargo-mutants, Infection and the rule pack's equivalents)
+   - **agent runtime verification**: the verifier starts the app per the runbook, exercises the change with real dev tools (a browser through Playwright MCP, console, network, database), and Playwright records the screenshots, video and traces
 5. **Fail** at either gate → the failure output goes back to the builder, which fixes and resubmits. Each gate allows **3 attempts per work item**; the third failure escalates.
-6. **Pass both** → code cleared → draft PR.
+6. **Pass both** → code cleared: the draft PR's label changes from `factory:in-progress` to `factory:cleared`, and its body is filled in with the evidence.
 
 Every attempt, pass or fail, is recorded in the run file's `gates` list.
 
@@ -81,7 +82,7 @@ Every attempt, pass or fail, is recorded in the run file's `gates` list.
    - The spec is posted as a comment on the source issue so the requester can see what will be built. No human approval step.
 3. **Build** (builder role, factory-clear loop) — implements the spec plus tests.
 4. **Verify** (verifier role, inside Gate 2) — checks every acceptance check from the spec and records evidence.
-5. **Draft PR** — opened by the factory App with the spec, artifacts and run link (next sections).
+5. **Draft PR** — opened with the first build attempt and, once cleared, filled in with the spec, artifacts and run link (next sections).
 
 **Revisions:** a review comment on the PR sends the run back to step 3 with the comment as input; the new attempt goes through factory-clear again.
 
@@ -184,7 +185,7 @@ Self-improvement has two parts: instrumentation that records everything continuo
 
 **Part 2 — The scheduled review** (`factory-review`): every 3 days, early once 50 runs pile up, skipped when fewer than 10 runs happened since the last one.
 
-1. **Grade:** scorers evaluate every run since the last review against its pipeline's rubric plus the shared rubric (1–5 per criterion, with failure tags).
+1. **Grade:** scorers, run on promptfoo's LLM-rubric graders, evaluate every run since the last review against its pipeline's rubric plus the shared rubric (1–5 per criterion, with failure tags).
 2. **Collect failures:** scores of 1–2, escalations, reverts of factory PRs, and human corrections.
 3. **Group** failures into problems (same tag + same area or same role).
 4. **Route each problem by where its fix belongs:**
@@ -196,7 +197,7 @@ Self-improvement has two parts: instrumentation that records everything continuo
    - it opens a definition PR only if the failure tasks improve, no other task regresses, the overall gain is larger than the run-to-run spread, and cost rises by no more than 20%. A trusted human approves it.
 6. **Report:** `reviews/<date>.json` and a review page on the dashboard: scores, problems, where each went, and benchmark results.
 
-**Benchmarks** build up automatically from every merged factory run: runs that needed no human changes, and runs a human corrected or finished, with the human-fixed merge as the known-good result. Users can also mark any run "representative." Including corrected and escalated work means the set contains the factory's failures, so a definition change can show it fixes them. The review also re-benchmarks when a new model is added to the price table, producing the cost vs. quality graph per pipeline.
+**Benchmarks** run on promptfoo, which handles repeated runs and side-by-side configurations; the factory adds a custom promptfoo provider that runs a pipeline on a frozen task. They build up automatically from every merged factory run: runs that needed no human changes, and runs a human corrected or finished, with the human-fixed merge as the known-good result. Users can also mark any run "representative." Including corrected and escalated work means the set contains the factory's failures, so a definition change can show it fixes them. The review also re-benchmarks when a new model is added to the price table, producing the cost vs. quality graph per pipeline.
 
 **Two definition paths:** changes the review proposes are benchmark-gated as above; a context line that comes from a human correction (hardening's fourth outcome) goes straight to a definition PR, because the human already stated the intent.
 

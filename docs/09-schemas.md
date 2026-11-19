@@ -58,6 +58,7 @@ data:
   sessions: auto                  # auto = capture only when the data store is private; off
   media_retention_months: 12      # media older than this is dropped at the monthly squash
 enforcement:
+  merge_queue: auto               # auto = GitHub's native merge queue when the repo qualifies, else the factory's fallback queue
   branch_protection: auto         # auto = add the factory's required checks when the plan allows it; never removes existing rules
   audit_revert_pr: false
 human_prs:
@@ -98,7 +99,7 @@ runner_upgrades:
   requires: trusted_human_approval  # never auto-merged
 weakening:
   requires: trusted_human_approval
-  detects: [rule_removed, rule_loosened, baseline_raised, coverage_floor_lowered, skip_without_reason]
+  detects: [rule_removed, rule_loosened, baseline_raised, native_suppressions_added, unpruned_suppressions_allowed, coverage_floor_lowered, skip_without_reason]
 ```
 
 - `guardrails:tighten` means the PR may add rules or tighten them; any change detected under `weakening.detects` still needs a trusted human.
@@ -271,6 +272,8 @@ While a run is in progress, the runner force-updates one small file on a ref of 
 
 ## Baselines and coverage floor (`baselines.json`, `coverage.json`)
 
+**Native baselines first.** Where a linter has its own baseline file (ESLint's `eslint-suppressions.json` with per-file, per-rule counts; Oxlint's suppressions; Semgrep's `--baseline-commit`; the equivalents other rule packs configure), that file *is* the baseline and the ratchet reads counts from it. `baselines.json` holds counts only for checks with no native baseline (Betterer covers several of these), plus a summary of every rule for the dashboard. The weakening check diffs both: an entry added to a native suppression file, a raised count, or a setting that lets stale suppressions pass (for example ESLint's `--pass-on-unpruned-suppressions`) is a weakening.
+
 Per-rule violation counts during cleanup, and the coverage ratchet; both are guardrails, so lowering is free and raising needs a trusted human.
 
 ```json
@@ -402,7 +405,7 @@ Every adapter returns this report for every agent step; cost tracking, the run f
 ```
 
 - `exit`: `ok` | `error` | `timeout` | `refused`.
-- Tokens come from the harness's own session log, read with memex after the step; the cost the log records is kept, and only when it records none is cost computed from tokens with the bundled LiteLLM price table. ACP's `usage_update`, when an agent sends it, feeds the Live view but is never the source of truth. A step with no token data fails adapter conformance tests.
+- Tokens come from the harness's own session log, read with memex after the step; the cost the log records is kept, and only when it records none is cost computed from tokens with the bundled LiteLLM price table. A step with no token data fails adapter conformance tests.
 - The normalized transcript is JSONL with one event per line: `{ "t": "…", "type": "user|assistant|tool_call|tool_result", "content": … }`.
 
 ## Versioning and migration

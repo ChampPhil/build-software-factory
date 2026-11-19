@@ -18,12 +18,21 @@ Each release is usable on its own: v0.1 already turns issues into verified, merg
 
 The smallest version where a real repo gets a factory that turns issues into verified, merged PRs.
 
+**First: a gh-aw spike.** Before the rest of v0.1, port the product pipeline's builder and verifier to gh-aw workflows on a fixture and settle what the design depends on:
+- a custom engine runs Cursor CLI, Kilo Code and Hermes Agent headlessly;
+- safe outputs (`create-pull-request`, `push-to-pull-request-branch`) can use the factory App's token, so their pushes trigger the gates;
+- `factory-run` can dispatch a role workflow and read its results, and the verifier's job never sees the builder's transcript;
+- pre-agent steps can start the repo's devcontainer and sidecar services, and a post-step can run memex;
+- how a gh-aw upgrade reaches a user's compiled `.lock.yml` files without a local recompile.
+
+Any item that fails falls back to the earlier design for that part only (the runner runs the agent in its own sandbox with no write token and pushes on its behalf), and the docs are updated to say so.
+
 **Scope**
 
-- **Skill:** all seven phases for one harness (Claude Code, run over ACP with usage read by memex, so the other four drop into the same path) and three languages (TypeScript, JavaScript, Python). Correction mining from Claude Code sessions, PR review comments, reverts and prose rules.
-- **Runner:** `intake` (issues and comments, work-item files, duplicate shortlist), `run` (product work, runner-side pushes, live status refs, next-item dispatch), `policy` (the `factory/policy` check from main's workflow: path rules, test-edit check, approvals), `gates` (static rules, per-file ratchet, weakening check, tests or the repo's own test check, diff and total coverage, runtime verification; deterministic gates only on human PRs), `merge-queue` (event-driven), `rollup` (end-of-workflow step plus daily sweep), `sync-settings` (adds checks, never removes rules). Workflows pinned to a runner commit SHA, with Dependabot configured to open upgrade PRs.
-- **Rule packs:** text and regex, structured-data schema, syntax tree, canonical form, types and dependency graph.
-- **Security:** per-job down-scoped App tokens; no GitHub token inside the sandbox; sandbox network limited to the model API and package registries; untrusted text stripped from prompts.
+- **Skill:** all seven phases for one harness (Claude Code, run as a gh-aw engine with usage read by memex, so the other four drop into the same path) and three languages (TypeScript, JavaScript, Python). Correction mining from Claude Code sessions, PR review comments, reverts and prose rules.
+- **Runner:** `intake` (issues and comments, work-item files, duplicate shortlist), `run` (product work: dispatching the gh-aw role workflows, live status refs, next-item dispatch), `policy` (the `factory/policy` check from main's workflow: path rules, test-edit check, approvals), `gates` (static rules, per-file ratchet, weakening check, tests or the repo's own test check, diff and total coverage, runtime verification; deterministic gates only on human PRs), `merge-queue` (native merge queue where the repo qualifies, event-driven fallback queue elsewhere), `rollup` (end-of-workflow step plus daily sweep), `sync-settings` (adds checks, never removes rules). Workflows pinned to a runner commit SHA, with Dependabot configured to open upgrade PRs.
+- **Rule packs:** text and regex, structured-data schema, syntax tree, canonical form, types and dependency graph, configured on existing tools (each linter with its native baseline, Semgrep, dependency-cruiser, diff-cover, gitleaks).
+- **Security:** per-job down-scoped App tokens (`actions/create-github-app-token`); agents in gh-aw's read-only sandbox, writing only through safe outputs after threat detection, behind gh-aw's firewall (model API and package registries only); untrusted text stripped from prompts.
 - **GitHub App** creation through the manifest flow (Create, then Install); trust check at intake, with integration-bot issues treated as outside requests.
 - **Dashboard:** Home, Dashboard (autonomy, cycle time, cost per PR, spend per share, revert rate), Live (from live status refs), Runs and run detail, Factory (toggles, models, budget shares). Fine-grained-token sign-in.
 
@@ -43,11 +52,11 @@ The smallest version where a real repo gets a factory that turns issues into ver
 - [ ] A factory PR that edits an existing test not listed in its spec fails the `factory/policy` check.
 - [ ] A human PR runs only the deterministic gates and spends nothing on models; adding `factory:verify` runs agent verification on it.
 - [ ] A draft PR's gates run once per commit: opening the PR re-runs nothing, and an approval registers without re-running the gates.
-- [ ] Inside the sandbox, the agent has no GitHub token and can't reach any host outside the allowlist.
+- [ ] Inside the sandbox, the agent has no write token, can't reach any host outside gh-aw's firewall allowlist, and a safe output carrying a planted secret or prompt injection is blocked by threat detection.
 - [ ] An idle factory with no work uses under 15 Actions minutes a day.
 - [ ] A new runner release produces an upgrade PR on each fixture without anyone acting; it changes only the runner pin, runs the deterministic gates, shows on Home, and never merges without a trusted human's approval.
 - [ ] The Live view shows the current step, gate attempt and cost so far of a running work item, refreshed within 10 seconds of each step change.
-- [ ] Two approved PRs that each pass alone but break the build together never both land: the queue catches the second.
+- [ ] Two approved PRs that each pass alone but break the build together never both land: the queue catches the second, on a fixture using GitHub's native merge queue and on one using the fallback queue.
 - [ ] Every run produces a valid run file; the dashboard shows it within 60 seconds of the run ending.
 - [ ] Cost per run is reported to within 5% of the provider's billed usage on a 10-run sample.
 - [ ] Turning on product-work auto-merge in the dashboard opens a definition PR that merges through the queue.
@@ -61,9 +70,9 @@ Adds the two codebase pipelines, conflict handling, the free-private fallback an
 
 - **Pipelines:** gardening (nightly, up to 5 PRs) and hardening (from recurring or flagged corrections, repeated failures and gardening hand-offs), plus conflict resolution.
 - **Definition flow, minimal:** a context line from a human correction opens a definition PR directly (no benchmark).
-- **Tests:** mutation testing on changed lines.
+- **Tests:** mutation testing on changed lines with each language's existing tool (StrykerJS, Stryker.NET, cargo-mutants, Infection and the equivalents for the rest).
 - **Rule packs:** call graph, control flow and clone detection added.
-- **Harnesses:** Cursor CLI, Kilo Code, pi and Hermes Agent adapters (each an ACP command plus a memex source), with local session hooks and correction mining for all five. Hooks ask each developer once before capturing anything.
+- **Harnesses:** Cursor CLI, Kilo Code, pi and Hermes Agent adapters (each a gh-aw engine, built-in or custom, plus a memex source), with local session hooks and correction mining for all five. Hooks ask each developer once before capturing anything.
 - **Data:** private data repo option, so public repos can store session transcripts somewhere non-public.
 - **Languages:** Go and Java rule packs.
 - **Runner:** `garden`, `conflicts`, `audit`, triage-based duplicate handling and follow-ups, budget shares, CI-failure-on-main trigger, monthly media squash.
@@ -93,7 +102,7 @@ The full vision: self-improvement, benchmarks, every supported language, and a s
 
 **Scope**
 
-- **Self-improvement:** instrumentation complete; the scheduled review with scorers and rubrics; routing to hardening or definition changes; benchmark tasks built from completed work, including corrected and escalated runs; the benchmark-gated definition PR with repeated runs and noise checks.
+- **Self-improvement:** instrumentation complete; the scheduled review with scorers and rubrics, both run on promptfoo; routing to hardening or definition changes; benchmark tasks built from completed work, including corrected and escalated runs; the benchmark-gated definition PR with repeated runs and noise checks.
 - **Languages:** Rust, C# and Ruby rule packs (all eight supported).
 - **Rule packs:** data flow and cross-artifact consistency added.
 - **Data:** `bsf migrate`; schema 1.0 frozen and published.
@@ -136,7 +145,7 @@ Run for every milestone release.
 - [ ] All acceptance criteria for the milestone pass on CI fixtures and Philip's old repo
 - [ ] Runner Action published and tagged (`@v0.1`, `@v0.2`, `@v1`), with the release's commit SHA (what workflows pin) and the schema versions it reads and writes listed in the release notes, since that changelog is what users see in their upgrade PR
 - [ ] Dashboard deployed to Cloudflare Pages; sign-in Worker deployed (from v0.2)
-- [ ] README: what it is in two sentences, three-step quickstart, a captioned demo video (no voiceover), and enforcement by GitHub plan
+- [ ] README: what it is in two sentences, three-step quickstart, a captioned demo video (no voiceover), enforcement by GitHub plan, what it's built on (gh-aw, memex and the tools in the Architecture doc's reuse table), and how it differs from prior art (gh-aw on its own, addyosmani/factory and other software factories)
 - [ ] Cost disclosure: what the factory spends from the user's model API key and Actions minutes, with typical monthly ranges from the fixtures
 - [ ] Security review: trust check (including integration-bot issues), untrusted-text stripping, redaction, App permissions (no `workflows`), the `pull_request_target` policy check never running PR code, per-job token scopes, no token in the sandbox and its network allowlist, policy loaded from main, fork behavior
 - [ ] `LICENSE` (MIT), `CONTRIBUTING.md` (how to add an adapter or rule pack), changelog

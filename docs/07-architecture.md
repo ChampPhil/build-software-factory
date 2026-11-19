@@ -21,6 +21,35 @@ The setup skill runs once on the user's machine. After that, the factory's defin
 
 **The definition lives in the repo; the engine is a pinned dependency.** Everything that says *what* the factory does (config, policy, roles, context, rubrics, guardrails) is files in the user's repo. The code that *runs* it (`bsf`) is a versioned dependency that every workflow pins to an exact commit SHA. That keeps gates deterministic code an agent can't edit, and makes upgrades a reviewable one-line change that arrives on its own.
 
+## Built on existing open source
+
+The factory reuses mature tools wherever one fits its constraints (free, nothing hosted, works on free GitHub plans, harness-agnostic, MIT-compatible) and writes custom code only where nothing fits.
+
+| Job | Reused tool | What the factory adds |
+| --- | --- | --- |
+| Running agents inside Actions: read-only sandbox, network firewall, writes only through checked outputs, threat detection, secret redaction | **GitHub Agentic Workflows (gh-aw)**, MIT, maintained by GitHub, generally available on Free, Team and Enterprise | One gh-aw workflow per role; the deterministic orchestration around them |
+| Harness execution | gh-aw's engines (built-in for Claude Code and pi; its custom engine for Kilo Code, Cursor CLI and Hermes Agent) | Engine definitions for the three without a built-in engine |
+| Tokens, cost, past local sessions | **memex** (MIT) plus a **LiteLLM** price table | Nothing |
+| Trust rules for who may trigger an agent | gh-aw's role checks; rules modelled on **anthropics/claude-code-action**'s actor and permission checks | The `factory:accept` flow for outside and integration-bot issues |
+| Per-job GitHub App tokens | **actions/create-github-app-token** | Nothing |
+| Merge queue | **GitHub's native merge queue** wherever the repo qualifies (org-owned public repos; private repos on Enterprise Cloud) | A one-PR-at-a-time fallback queue for repos that don't qualify |
+| Violation baselines and ratchets | Each linter's **native baseline** (ESLint bulk suppressions in `eslint-suppressions.json`, Oxlint suppressions, Semgrep `--baseline-commit`, and the equivalents in other rule packs); **Betterer** for checks without one | The cross-tool weakening check and suppression caps |
+| Mutation testing on changed lines | **StrykerJS** (incremental / changed-line ranges), **Stryker.NET** `--since`, **cargo-mutants** `--in-diff`, **Infection** `--git-diff-lines`, and each rule pack's equivalent | Nothing |
+| Diff coverage | **diff-cover** | Nothing |
+| Secret scanning and transcript redaction | **gitleaks** rules (MIT); gh-aw's built-in output redaction | Nothing |
+| Dependency-graph and clone rules | Existing checkers per rule pack (for example **dependency-cruiser**, **jscpd**) | Nothing |
+| Runtime verification evidence | **Playwright** (screenshots, video, traces) and **Playwright MCP** for the verifier agent's browser | Nothing |
+| Sandbox definition | The **devcontainer** spec (`devcontainer.json`) | Generating one when the repo has none |
+| Language and stack detection | **go-enry** (GitHub Linguist's data) | Detecting existing tool configs and dominant patterns |
+| Scorers and benchmark comparisons | **promptfoo** (MIT): LLM-rubric graders, repeated runs, side-by-side configurations | A custom provider that runs a pipeline on a frozen task |
+| Runner upgrades | **Dependabot** | Nothing |
+| Settings as code (org-wide) | **github/safe-settings** is the recommendation for organizations that want org-wide settings | A thin single-repo sync (safe-settings needs its own App and a central admin repo) |
+| Path-policy vocabulary | **Palantir policy-bot**'s YAML vocabulary (`changed_files`, approval rules) | A thin `pull_request_target` check, since policy-bot needs a hosted server |
+
+**Built custom because nothing fits:** correction mining into guardrail candidates; the hardening pipeline; benchmark-gated definition changes; the cross-tool weakening check; the path-policy check and single-repo settings sync; the merge-queue fallback; the git-ref data store, live status and static dashboard; budget shares; and the setup skill.
+
+**Prior art.** Other "software factories" exist (for example addyosmani/factory, claude-software-factory, agent-factory, Elastic's AI software factory). None examined combines five harnesses, turning human corrections into static rules, benchmark-gated self-improvement, a merge queue on free plans and a zero-backend dashboard; that combination is this project's reason to exist, and the README names this prior art.
+
 ## Monorepo layout
 
 Everything lives in one public repo, `build-software-factory`, MIT licensed. Each top-level folder ships something different:
@@ -28,10 +57,10 @@ Everything lives in one public repo, `build-software-factory`, MIT licensed. Eac
 | Folder | What it is | Ships as |
 | --- | --- | --- |
 | `/skill` | The setup skill: `SKILL.md`, phase scripts (`assess`, `mine-corrections`, `install`, `baseline`, `switch-on`), reference notes | A skill folder the user adds to their agent CLI |
-| `/runner` | The factory runtime, a TypeScript CLI (`bsf`) that every workflow calls: intake, routing, pipeline steps, gates, merge queue, rollup, audit, settings sync | A versioned GitHub Action, pinned by commit SHA in each user's workflows (`build-software-factory/runner@<sha>`) |
-| `/adapters` | One adapter per agent CLI: `claude-code`, `cursor-cli`, `kilo-code`, `pi`, `hermes-agent` | Bundled into `/runner` |
-| `/rules` | Language rule packs (static rules, coverage config, ratchet support) for TypeScript, JavaScript, Python, Go, Java, Rust, C#, Ruby | Bundled into `/runner`; copied into user repos at setup |
-| `/templates` | Everything setup installs into a user repo: workflows, default config, roles, rubrics, hooks | Copied by the skill |
+| `/runner` | The factory's deterministic runtime, a TypeScript CLI (`bsf`): intake, ledger, pipeline orchestration (dispatching the role workflows and collecting their results), gates orchestration, policy, merge-queue fallback, rollup, audit, settings sync, budget. It never runs an agent itself | A versioned GitHub Action, pinned by commit SHA in each user's workflows (`build-software-factory/runner@<sha>`) |
+| `/adapters` | One entry per agent CLI (`claude-code`, `cursor-cli`, `kilo-code`, `pi`, `hermes-agent`): its gh-aw engine (or custom engine definition) and memex source | Bundled into `/runner` and `/templates` |
+| `/rules` | Language rule packs for TypeScript, JavaScript, Python, Go, Java, Rust, C#, Ruby: configuration for existing tools (linters and their native baselines, Semgrep rules, dependency-graph and clone checkers, mutation testers, coverage reporters, gitleaks) | Bundled into `/runner`; copied into user repos at setup |
+| `/templates` | Everything setup installs into a user repo: thin trigger workflows, one gh-aw workflow source per role (`.md`), default config, roles, rubrics, hooks | Copied by the skill |
 | `/schema` | JSON Schemas for every file format (Schemas & Contracts doc) | Bundled into `/runner` and `/dashboard` |
 | `/dashboard` | The Next.js static-export dashboard | Deployed to Cloudflare Pages |
 | `/worker` | The optional Cloudflare Worker for GitHub sign-in | Deployed by users who pick it, or by the maintainer for the hosted dashboard |
@@ -39,7 +68,8 @@ Everything lives in one public repo, `build-software-factory`, MIT licensed. Eac
 | `/docs` | These docs plus the public README and guides | Published with the dashboard |
 
 - **One version number for everything.** A runner release, its adapters, rule packs and schemas are versioned together; the dashboard reads the schema version from each repo's data.
-- **Workflows stay thin.** Installed workflow files only set triggers and call `bsf <command>`; all logic lives in `/runner`.
+- **Workflows stay thin.** Installed trigger workflows only set triggers and call `bsf <command>`; all deterministic logic lives in `/runner`. Agent work lives in the gh-aw role workflows, whose prompts come from `.factory/definition/roles/`.
+- **gh-aw upgrades.** gh-aw's compiled `.lock.yml` files must be regenerated by `gh aw compile` when gh-aw changes, which Dependabot can't do. Each runner release pins a gh-aw version; how a gh-aw upgrade reaches a user's repo without a local recompile is settled in the v0.1 spike (Build Plan), with the skill's repair mode, which recompiles with the user's own credentials and opens the PR, as the fallback.
 - **Upgrades open themselves; a human merges them.** Each workflow pins the runner by SHA with the version in a comment (`runner@<sha> # v0.2.1`). Setup configures GitHub's Dependabot for the `github-actions` ecosystem, limited to the runner, with a 3-day cooldown after each release so a bad or compromised release has time to be caught and pulled. When a release ships, Dependabot opens a PR that bumps the SHA and comment, with the release notes. Dependabot may edit workflow files, so the App still can't.
 - **What an upgrade PR gets:** policy allows it to change only the runner pin; it runs the deterministic gates (Dependabot-triggered workflows don't receive the repo's Actions secrets, so no agent step runs); it shows on Home; and a trusted human must approve it, whatever the auto-merge toggles say. If the new runner needs config changes, it opens a migration definition PR on its first run after merge.
 
@@ -62,6 +92,7 @@ Setup adds four things to the user's repo: a `.factory/` folder, factory workflo
     coverage.json             ← coverage ratchet floor and skip count
   sandbox/                    ← Dockerfile or devcontainer reference + start scripts
 .github/workflows/factory-*.yml   ← thin trigger files calling `bsf`
+.github/workflows/factory-role-*.md, *.lock.yml   ← one gh-aw workflow per role (source + compiled)
 <harness hook configs>        ← e.g. .claude/settings.json, for local session capture
 ```
 
@@ -73,15 +104,16 @@ Setup adds four things to the user's repo: a `.factory/` folder, factory workflo
 
 ## Runtime model
 
-Eleven workflows run the factory; each is a thin trigger file that calls one `bsf` command.
+Eleven deterministic workflows run the factory, each a thin trigger file that calls one `bsf` command. Agents run in seven more: one **gh-aw workflow per role** (`factory-role-<role>.md`, compiled by `gh aw compile` into `factory-role-<role>.lock.yml`), started by `factory-run` with `workflow_dispatch`.
 
 | Workflow | Triggered by | Calls | What it does |
 | --- | --- | --- | --- |
 | `factory-intake` | Issue opened or labeled, issue/PR comment, review comment on a factory PR, CI failure on main, dashboard "run" button (`workflow_dispatch`) | `bsf intake` | Checks trust, normalizes events into work item files, shortlists possible duplicates, dispatches `factory-run` or leaves items queued. Single concurrency group with `queue: max`, and each run processes every event not yet processed (by cursor), not only the one that started it, so no request is lost if a pending run is dropped |
-| `factory-run` | `workflow_dispatch` from intake, gardening, the review, or a finishing run | `bsf run <work-item>` | Runs one pipeline in the sandbox; pushes each attempt to its `factory/*` branch; opens a draft PR once gates pass; at the end dispatches the next queued item |
+| `factory-run` | `workflow_dispatch` from intake, gardening, the review, or a finishing run | `bsf run <work-item>` | Orchestrates one pipeline: dispatches each role's gh-aw workflow in order, waits for it, reads its step report, and feeds gate failures back to the builder; at the end dispatches the next queued item |
+| `factory-role-<role>` (gh-aw, ×7) | `workflow_dispatch` from `factory-run` (or the review, for the scorer) | gh-aw | Runs one role's agent in gh-aw's read-only sandbox, behind its network firewall, inside the repo's devcontainer. Its only way to change anything is gh-aw safe outputs, applied after threat detection in separate jobs: the builder's code arrives as `create-pull-request` (a draft on its `factory/*` branch) and later attempts as `push-to-pull-request-branch`; comments and labels as `add-comment` and `add-labels`. A post-step runs memex to write the step report |
 | `factory-policy` | `pull_request_target` (PR opened, pushed, labeled), review submitted | `bsf policy` | The `factory/policy` check. Because it runs on `pull_request_target`, GitHub always uses main's copy of this workflow, so a PR can't edit it. It never checks out or runs the PR's code: it reads only the list of changed files, reviews and labels, and fails any PR that touches `.github/workflows/`, `.github/dependabot.yml` or `.factory/definition/` without a trusted human's approval, plus the per-pipeline path and test-edit rules |
-| `factory-gates` | Push to a `factory/*` branch; every human PR and push to it | `bsf gates` | Agent branches: static rules, ratchets, weakening check, coverage, tests, runtime verification. A commit that only merges main into the branch (the queue's update) re-runs static rules and tests, and agent verification only if main's incoming changes touch the PR's feature folders. Human PRs: the deterministic gates only (agent verification when labeled `factory:verify`). Results are keyed by commit, so they're never repeated for the same commit |
-| `factory-merge` | PR approved, a factory check completed, a PR becoming eligible for auto-merge | `bsf merge-queue` | The factory's own merge queue; one job works through the whole queue, then exits |
+| `factory-gates` | Push to a `factory/*` branch; every human PR and push to it; `merge_group` (native merge queue) | `bsf gates` | Agent branches: static rules, ratchets, weakening check, coverage, tests, runtime verification. A commit that only merges main into the branch (the queue's update) re-runs static rules and tests, and agent verification only if main's incoming changes touch the PR's feature folders. Human PRs: the deterministic gates only (agent verification when labeled `factory:verify`). Results are keyed by commit, so they're never repeated for the same commit |
+| `factory-merge` | PR approved, a factory check completed, a PR becoming eligible for auto-merge | `bsf merge-queue` | Where the repo has GitHub's native merge queue: enables auto-merge so GitHub queues the PR. Elsewhere: the factory's fallback queue; one job works through the whole queue, then exits |
 | `factory-conflicts` | Push to main | `bsf conflicts` | Finds open factory PRs that became conflicting and dispatches a resolution run |
 | `factory-garden` | Nightly schedule | `bsf garden` | Scans for drift and dispatches up to 5 gardening runs |
 | `factory-review` | Daily schedule; runs only when its thresholds say so | `bsf review` | The scheduled self-improvement review (every 3 days, early at 50 runs, skipped under 10) |
@@ -112,47 +144,35 @@ The factory acts on GitHub as its own GitHub App, created during setup and insta
 | Metadata | Read | Required by GitHub |
 | **Workflows** | **None** | The App can't create or edit `.github/workflows`, so it can't tamper with its own gates |
 
-- **Tokens are short-lived and down-scoped.** Each job mints its own installation token with only the permissions that job needs; only `factory-sync` gets Administration. Nothing long-lived is stored except the App's private key in repo secrets.
-- **The agent never holds a GitHub token.** Agents run in the sandbox with no GitHub credentials; the runner, outside the sandbox, pushes their commits and opens PRs. The sandbox's network reaches only the model API and package registries, plus the app's own sidecar services.
+- **Tokens are short-lived and down-scoped.** Each job mints its own installation token with `actions/create-github-app-token`, asking only for the permissions that job needs; only `factory-sync` gets Administration. Nothing long-lived is stored except the App's private key in repo secrets.
+- **The agent never holds a write token.** Agent jobs are gh-aw's read-only sandbox; every write (pushing code, opening the draft PR, commenting, labelling) is a gh-aw safe output, checked by gh-aw's threat detection for prompt injection, leaked secrets and malicious patches, then applied in a separate job with the App's token, so those pushes trigger the gates. gh-aw's network firewall lets the agent reach only the model API, package registries and the app's own sidecar services.
 - **The App's actions trigger workflows.** Unlike the built-in `GITHUB_TOKEN`, PRs and pushes made with the App token start `factory-gates` normally.
 - **Approvals never come from the App.** The path policy and merge queue ignore any approval whose author is the App; only trusted humans approve.
 
 ## Agent CLI adapters
 
-Every supported harness (Hermes Agent, Claude Code, Kilo Code, pi, Cursor CLI) sits behind one interface, so the runner never depends on a specific harness. The factory doesn't hand-write five wrappers: it builds on two existing open-source pieces.
+Every supported harness (Hermes Agent, Claude Code, Kilo Code, pi, Cursor CLI) runs as a **gh-aw engine**, so the runner never depends on a specific harness and never launches agents itself.
 
-| Job | Built on | Why |
-| --- | --- | --- |
-| Run one agent step | **Agent Client Protocol (ACP)**, through its official TypeScript SDK | One protocol for all five: Cursor and Hermes speak it natively (`hermes acp`); Claude Code, pi and Kilo through their ACP adapters. Session updates (messages, tool calls, plans) arrive in one shared format, which becomes the normalized transcript |
-| Tokens and cost of a step | **memex** (MIT), reading the harness's own session log in the sandbox after the step | ACP's `usage_update` is stable but its cost field is optional, per-turn token counts aren't in the stable protocol yet, and agents' support has been uneven, so ACP can't be the source of truth for cost. Each harness's own log holds the real token counts, and memex reads token usage for all five |
-| Read past local sessions (setup's correction mining, `bsf contribute-corrections`) | **memex** | It already knows where every harness stores sessions (for example `~/.local/share/kilo/kilo.db`, Hermes's `state.db`) and returns their history as JSONL |
-| Price tokens | A bundled **LiteLLM** price table | A cost the harness logs is kept; a price is estimated from tokens only when the log has none |
+| Harness | How gh-aw runs it |
+| --- | --- |
+| Claude Code, pi | gh-aw's built-in engines |
+| Kilo Code, Cursor CLI, Hermes Agent | gh-aw's custom engine (`engine.command`), running the CLI in its headless mode; the engine definition ships in `/adapters` |
 
 ```ts
 interface HarnessAdapter {
   id: "claude-code" | "cursor-cli" | "kilo-code" | "pi" | "hermes-agent";
-  install(env: SandboxEnv): Promise<void>;   // install the CLI and its ACP entry point in the sandbox
-  acpCommand(req: StepRequest): string[];    // how to start the agent as an ACP server
-  memexSource: string;                       // memex source name for this harness's sessions
-  localHook(): HookInstall;                  // config that captures local sessions
-}
-
-interface StepRequest {
-  role: RoleId;            // triage | spec | builder | verifier | gardener | hardener | scorer
-  model: string;           // from factory.yaml, per step
-  prompt: string;          // role prompt + shared context + task
-  workdir: string;
-  allowedTools: string[];
-  timeBudgetSec: number;   // default 2700
+  ghawEngine: EngineSpec;   // built-in engine id, or a custom engine definition
+  memexSource: string;      // memex source name for this harness's session log
+  localHook(): HookInstall; // config that captures local sessions
 }
 ```
 
-The runner does the rest the same way for every harness: it starts the agent with `acpCommand`, sends the prompt over ACP, records the session updates as the transcript, and when the step ends reads tokens and cost with memex (`memexSource`), prices them, and writes the `StepReport`.
-
+- **Tokens and cost: memex, after every step.** A post-step in each role workflow reads the harness's own session log with **memex** (MIT), which reads token usage for all five harnesses, and prices it with a bundled **LiteLLM** price table only when the log has no cost. The result is the `StepReport`. Agents' own cost reporting is optional and uneven, so the session log is the source of truth.
+- **Past local sessions: memex.** Setup's correction mining and `bsf contribute-corrections` read past sessions for all five harnesses with memex, which already knows where each harness stores them (for example `~/.local/share/kilo/kilo.db`, Hermes's `state.db`).
 - **`StepReport` is mandatory and identical for every harness:** exit status, normalized transcript path, files changed, tokens in/out/cached, cost in USD, duration (format in Schemas & Contracts). A harness whose step yields no token data fails conformance and isn't shippable.
-- **Headless only in CI.** Each agent runs non-interactively inside the sandbox with the model API key from secrets. Claude Code, Kilo Code, pi and Hermes Agent all accept an Anthropic API key directly, so one key covers four of the five; Cursor CLI needs a Cursor account and its own key.
-- **Dependencies are pinned.** The ACP SDK, each harness's ACP adapter and memex are pinned to exact versions in the runner release, and the adapter conformance suite runs a real step per harness on every release, so a change in any of them shows up as a failing test, not wrong numbers.
-- **Adding a harness** = one adapter entry (its ACP command and memex source) plus a fixture test, as long as ACP and memex support it.
+- **One key for four harnesses.** Claude Code, Kilo Code, pi and Hermes Agent all accept an Anthropic API key directly; Cursor CLI needs a Cursor account and its own key.
+- **Dependencies are pinned.** gh-aw, memex and each harness CLI are pinned to exact versions in the runner release, and the adapter conformance suite runs a real step per harness on every release, so a change in any of them shows up as a failing test, not wrong numbers.
+- **Adding a harness** = one adapter entry (its gh-aw engine and memex source) plus a fixture test.
 
 ## Data flow
 
@@ -187,11 +207,11 @@ refs/factory/live/<run-id>         ← one small status file per in-progress run
 The factory enforces its rules with its own gates, and uses GitHub's branch protection on top wherever the user's plan allows it.
 
 1. **Trust at intake.** Only events from trusted people start agent work: authors whose association is owner, member or collaborator with write access. Trust belongs to people, never integrations: issues created by an integration's bot account (Linear, Sentry) wait for a one-click accept like any outside issue. Anything untrusted waits until a trusted person adds the `factory:accept` label, and comments from untrusted authors are stripped from prompts. Untrusted events never reach a job that holds secrets.
-2. **Policy from main.** On a PR, GitHub runs the workflow files from the PR itself, so a PR (a fork's above all) could rewrite `factory-gates.yml` to always pass. The `factory/policy` check closes this: it runs on `pull_request_target`, which always uses main's copy of the workflow, loads `policy.yaml` from main, and fails any PR that touches workflow or definition files until a trusted human approves. It is a required check. GitHub's own fix, required workflows through rulesets, is only on Enterprise Cloud, so the factory doesn't rely on it.
+2. **Policy from main.** On a PR, GitHub runs the workflow files from the PR itself, so a PR (a fork's above all) could rewrite `factory-gates.yml` to always pass. The `factory/policy` check closes this: it runs on `pull_request_target`, which always uses main's copy of the workflow, loads `policy.yaml` from main, and fails any PR that touches workflow or definition files until a trusted human approves. It is a required check. GitHub's own fix, required workflows through rulesets, is only on Enterprise Cloud, so the factory doesn't rely on it. Its rules use Palantir policy-bot's YAML vocabulary, so teams that know policy-bot can read them; policy-bot itself isn't used because it needs a hosted server.
 3. **Path policy per pipeline.** Product work and gardening may change code and tests; hardening may also change guardrail paths; only a PR approved by a trusted human may change `.factory/definition/`. Any pipeline may lower baseline counts and raise the coverage floor. A factory PR may modify or delete existing test files only if its spec declared them.
 4. **Weakening check.** Removing or loosening a rule, raising a baseline, lowering the coverage floor or adding a skip without a reason fails the gate unless a trusted human approves.
-5. **The App can't touch workflows, and the agent can't touch GitHub.** No `workflows` permission, so gate files can only change through a human's own push; each job's token is down-scoped, and agents get no GitHub token at all.
-6. **The factory merges only through its queue.** The merge queue is the only path factory PRs take into main, and it merges only after the gates pass on the final commit.
+5. **The App can't touch workflows, and the agent can't write to GitHub.** No `workflows` permission, so gate files can only change through a human's own push; each job's token is down-scoped, and agents write only through gh-aw safe outputs after threat detection.
+6. **The factory merges only through a queue.** GitHub's native merge queue where the repo qualifies, the factory's fallback queue elsewhere; it is the only path factory PRs take into main, and it merges only after the gates pass on the final commit.
 7. **Branch protection where available.** On public repos and paid plans, `factory-sync` adds the factory's checks as required, requires branches to be up to date with main before merging, and blocks direct pushes to main. It only adds: existing rules, required reviews and required checks are kept. "Up to date before merging" means a human PR is re-checked against the latest main too, so a human PR and a factory PR can't each pass alone and break main together.
 8. **Human PRs keep their normal flow.** They run the deterministic gates (static rules, tests, coverage) and merge however the team already merges, through those checks. Agent runtime verification runs on a human PR only when someone adds `factory:verify`. Where the repo already has a CI test check that runs on the factory's branches, Gate 2 reads its result instead of re-running the tests; if that result hasn't arrived within 15 minutes, the gate runs the tests itself.
 9. **Audit where it isn't.** On free private repos, `factory-audit` re-runs the gates on every push to main and flags any bypass on the dashboard, with an optional revert PR.
@@ -200,11 +220,14 @@ The factory enforces its rules with its own gates, and uses GitHub's branch prot
 
 ## Merge queue and conflict mechanics
 
-The factory runs its own merge queue on every plan, merging one approved PR at a time after re-checking it against the latest main.
+Every factory PR reaches main through a merge queue that re-checks it against the latest main.
+
+- **Native first.** GitHub's merge queue is available in public repos owned by an organization and in private repos of organizations on Enterprise Cloud. There, `factory-sync` turns it on in the ruleset, `factory-gates` runs on `merge_group`, and `factory-merge` only enables auto-merge on eligible PRs; GitHub does the queueing, batching and merging.
+- **Fallback elsewhere** (personal-account repos, private repos without Enterprise Cloud): the factory's own one-at-a-time queue below. Existing open-source alternatives were evaluated: Bors-NG is archived, Kodiak and Mergify need a hosted service, and merge-queue-action is too young to depend on.
 
 **Entering the queue** — a PR is queued when its gates pass and either a trusted human approved it or its pipeline's auto-merge toggle is on. Queue order is the time it became eligible; the queue lives in `ledger.json`. `factory-merge` starts on the events that can change eligibility (an approval, a check finishing, a toggle), works through the queue in one job, and exits when it's empty.
 
-**Processing one PR** (`factory-merge`, single concurrency):
+**Fallback queue: processing one PR** (`factory-merge`, single concurrency):
 
 1. **Fast path:** if the PR's branch already contains the current main and its gates passed on that exact commit, mark it ready for review and squash-merge it now.
 2. Otherwise update the branch from main through GitHub's update-branch API.

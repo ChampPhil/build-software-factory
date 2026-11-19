@@ -38,7 +38,7 @@ The skill builds a full picture of the codebase and its tooling, keeping what's 
 
 **Inventory what exists**
 
-- Languages, frameworks, package managers, monorepo structure (one factory per repo, a section per app).
+- Languages, frameworks, package managers, monorepo structure (one factory per repo, a section per app). Languages are detected with go-enry (GitHub Linguist's data); frameworks and package managers from their manifest files.
 - Existing CI workflows, linters, formatters, type-checkers, test frameworks and their configs, including the name of the repo's own test check and its triggers. If that check runs on pushes to `factory/*` branches, Gate 2 can read its result instead of re-running tests; if it doesn't, the skill records no test check and the factory runs the tests itself, without editing the team's CI.
 - Existing branch protection rules and required checks, which the factory keeps.
 - How the app builds and runs: Dockerfiles, devcontainers, `Makefile`/`package.json` scripts, setup docs.
@@ -50,7 +50,7 @@ The skill builds a full picture of the codebase and its tooling, keeping what's 
 
 - Missing guardrails per base kind (no formatter, no dependency rules, no type strictness, …).
 - Test coverage per area, and areas with no tests at all.
-- Duplicate patterns for the same concern (two ways of calling the API = nuance).
+- Duplicate patterns for the same concern (two ways of calling the API = nuance); copy-pasted code is found with jscpd.
 
 **Mine past corrections** (detail in the next section), then group and sort them into candidates.
 
@@ -84,10 +84,10 @@ Teammates can later run `bsf contribute-corrections` on their own machines to ad
 
 The skill produces a reproducible, isolated sandbox where an agent can build the app, run its tests and verify it at runtime with real dev tools.
 
-1. **Reuse first:** an existing devcontainer, Dockerfile or setup script becomes the base of `.factory/sandbox/`.
-2. **Otherwise generate** a Dockerfile from the assessment: language runtimes, package install, services the app needs (databases, caches) as sidecar containers, a headless browser for runtime verification.
+1. **Reuse first:** an existing devcontainer, Dockerfile or setup script becomes the base of the sandbox, which is always described as a standard `devcontainer.json` so any devcontainer tool can open it.
+2. **Otherwise generate** a `devcontainer.json` (with a Dockerfile if needed) from the assessment: language runtimes, package install, services the app needs (databases, caches) as sidecar containers, a headless browser for runtime verification.
 3. **Write the runbook** (`context/runbook.md`): build, run, test, verify and seed-data commands, each tested.
-4. **Prove it works:** build the sandbox locally with Docker, run the test suite, start the app, and have a verifier agent open it in the headless browser and take a screenshot.
+4. **Prove it works:** build the sandbox locally with Docker, run the test suite, start the app, and have a verifier agent open it in a browser through Playwright MCP, with Playwright taking the screenshot.
 5. **Secrets the app needs to run** (for example a test database URL) are listed for the user; the skill stores them as repo secrets and the sandbox reads them as environment variables.
 
 **Done when** the app starts in the sandbox and the screenshot shows it working. If it can't get there, the skill stops and shows the user the failing step instead of continuing with a factory that can't verify anything.
@@ -96,12 +96,12 @@ The skill produces a reproducible, isolated sandbox where an agent can build the
 
 The skill builds static rules and verification from the assessment, extending what the repo already has instead of replacing it.
 
-1. **Universal rules** from the language rule pack: formatter, type strictness, secrets scanning, dependency cycles, suppression control (reason required, counted, capped).
+1. **Universal rules** from the language rule pack, each configured on an existing tool: formatter, type strictness, secrets scanning (gitleaks), dependency cycles (for example dependency-cruiser), suppression control (reason required, counted, capped).
 2. **Codebase rules** from the dominant patterns: for each recurring concern, ban the minority patterns and enforce the dominant one (for example "network calls only through `apiClient`").
 3. **Structure rules:** one folder per feature with dependency-graph checks between feature folders, where the codebase already leans that way.
 4. **Accepted correction candidates**, each turned into what the ordered check chose: an API change (queued as a cleanup PR), a static rule, a verification scenario added to the runbook and test suite, or a context line in `fundamentals.md` or `history.md`. Critical logic (money, permissions, concurrency) flagged in candidates gets a targeted formal check.
 5. **Coverage:** record the current total as the high mark and set the floor one point below it, set the diff-coverage minimum to 80% (the main check), and count existing skips.
-6. **Baselines:** apply only mechanical fixes now. The formatter runs over the whole repo as one separate commit in the setup PR (exempt from the 20-file cap, and listed in `.git-blame-ignore-revs` so blame stays useful); linters' own autofixes run too. Every rule that still has violations gets its count recorded per file in `baselines.json`, for gardening to clear in small verified PRs.
+6. **Baselines:** apply only mechanical fixes now. The formatter runs over the whole repo as one separate commit in the setup PR (exempt from the 20-file cap, and listed in `.git-blame-ignore-revs` so blame stays useful); linters' own autofixes run too. Every rule that still has violations gets a per-file baseline: in the linter's own baseline file where it has one (for example `eslint --suppress-all` writes `eslint-suppressions.json`), otherwise in `baselines.json`. Gardening clears them in small verified PRs.
 7. **Verify every rule:** each rule must fail on a known-bad example and pass on the dominant pattern before it's installed.
 
 **Output:** `.factory/guardrails/` plus any edits to existing tool configs, all inside the setup PR.
@@ -125,7 +125,7 @@ The skill writes the factory definition and installs the workflows.
 3. **Seven role files** from templates, with the repo name, languages and conventions filled in.
 4. **Context files:** `feature-map.md` generated from the folder structure, `runbook.md` from phase 2, `fundamentals.md` from the dominant patterns and accepted context candidates, `history.md` seeded from mined corrections.
 5. **Rubrics** from templates (one per pipeline plus shared).
-6. **The eleven workflow files** under `.github/workflows/factory-*.yml`, pinned to the runner's commit SHA with the version in a trailing comment (`runner@<sha> # v0.1.0`). None of them runs on a polling timer except nightly gardening, the daily review check and the daily rollup sweep.
+6. **The workflows:** one gh-aw workflow per role (`factory-role-<role>.md`), compiled with `gh aw compile` into `.lock.yml` files (the skill installs the `gh aw` CLI extension locally if it's missing), and the eleven trigger workflows under `.github/workflows/factory-*.yml`, pinned to the runner's commit SHA with the version in a trailing comment (`runner@<sha> # v0.1.0`). None of them runs on a polling timer except nightly gardening, the daily review check and the daily rollup sweep.
 7. **Runner upgrades:** a `.github/dependabot.yml` entry for the `github-actions` ecosystem, limited to `build-software-factory/runner` and with a 3-day cooldown after each release. From then on GitHub's Dependabot opens an upgrade PR whenever a new runner is released; the user approves it with one click. If the repo already has a `dependabot.yml`, the skill adds its entry without touching the others.
 8. **Local session hooks** for the user's harness (and any others detected in the repo). Each hook asks its developer once, on first run on their machine, whether to capture their sessions, and stores the answer locally; no answer means no capture. The setup user answers for themselves during setup. On a public repo without the private data repo, the hooks are installed but capture stays off.
 9. **Trigger sources:** if the GitHub app for Slack or Linear's GitHub integration is already installed, the skill notes it; otherwise it prints the two-minute steps to connect them (both free).

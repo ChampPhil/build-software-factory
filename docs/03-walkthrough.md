@@ -59,7 +59,7 @@ Section 15 ties everything together by following one piece of work from start to
 4. **Re-approve** → back to a human, or automatic if auto-merge is on.
 5. **Escalate** → if the two changes truly contradict each other, a human decides.
 
-The merge queue catches a sneakier case: two PRs that don't conflict, each pass alone, but break the app when combined. GitHub's built-in merge queue only exists for public repos owned by an organization and for Enterprise Cloud, so the factory runs its own: one approved PR at a time, updated from main, static checks and tests re-run (and runtime verification too if main's new changes touch the same features), then merged.
+The merge queue catches a sneakier case: two PRs that don't conflict, each pass alone, but break the app when combined. GitHub's built-in merge queue only exists for public repos owned by an organization and for Enterprise Cloud, so the factory uses GitHub's queue where it's available and runs its own elsewhere: one approved PR at a time, updated from main, static checks and tests re-run (and runtime verification too if main's new changes touch the same features), then merged.
 
 ## 4. CI and GitHub Actions
 
@@ -133,7 +133,7 @@ The merge queue catches a sneakier case: two PRs that don't conflict, each pass 
 
 **Analogy.** A ratchet wrench turns one way only. Each cleanup PR clicks the count down a notch, and nothing can turn it back up.
 
-**How the factory uses it.** During setup, guardrails go in *before* the cleanup, with each rule's existing violations recorded as its baseline. Cleanup PRs then chip away at the counts while the gate blocks any new violations, from normal work or from the cleanup agents themselves. Baselines are kept **per rule and per file**, so fixing 10 violations of one rule can't hide 5 new violations of another, and fixing one in one file can't pay for a new one elsewhere. A rule whose violations a mechanical autofix clears at setup (the formatter, a linter's `--fix`) needs no baseline.
+**How the factory uses it.** During setup, guardrails go in *before* the cleanup, with each rule's existing violations recorded as its baseline. Cleanup PRs then chip away at the counts while the gate blocks any new violations, from normal work or from the cleanup agents themselves. Many linters already keep such a baseline themselves (ESLint's bulk suppressions, for example), and the factory uses theirs wherever it exists. Baselines are kept **per rule and per file**, so fixing 10 violations of one rule can't hide 5 new violations of another, and fixing one in one file can't pay for a new one elsewhere. A rule whose violations a mechanical autofix clears at setup (the formatter, a linter's `--fix`) needs no baseline.
 
 ## 8. Testing: unit, integration and end-to-end
 
@@ -155,7 +155,7 @@ The usual balance is the **test pyramid**: many unit tests, fewer integration te
 
 **What it is.** An agent starts the real app in a sandbox and uses it the way a developer would, with real dev tools:
 
-- **Browser automation** → the agent drives a real browser through a protocol like the Chrome DevTools Protocol (or a library like Playwright): it clicks, types, navigates and reads the page.
+- **Browser automation** → the agent drives a real browser through Playwright (via Playwright MCP, which gives agents browser control): it clicks, types, navigates and reads the page, and Playwright records screenshots, video and traces.
 - **Dev tools** → it reads console errors and network requests, checks the database, and calls the API directly.
 - It **records evidence**: screenshots, short videos, before/after comparisons.
 
@@ -198,7 +198,7 @@ It needs the app to run reproducibly in a sandbox (section 11) and a **runbook**
 **How the factory uses it.** It's setup phase 2, *make it runnable*. Agents do all their work inside the sandbox: building the app, running tests and runtime verification. Two benefits:
 
 - **Reliability** → "works on my machine" can't happen; every run starts identical.
-- **Security** → a compromised or misbehaving agent can't reach anyone's laptop or secrets (the core problem with local agents). Agents in the sandbox hold no GitHub token and can only reach the model API and package registries; the runner, outside the sandbox, pushes their work.
+- **Security** → a compromised or misbehaving agent can't reach anyone's laptop or secrets (the core problem with local agents). Agents in the sandbox hold no write token and can only reach the model API and package registries; their changes leave the sandbox only as checked "safe outputs" (section 12).
 
 The skill reuses whatever the repo already has (Dockerfile, devcontainer, setup scripts) before writing anything new.
 
@@ -221,7 +221,7 @@ The skill reuses whatever the repo already has (Dockerfile, devcontainer, setup 
 **How the factory uses it.**
 
 - **The setup tool is itself a skill** → the user runs it in their own agent CLI.
-- **Agents run inside GitHub Actions** using whichever harness the user picks (any model, any harness).
+- **Agents run inside GitHub Actions** using whichever harness the user picks (any model, any harness), through GitHub Agentic Workflows (gh-aw), GitHub's open-source framework for this. Each agent job is read-only; anything it wants to change (code, comments, labels) is handed over as a "safe output" that gh-aw checks for prompt injection and leaked secrets before applying it.
 - **Seven fixed roles** (triage, spec, builder, verifier, gardener, hardener, scorer) all read the same **shared context**: the feature map, runbook, fundamentals and history.
 - **Builder and verifier are separate** so no agent grades its own work.
 - **Hooks capture local work** → a hook committed to the repo saves each local agent session's transcript (with secrets redacted) to the factory's data. It asks each developer once, on their own machine, before capturing anything, and it only stores transcripts where the public can't read them: on a public repo, that means the private data repo.
@@ -269,10 +269,10 @@ A trusted collaborator files a GitHub issue: *"The export button downloads an em
 3. **Sandbox** → the workflow starts a fresh runner and builds the app in a reproducible container (section 11).
 4. **Triage** → the triage agent reads the shared context (feature map, runbook), reproduces the bug through browser automation, and confirms it's real (sections 9, 12).
 5. **Spec** → the spec agent writes a short, precise plan for the fix.
-6. **Build** → the builder agent commits a fix plus a regression test, running checks locally as it goes; the runner pushes it to a factory *branch*, which starts the gates in a separate job (sections 1, 8).
+6. **Build** → the builder agent commits a fix plus a regression test, running checks locally as it goes; it hands the commit over as a checked "safe output", which lands on a factory *branch* as a draft PR and starts the gates in a separate job (sections 1, 8, 12).
 7. **Gate 1** → the factory runs the static rules: AST, types, dependency graph, and the ratchet against baselines (sections 6, 7). One rule fails (the fix called `fetch` directly); the agent switches to `apiClient` and retries.
 8. **Gate 2** → the factory runs the unit, integration and E2E tests; a separate verifier agent clicks Export in a real browser and records a video of a non-empty file downloading (sections 8, 9).
-9. **Draft PR** → the factory opens a draft PR with the diff, the plan and the artifacts. The checks are already green, since the gates ran on this exact commit. Key screenshots are copied to long-lived storage; the full video stays a workflow artifact (sections 2, 4).
+9. **Draft PR cleared** → the draft PR opened in step 6 is marked cleared and filled in with the plan and the artifacts. Key screenshots are copied to long-lived storage; the full video stays a workflow artifact (sections 2, 4).
 10. **Trace** → a run file (steps, timing, cost, gate results, links to artifacts) is written to `factory-data`; the rollup summary updates (section 14).
 11. **Approval** → the human watches the 20-second video on the dashboard and approves. With auto-merge on for product work, this step is skipped.
 12. **Conflict** → meanwhile, a gardening PR merged and changed the same file. The PR is marked conflicting; an agent rebases, combines both intents, and the PR goes back through Gates 1 and 2 (section 3).
