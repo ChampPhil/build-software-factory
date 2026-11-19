@@ -1,0 +1,79 @@
+# Phase 6 — Instrument
+
+Set up everything the factory needs to record itself and measure its work from
+the first run.
+
+## 1. The data and media refs
+
+`node ../scripts/init-data-refs.mjs`
+
+They live at `refs/factory/data` and `refs/factory/media`, outside
+`refs/heads/`. That is load-bearing: a push to a non-branch ref starts no
+`push` workflow, so the factory writing its own records never triggers the
+repo's CI, and neither ref clutters the branch list.
+
+The script creates them through the git data API — blobs, tree, a parentless
+commit, then the ref — so it needs no clone and no push.
+
+**On a public repo, offer the private data repo here.** It is the only way to
+keep session transcripts, because a public repo cannot hold them. If the user
+takes it: install the App on that repo too, and add every collaborator with
+write access on the main repo as a collaborator on the data repo, or their
+session hooks cannot push.
+
+## 2. The GitHub App
+
+`node ../scripts/create-app.mjs --repo <owner/name>`
+
+The user clicks **Create**, then **Install**. The script does the rest: posts
+the manifest, catches GitHub's redirect on a local server, exchanges the
+single-use code, and stores the credentials. The whole flow expires after an
+hour.
+
+The App requests no `workflows` permission — absent, not "none", because a
+permission that is not requested cannot be granted. That is what stops the
+factory editing `.github/workflows` and so tampering with its own gates. Say
+this to the user; it is the reason they can leave it running.
+
+**Optionally, the recompiler App** (`--recompiler`). It holds `contents` and
+`workflows` and nothing else, and exists to run `gh aw compile` in Actions when
+gh-aw updates. Without it, lock files are updated by re-running this skill.
+Offer it; do not insist.
+
+## 3. Model API keys
+
+One repo secret per harness the user enabled. `gh secret set` reads from stdin,
+so the key never appears in a process list.
+
+## 4. Estimate the budget
+
+`node ../scripts/estimate-spend.mjs --repo <owner/name>`
+
+It reads the repo's last 90 days and estimates product runs, nightly gardening
+and the scheduled reviews, as model spend **and** Actions minutes separately.
+
+Minutes are usually the binding limit, not dollars. A private Free-plan repo
+gets 2,000 minutes a month, and nightly gardening at 5 PRs a night can use
+most of that on its own — the script lowers the nightly cap rather than letting
+it overrun, and says so. Show the user that number. It is the one most likely
+to surprise them.
+
+The user confirms or changes the budget, the minutes limit and the shares
+(default: product 60%, gardening 25%, review and benchmarks 15%).
+
+## 5. Scorers
+
+Installed with their rubrics. They first run at the first scheduled review.
+
+## 6. Record the starting point
+
+Current guardrail counts, the coverage floor and the open issue count go into
+`index.json`, so the dashboard shows progress from day one rather than from
+whenever someone first looks.
+
+## What to watch for
+
+- **Re-running setup must not reset the records.** If the data ref exists,
+  leave it alone.
+- **Do not store a key the user has not given you.** If a secret already
+  exists, confirm rather than overwrite.

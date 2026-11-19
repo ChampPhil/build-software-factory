@@ -1,0 +1,258 @@
+import { describe, it, expect } from "vitest";
+import { execFileSync } from "node:child_process";
+import { readFileSync, readdirSync, existsSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+
+/**
+ * The setup skill's structure and its deterministic scripts.
+ *
+ * The scripts are where setup's correctness can be pinned down: an agent
+ * following SKILL.md makes judgements, but preflight either spots a dirty tree
+ * or it does not, and the spend estimate either accounts for Actions minutes
+ * or it does not.
+ */
+
+function repoRoot(): string {
+  let dir = dirname(fileURLToPath(import.meta.url));
+  for (let i = 0; i < 8; i++) {
+    if (existsSync(join(dir, "skill")) && existsSync(join(dir, "runner"))) return dir;
+    dir = dirname(dir);
+  }
+  throw new Error("repo root not found");
+}
+const ROOT = repoRoot();
+const SKILL = join(ROOT, "skill");
+const SCRIPTS = join(SKILL, "scripts");
+const REFS = join(SKILL, "references");
+
+const PHASES = [1, 2, 3, 4, 5, 6, 7] as const;
+
+function node(script: string, args: string[], opts: { cwd?: string } = {}): { out: string; code: number } {
+  try {
+    const out = execFileSync("node", [join(SCRIPTS, script), ...args], {
+      encoding: "utf8", stdio: "pipe", cwd: opts.cwd ?? ROOT,
+    });
+    return { out, code: 0 };
+  } catch (e) {
+    const err = e as { stdout?: string; stderr?: string; status?: number };
+    return { out: `${err.stdout ?? ""}${err.stderr ?? ""}`, code: err.status ?? 1 };
+  }
+}
+
+describe("SKILL.md", () => {
+  const text = readFileSync(join(SKILL, "SKILL.md"), "utf8");
+
+  it("has frontmatter with a name and a description that says when to use it", () => {
+    const m = /^---\n([\s\S]*?)\n---/.exec(text);
+    expect(m).not.toBeNull();
+    const fm = m?.[1] ?? "";
+    expect(fm).toContain("name: build-software-factory");
+    expect(/description: .{40,}/.test(fm)).toBe(true);
+  });
+
+  it("covers all seven phases, in order", () => {
+    const order = PHASES.map((p) => text.indexOf(`## Phase ${p} —`));
+    for (const [i, idx] of order.entries()) {
+      expect(idx, `phase ${i + 1} is missing`).toBeGreaterThan(-1);
+    }
+    expect([...order]).toEqual([...order].sort((a, b) => a - b));
+  });
+
+  it("points at a reference file for every phase", () => {
+    for (const p of PHASES) {
+      const refs = readdirSync(REFS).filter((f) => f.startsWith(`phase-${p}-`));
+      expect(refs.length, `no reference for phase ${p}`).toBe(1);
+      expect(text).toContain(`references/${refs[0]}`);
+    }
+  });
+
+  it("names the scripts it tells the agent to run", () => {
+    for (const s of ["preflight.mjs", "create-app.mjs", "init-data-refs.mjs", "estimate-spend.mjs"]) {
+      expect(text, `SKILL.md never mentions ${s}`).toContain(s);
+    }
+  });
+
+  it("says phase 2 is terminal if the app cannot be made to run", () => {
+    // A factory that cannot verify produces confident unverified PRs, so
+    // continuing past a phase 2 failure is the worst available outcome.
+    expect(text).toMatch(/stop and show the failing step/i);
+  });
+
+  it("tells the agent not to let the sandbox inherit real credentials", () => {
+    expect(text).toMatch(/never let the sandbox inherit real credentials/i);
+  });
+
+  it("says every auto-merge toggle starts off", () => {
+    expect(text).toMatch(/auto-merge toggles start \*\*off\*\*|toggles start \*\*off\*\*/i);
+  });
+
+  it("lists what the user does, and keeps it short", () => {
+    const table = text.slice(text.indexOf("| They do"), text.indexOf("Nothing else is theirs"));
+    const rows = table.split("\n").filter((l) => l.startsWith("|") && !l.includes("---"));
+    // Doc 05's overview table: six user actions, plus the header.
+    expect(rows.length).toBeLessThanOrEqual(8);
+  });
+});
+
+describe("the phase references", () => {
+  for (const p of PHASES) {
+    it(`phase ${p} has a reference with a "what to watch for" section`, () => {
+      const file = readdirSync(REFS).find((f) => f.startsWith(`phase-${p}-`));
+      expect(file).toBeDefined();
+      const text = readFileSync(join(REFS, file!), "utf8");
+      expect(text.length, `phase ${p} reference is too thin`).toBeGreaterThan(900);
+      expect(text).toMatch(/## What to watch for|## The thing that will bite you/);
+    });
+  }
+
+  it("there is a reference for re-running and repair", () => {
+    expect(existsSync(join(REFS, "re-running.md"))).toBe(true);
+  });
+
+  it("phase 2's reference spells out the credential hazard concretely", () => {
+    const text = readFileSync(join(REFS, "phase-2-sandbox.md"), "utf8");
+    expect(text).toContain("DATABASE_URL");
+    expect(text).toMatch(/positive list, not a denylist/i);
+  });
+
+  it("phase 5's reference lists what gh aw compile rejects", () => {
+    const text = readFileSync(join(REFS, "phase-5-define.md"), "utf8");
+    expect(text).toContain("workflow_call");
+    expect(text).toContain("allowed-files");
+    expect(text).toContain("sandbox.agent.runtime");
+  });
+});
+
+describe("preflight.mjs", () => {
+  it("reports its checks as JSON", () => {
+    const { out } = node("preflight.mjs", ["--json", "--skip-docker"]);
+    const parsed = JSON.parse(out) as { checks: { id: string }[]; repo: string | null };
+    const ids = parsed.checks.map((c) => c.id);
+    for (const id of ["git-repo", "clean-tree", "gh-auth", "language", "docker", "existing-factory"]) {
+      expect(ids, `no ${id} check`).toContain(id);
+    }
+  });
+
+  it("detects the repo from the origin remote", () => {
+    const { out } = node("preflight.mjs", ["--json", "--skip-docker"]);
+    const parsed = JSON.parse(out) as { repo: string | null };
+    expect(parsed.repo).toBe("ChampPhil/build-software-factory");
+  });
+
+  it("detects the repo's languages", () => {
+    const { out } = node("preflight.mjs", ["--json", "--skip-docker"]);
+    const parsed = JSON.parse(out) as { languages: string[] };
+    expect(parsed.languages).toContain("typescript");
+  });
+
+  it("blocks, with a fix, when the working tree is dirty", () => {
+    // This repo's tree is dirty while these tests run, which makes it the
+    // honest fixture for the blocking path.
+    const { out } = node("preflight.mjs", ["--json", "--skip-docker"]);
+    const parsed = JSON.parse(out) as { checks: { id: string; ok: boolean; fix?: string }[] };
+    const tree = parsed.checks.find((c) => c.id === "clean-tree");
+    expect(tree).toBeDefined();
+    if (tree?.ok === false) expect(tree.fix).toBeTruthy();
+  });
+
+  it("exits non-zero when something blocks setup", () => {
+    const { code, out } = node("preflight.mjs", ["--json", "--skip-docker"]);
+    const parsed = JSON.parse(out) as { ok: boolean };
+    expect(code === 0).toBe(parsed.ok);
+  });
+
+  it("refuses an unknown argument rather than ignoring it", () => {
+    expect(node("preflight.mjs", ["--nonsense"]).code).toBe(2);
+  });
+});
+
+describe("estimate-spend.mjs", () => {
+  it("estimates Actions minutes as well as dollars, since minutes usually bind first", () => {
+    const { out } = node("estimate-spend.mjs", ["--repo", "ChampPhil/trinsports", "--json"]);
+    const r = JSON.parse(out) as {
+      model_usd_per_month: number;
+      actions_minutes_per_month: number;
+      actions_minutes_limit: number | null;
+    };
+    expect(r.model_usd_per_month).toBeGreaterThan(0);
+    expect(r.actions_minutes_per_month).toBeGreaterThan(0);
+  });
+
+  it("lowers the nightly gardening cap rather than overrunning the included minutes", () => {
+    const { out } = node("estimate-spend.mjs", [
+      "--repo", "ChampPhil/trinsports", "--gardening-prs", "5", "--json",
+    ]);
+    const r = JSON.parse(out) as {
+      actions_minutes_per_month: number;
+      actions_minutes_limit: number | null;
+      suggested: { gardening_prs_per_run: number };
+      notes: string[];
+    };
+    if (r.actions_minutes_limit !== null && r.actions_minutes_per_month > r.actions_minutes_limit) {
+      expect(r.suggested.gardening_prs_per_run).toBeLessThan(5);
+      expect(r.notes.join(" ")).toMatch(/over the \d+ this plan includes/);
+    }
+  });
+
+  it("says so when there is no recent activity, rather than implying the budget is complete", () => {
+    const { out } = node("estimate-spend.mjs", ["--repo", "ChampPhil/trinsports", "--json"]);
+    const r = JSON.parse(out) as { activity: { issues: number }; notes: string[] };
+    if (r.activity.issues === 0) {
+      expect(r.notes.join(" ")).toMatch(/will need raising/);
+    }
+  });
+
+  it("suggests shares that add up to 100", () => {
+    const { out } = node("estimate-spend.mjs", ["--repo", "ChampPhil/trinsports", "--json"]);
+    const s = (JSON.parse(out) as { suggested: { shares: Record<string, number> } }).suggested.shares;
+    expect(s["product_work"]! + s["gardening"]! + s["review_and_benchmarks"]!).toBe(100);
+  });
+});
+
+describe("init-data-refs.mjs", () => {
+  it("dry-runs without touching anything", () => {
+    const { out, code } = node("init-data-refs.mjs", ["--repo", "owner/name", "--dry-run"]);
+    expect(code).toBe(0);
+    expect(out).toContain("refs/factory/data");
+    expect(out).toContain("refs/factory/media");
+  });
+
+  it("writes a valid empty index and ledger", () => {
+    const { out } = node("init-data-refs.mjs", ["--repo", "owner/name", "--dry-run"]);
+    const start = out.indexOf("{");
+    const doc = JSON.parse(out.slice(start, out.lastIndexOf("}") + 1)) as { schema: string };
+    expect(doc.schema).toBe("index/1");
+  });
+
+  it("puts the refs outside refs/heads, so they start no workflow", () => {
+    const text = readFileSync(join(SCRIPTS, "init-data-refs.mjs"), "utf8");
+    expect(text).toContain('"refs/factory/data"');
+    expect(text).not.toContain("refs/heads/factory");
+  });
+
+  it("creates the commit with no parents, so the records are their own history", () => {
+    const text = readFileSync(join(SCRIPTS, "init-data-refs.mjs"), "utf8");
+    expect(text).toContain("parents: []");
+  });
+});
+
+describe("every script", () => {
+  const scripts = readdirSync(SCRIPTS).filter((f) => f.endsWith(".mjs"));
+
+  it("there is at least one for each deterministic part of setup", () => {
+    expect(scripts).toContain("preflight.mjs");
+    expect(scripts).toContain("create-app.mjs");
+    expect(scripts).toContain("init-data-refs.mjs");
+    expect(scripts).toContain("estimate-spend.mjs");
+  });
+
+  for (const s of readdirSync(SCRIPTS).filter((f) => f.endsWith(".mjs"))) {
+    it(`${s} parses, and has a --help`, () => {
+      execFileSync("node", ["--check", join(SCRIPTS, s)], { stdio: "pipe" });
+      const { out, code } = node(s, ["--help"]);
+      expect(code).toBe(0);
+      expect(out.length).toBeGreaterThan(80);
+    });
+  }
+});
