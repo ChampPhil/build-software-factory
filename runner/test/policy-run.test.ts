@@ -218,7 +218,7 @@ describe("the bsf CLI", () => {
   it("lists the schemas it reads and writes", () => {
     const out = execFileSync("node", [cli, "schemas"], { encoding: "utf8" });
     expect(out).toContain("policy/1");
-    expect(out.trim().split("\n")).toHaveLength(15);
+    expect(out.trim().split("\n")).toHaveLength(16);
   });
 
   it("validates a good file", () => {

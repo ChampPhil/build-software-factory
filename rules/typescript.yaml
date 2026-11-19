@@ -1,0 +1,197 @@
+# TypeScript rule pack.
+#
+# Every rule is configured on a tool the repo already runs, and carries the two
+# examples phase 3 uses to prove it discriminates: it must fail on `bad` and
+# pass on `good` before it is installed.
+schema: rulepack/1
+language: typescript
+extensions: [".ts", ".tsx", ".mts", ".cts"]
+
+tools:
+  - id: eslint
+    kind: linter
+    detect: ["eslint.config.*", ".eslintrc", ".eslintrc.*"]
+    config_file: eslint.config.mjs
+    install: npm i -D eslint typescript-eslint
+    check: npx eslint .
+    fix: npx eslint . --fix
+    # eslint writes its own baseline, so that file is the baseline and
+    # baselines.json only mirrors it for the dashboard.
+    native_baseline: eslint-suppressions.json
+    base_config:
+      languageOptions:
+        ecmaVersion: 2022
+        sourceType: module
+
+  - id: tsc
+    kind: typechecker
+    detect: ["tsconfig.json"]
+    config_file: tsconfig.json
+    install: npm i -D typescript
+    check: npx tsc --noEmit
+    fix: null
+    native_baseline: null
+
+  - id: prettier
+    kind: formatter
+    detect: [".prettierrc", ".prettierrc.*", "prettier.config.*"]
+    config_file: .prettierrc
+    install: npm i -D prettier
+    check: npx prettier --check .
+    fix: npx prettier --write .
+    native_baseline: null
+
+  - id: gitleaks
+    kind: secrets
+    detect: [".gitleaks.toml"]
+    config_file: .gitleaks.toml
+    install: "# gitleaks runs as a pinned action in CI"
+    check: gitleaks detect --no-banner --redact
+    fix: null
+    native_baseline: null
+
+rules:
+  - id: no-explicit-any
+    concern: >-
+      `any` switches off the type checker for everything it touches, so a type
+      error becomes a runtime error somewhere else.
+    tool: eslint
+    config: { "@typescript-eslint/no-explicit-any": "error" }
+    bad: |
+      export function parse(input: any): string {
+        return String(input);
+      }
+    good: |
+      export function parse(input: unknown): string {
+        return String(input);
+      }
+
+  - id: no-floating-promises
+    concern: >-
+      An un-awaited promise swallows its own rejection, so a failure shows up as
+      nothing happening rather than as an error.
+    tool: eslint
+    config:
+      "@typescript-eslint/no-floating-promises": "error"
+    bad: |
+      async function save(): Promise<void> {}
+      export function run(): void {
+        save();
+      }
+    good: |
+      async function save(): Promise<void> {}
+      export async function run(): Promise<void> {
+        await save();
+      }
+
+  - id: eqeqeq
+    concern: >-
+      `==` coerces, so `0 == ""` and `null == undefined` are true. Comparisons
+      that look obvious stop being obvious.
+    tool: eslint
+    config: { eqeqeq: ["error", "always"] }
+    autofixable: true
+    bad: |
+      export const same = (a: string, b: number): boolean => a == b;
+    good: |
+      export const same = (a: string, b: number): boolean => a === String(b);
+
+  - id: no-var
+    concern: >-
+      `var` is function-scoped and hoisted, so a loop variable captured in a
+      closure is not the value anyone expects.
+    tool: eslint
+    config: { "no-var": "error" }
+    autofixable: true
+    bad: |
+      export function count(): number {
+        var total = 0;
+        return total;
+      }
+    good: |
+      export function count(): number {
+        let total = 0;
+        return total;
+      }
+
+  - id: no-console
+    concern: >-
+      Console output is not logging: it has no level, no structure, and no
+      destination in production.
+    tool: eslint
+    config: { "no-console": "error" }
+    bad: |
+      export function report(): void {
+        console.log("done");
+      }
+    good: |
+      import { log } from "./logger.js";
+      export function report(): void {
+        log.info("done");
+      }
+
+  - id: no-unused-vars
+    concern: >-
+      An unused variable is usually the remains of a change that was only half
+      made.
+    tool: eslint
+    config: { "@typescript-eslint/no-unused-vars": "error" }
+    bad: |
+      export function area(width: number, height: number): number {
+        const unused = width * 2;
+        return width * height;
+      }
+    good: |
+      export function area(width: number, height: number): number {
+        return width * height;
+      }
+
+  - id: require-await
+    concern: >-
+      An `async` function with nothing to await is a promise wrapper that reads
+      like concurrency and is not.
+    tool: eslint
+    config: { "@typescript-eslint/require-await": "error" }
+    bad: |
+      export async function total(a: number, b: number): Promise<number> {
+        return a + b;
+      }
+    good: |
+      export function total(a: number, b: number): number {
+        return a + b;
+      }
+
+  - id: no-non-null-assertion
+    concern: >-
+      `!` tells the type checker to stop asking. When it is wrong the failure is
+      a runtime crash with no type error anywhere.
+    tool: eslint
+    config: { "@typescript-eslint/no-non-null-assertion": "error" }
+    bad: |
+      export function first(xs: string[]): string {
+        return xs[0]!;
+      }
+    good: |
+      export function first(xs: string[]): string {
+        const head = xs[0];
+        if (head === undefined) throw new Error("empty list");
+        return head;
+      }
+
+  - id: suppression-needs-a-reason
+    concern: >-
+      A bare disable comment hides a rule with no record of why. With a reason
+      required, a suppression is a decision someone can review.
+    tool: eslint
+    config:
+      "@typescript-eslint/ban-ts-comment":
+        - "error"
+        - ts-expect-error: "allow-with-description"
+          ts-ignore: true
+          minimumDescriptionLength: 10
+    bad: |
+      // @ts-expect-error
+      export const x: number = "not a number";
+    good: |
+      // @ts-expect-error the API returns a string here until v3 ships
+      export const x: number = "not a number";

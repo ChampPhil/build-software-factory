@@ -169,6 +169,29 @@ const valid: Record<SchemaName, unknown> = {
       benchmark: { tasks: 12, repeats: 3, failure_tasks: 4, before: { mean: 0.71, spread: 0.04 }, after: { mean: 0.83, spread: 0.03 }, failure_tasks_before: 0.4, failure_tasks_after: 0.78, regressions: 0 },
     }],
   },
+  rulepack: {
+    schema: "rulepack/1",
+    language: "typescript",
+    extensions: [".ts", ".tsx"],
+    tools: [{
+      id: "eslint", kind: "linter", detect: ["eslint.config.*"],
+      config_file: "eslint.config.mjs", install: "npm i -D eslint",
+      check: "npx eslint .", fix: "npx eslint . --fix",
+      native_baseline: "eslint-suppressions.json",
+      base_config: { languageOptions: { ecmaVersion: 2022, sourceType: "module" } },
+    }],
+    rules: [{
+      id: "no-var",
+      concern: "`var` is function-scoped and hoisted, so a captured loop variable is not what anyone expects.",
+      tool: "eslint",
+      config: { "no-var": "error" },
+      bad: "var x = 1;",
+      good: "const x = 1;",
+      autofixable: true,
+      severity: "error",
+      critical_logic: false,
+    }],
+  },
   "benchmark-task": {
     schema: "benchmark-task/1", id: "bt_01JD000000000000000000000A",
     source_run: "run_01JD9A000000000000000000AB", origin: "succeeded", pipeline: "product_work",
@@ -275,6 +298,16 @@ describe("invalid documents are rejected", () => {
       },
     });
     expect(res.ok).toBe(false);
+  });
+
+  it("a rule pack rule with no bad example is rejected, so an unverifiable rule cannot ship", () => {
+    const pack = JSON.parse(JSON.stringify(valid.rulepack)) as { rules: Record<string, unknown>[] };
+    delete pack.rules[0]!["bad"];
+    expect(validate("rulepack", pack).ok).toBe(false);
+  });
+
+  it("a rule pack naming a language with no pack is rejected", () => {
+    expect(validate("rulepack", { ...(valid.rulepack as object), language: "cobol" }).ok).toBe(false);
   });
 
   it("a benchmark comparison under 10 tasks or 3 repeats is rejected", () => {

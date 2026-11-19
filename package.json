@@ -3,9 +3,15 @@
   "private": true,
   "version": "0.1.0",
   "license": "MIT",
-  "workspaces": ["runner"],
+  "workspaces": [
+    "runner"
+  ],
   "scripts": {
     "test": "npm -w @bsf/runner test",
     "typecheck": "npm -w @bsf/runner run typecheck"
+  },
+  "devDependencies": {
+    "eslint": "^10.15.0",
+    "typescript-eslint": "^8.73.0"
   }
 }

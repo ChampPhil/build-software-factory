@@ -4,3 +4,4 @@ coverage/
 .factory/.setup-state.json
 *.tsbuildinfo
 runner/dist/
+.bsf-rule-check/

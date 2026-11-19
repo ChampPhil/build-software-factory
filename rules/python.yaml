@@ -1,0 +1,185 @@
+# Python rule pack.
+#
+# Rules are ruff codes, because ruff is one tool that covers what used to take
+# flake8, isort, pyupgrade and several plugins — so the repo ends up running
+# one linter rather than four. Each rule carries the two examples phase 3 uses
+# to prove it discriminates.
+schema: rulepack/1
+language: python
+extensions: [".py", ".pyi"]
+
+tools:
+  - id: ruff
+    kind: linter
+    detect: ["ruff.toml", ".ruff.toml", "pyproject.toml"]
+    # The guardrail lives in a section of an existing file, which policy.yaml
+    # records as pyproject.toml#tool.ruff.
+    config_file: pyproject.toml
+    install: pip install ruff
+    check: ruff check .
+    fix: ruff check --fix .
+    native_baseline: null
+
+  - id: ruff-format
+    kind: formatter
+    detect: ["ruff.toml", ".ruff.toml", "pyproject.toml"]
+    config_file: pyproject.toml
+    install: pip install ruff
+    check: ruff format --check .
+    fix: ruff format .
+    native_baseline: null
+
+  - id: mypy
+    kind: typechecker
+    detect: ["mypy.ini", ".mypy.ini", "pyproject.toml", "setup.cfg"]
+    config_file: pyproject.toml
+    install: pip install mypy
+    check: mypy .
+    fix: null
+    native_baseline: null
+
+  - id: gitleaks
+    kind: secrets
+    detect: [".gitleaks.toml"]
+    config_file: .gitleaks.toml
+    install: "# gitleaks runs as a pinned action in CI"
+    check: gitleaks detect --no-banner --redact
+    fix: null
+    native_baseline: null
+
+rules:
+  - id: no-mutable-default-argument
+    concern: >-
+      A mutable default is created once and shared by every call, so one
+      caller's additions show up in the next caller's "empty" list.
+    tool: ruff
+    config: { select: ["B006"] }
+    bad: |
+      def add(item: str, items: list[str] = []) -> list[str]:
+          items.append(item)
+          return items
+    good: |
+      def add(item: str, items: list[str] | None = None) -> list[str]:
+          result = [] if items is None else list(items)
+          result.append(item)
+          return result
+
+  - id: no-bare-except
+    concern: >-
+      A bare `except` catches KeyboardInterrupt and SystemExit too, so it
+      swallows the signals that are supposed to stop the program.
+    tool: ruff
+    config: { select: ["E722"] }
+    bad: |
+      def read(path: str) -> str:
+          try:
+              with open(path) as fh:
+                  return fh.read()
+          except:
+              return ""
+    good: |
+      def read(path: str) -> str:
+          try:
+              with open(path) as fh:
+                  return fh.read()
+          except OSError:
+              return ""
+
+  - id: no-unused-import
+    concern: >-
+      An unused import is usually the remains of a change that was only half
+      made, and it slows every import of the module.
+    tool: ruff
+    config: { select: ["F401"] }
+    autofixable: true
+    bad: |
+      import json
+      import os
+
+
+      def cwd() -> str:
+          return os.getcwd()
+    good: |
+      import os
+
+
+      def cwd() -> str:
+          return os.getcwd()
+
+  - id: no-undefined-name
+    concern: >-
+      A name that does not exist is a NameError the moment that line runs,
+      which may be long after the change that caused it.
+    tool: ruff
+    config: { select: ["F821"] }
+    bad: |
+      def total(values: list[int]) -> int:
+          return sum(vlaues)
+    good: |
+      def total(values: list[int]) -> int:
+          return sum(values)
+
+  - id: no-assert-on-a-tuple
+    concern: >-
+      `assert (a, b)` asserts a non-empty tuple, which is always true, so the
+      test passes whatever happens.
+    tool: ruff
+    config: { select: ["F631"] }
+    bad: |
+      def check(a: int, b: int) -> None:
+          assert (a == 1, b == 2)
+    good: |
+      def check(a: int, b: int) -> None:
+          assert a == 1
+          assert b == 2
+
+  - id: no-f-string-without-placeholders
+    concern: >-
+      An f-string with no placeholder is usually a placeholder someone meant to
+      add, or one they deleted.
+    tool: ruff
+    config: { select: ["F541"] }
+    autofixable: true
+    bad: |
+      def greet(name: str) -> str:
+          return f"hello"
+    good: |
+      def greet(name: str) -> str:
+          return f"hello {name}"
+
+  - id: imports-sorted
+    concern: >-
+      Sorted imports mean import changes show up as one-line diffs instead of
+      reshuffles, and two people adding an import rarely conflict.
+    tool: ruff
+    config: { select: ["I001"] }
+    autofixable: true
+    bad: |
+      import sys
+      import os
+
+
+      def paths() -> list[str]:
+          return [os.getcwd(), sys.executable]
+    good: |
+      import os
+      import sys
+
+
+      def paths() -> list[str]:
+          return [os.getcwd(), sys.executable]
+
+  - id: no-loop-variable-overwritten
+    concern: >-
+      A loop variable reassigned inside its own loop makes the iteration order
+      a lie, which is hard to see when reading.
+    tool: ruff
+    config: { select: ["B020"] }
+    bad: |
+      def names(items: list[str]) -> None:
+          for items in items:
+              print(items)
+    good: |
+      def names(items: list[str]) -> None:
+          for item in items:
+              print(item)
