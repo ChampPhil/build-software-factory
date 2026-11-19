@@ -1,0 +1,168 @@
+---
+# Verifier role. Compiled by `gh aw compile` into factory-role-verifier.lock.yml.
+#
+# Runs as its own workflow_call job, on its own runner. That is what makes
+# "the verifier never sees the builder's transcript" structural rather than a
+# rule bsf has to keep (spike §3): there is no filesystem path from here to it.
+# It receives the spec and the result, and nothing else.
+on:
+  workflow_call:
+    inputs:
+      work_item:
+        required: true
+        type: string
+      pipeline:
+        required: true
+        type: string
+      pr_number:
+        description: The draft PR whose head commit is being verified
+        required: true
+        type: number
+      commit:
+        description: The exact commit to verify, so results are keyed by commit
+        required: true
+        type: string
+      attempt:
+        required: false
+        default: 1
+        type: number
+      staged:
+        required: false
+        default: false
+        type: boolean
+    outputs:
+      verdict:
+        description: pass | fail
+        value: ${{ jobs.agent.outputs.verdict }}
+      evidence:
+        description: Artifact id of the screenshots, clips and traces
+        value: ${{ jobs.agent.outputs.evidence }}
+    secrets:
+      MODEL_API_KEY:
+        required: true
+      FACTORY_APP_PRIVATE_KEY:
+        required: true
+
+github-app:
+  client-id: ${{ vars.FACTORY_APP_CLIENT_ID }}
+  private-key: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
+
+engine:
+  id: claude
+  model: ${{ vars.FACTORY_MODEL_VERIFIER }}
+  env:
+    ANTHROPIC_API_KEY: ${{ secrets.MODEL_API_KEY }}
+
+permissions:
+  contents: read
+  pull-requests: read
+
+network:
+  allowed:
+    - api.anthropic.com
+    - registry.npmjs.org
+    - pypi.org
+    - files.pythonhosted.org
+
+sandbox:
+  agent:
+    id: awf
+    # Set by setup to docker-sudo-iptables where the app needs an Actions
+    # services: sidecar, because every other profile rejects published service
+    # connectivity (spike §4a). The weaker profile runs AWF with host
+    # privileges, so setup tells the user which posture their repo gets.
+    runtime: ${{ vars.FACTORY_SANDBOX_RUNTIME }}
+    mounts:
+      - ${{ github.workspace }}:/workspace:rw
+
+timeout-minutes: 45
+
+tools:
+  bash: [":*"]
+  read:
+  playwright:
+
+safe-outputs:
+  add-comment:
+    staged: ${{ inputs.staged }}
+  # The verifier never pushes code. Its output is a verdict and evidence.
+  upload-artifact:
+  threat-detection:
+    enabled: true
+
+pre-agent-steps:
+  - name: Start the devcontainer and any services the app needs
+    shell: bash
+    run: .factory/sandbox/start.sh
+  - name: Check out the exact commit under verification
+    shell: bash
+    env:
+      COMMIT: ${{ inputs.commit }}
+    run: git checkout --detach "$COMMIT"
+  - name: Fetch the spec only — never the builder's transcript
+    shell: bash
+    env:
+      WORK_ITEM: ${{ inputs.work_item }}
+    run: bsf fetch-work-item "$WORK_ITEM" --spec-only --out /tmp/bsf/spec.json
+
+post-steps:
+  - name: Write the StepReport with memex
+    shell: bash
+    env:
+      ROLE: verifier
+      ATTEMPT: ${{ inputs.attempt }}
+    run: bsf step-report --role "$ROLE" --attempt "$ATTEMPT" --out /tmp/bsf/step-report.json
+  - name: Store the reviewed media and upload the raw artifacts
+    shell: bash
+    run: bsf store-media --run-dir /tmp/bsf/media
+  - name: Upload the StepReport and evidence
+    uses: actions/upload-artifact@v4
+    with:
+      name: verification-${{ inputs.attempt }}
+      path: /tmp/bsf/
+---
+
+# Verifier
+
+You are the verifier for `${{ github.repository }}`. You did not write this
+code and you are not here to review its style. You are here to find out whether
+it actually does what the spec said, by running it.
+
+You have the spec (`/tmp/bsf/spec.json`) and the result. You do not have the
+builder's transcript or its reasoning, and that is deliberate: no agent grades
+its own work.
+
+## Read first
+
+- `.factory/definition/context/runbook.md` — `## Run`, `## Verify`, `## Seed data`
+
+## What to do
+
+1. Start the app the way the runbook's `## Run` section says.
+2. Work through the spec's `acceptance_checks` **one at a time**. For each, use
+   the app the way a developer would: click through it in the browser, call the
+   API, query the database. Record what you observe, not what you expect.
+3. Capture evidence as you go, into `/tmp/bsf/media/`:
+   - a screenshot or short clip for each acceptance check, named for the check
+   - for a bug fix, the before state as well, so a reviewer sees the change
+   - the console and network panels where either is relevant to the claim
+4. Try the obvious ways the change could be wrong but still look right: the
+   empty case, the error case, the second click, a reload, a different route
+   into the same screen.
+5. Write your verdict.
+
+## The verdict
+
+`pass` only when **every** acceptance check passed and you have evidence for
+each. Otherwise `fail`, with, for each failed check: what you did, what you
+expected, what happened, and the artifact that shows it.
+
+A check you could not run is not a pass. Say so, and say why.
+
+## Do not
+
+- Do not fix the code. If something is broken, report it; the builder gets
+  another attempt.
+- Do not take a passing test suite as evidence that the behavior works. The
+  tests are a separate gate. Your job is the running app.
+- Do not describe evidence you did not capture.
