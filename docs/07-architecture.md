@@ -109,8 +109,8 @@ Eleven deterministic workflows run the factory, each a thin trigger file that ca
 | Workflow | Triggered by | Calls | What it does |
 | --- | --- | --- | --- |
 | `factory-intake` | Issue opened or labeled, issue/PR comment, review comment on a factory PR, CI failure on main, dashboard "run" button (`workflow_dispatch`) | `bsf intake` | Checks trust, normalizes events into work item files, shortlists possible duplicates, dispatches `factory-run` or leaves items queued. Single concurrency group with `queue: max`, and each run processes every event not yet processed (by cursor), not only the one that started it, so no request is lost if a pending run is dropped |
-| `factory-run` | `workflow_dispatch` from intake, gardening, the review, or a finishing run | `bsf run <work-item>` | Orchestrates one pipeline: dispatches each role's gh-aw workflow in order, waits for it, reads its step report, and feeds gate failures back to the builder; at the end dispatches the next queued item |
-| `factory-role-<role>` (gh-aw, ×7) | `workflow_dispatch` from `factory-run` (or the review, for the scorer) | gh-aw | Runs one role's agent in gh-aw's read-only sandbox, behind its network firewall, inside the repo's devcontainer. Its only way to change anything is gh-aw safe outputs, applied after threat detection in separate jobs: the builder's code arrives as `create-pull-request` (a draft on its `factory/*` branch) and later attempts as `push-to-pull-request-branch`; comments and labels as `add-comment` and `add-labels`. A post-step runs memex to write the step report |
+| `factory-run` | `workflow_dispatch` from intake, gardening, the review, a finishing run, or itself for the next gate attempt | `bsf run <work-item>` | Orchestrates one pipeline: calls each role's gh-aw workflow as a `workflow_call` job in order (`needs:` for sequencing, job outputs for ids), reads its step report from `factory-data`, and feeds gate failures back to the builder by re-dispatching itself for the next attempt; at the end dispatches the next queued item. Nothing polls and nothing is billed while waiting |
+| `factory-role-<role>` (gh-aw, ×7) | `workflow_call` from `factory-run` (or the review, for the scorer) | gh-aw | Runs one role's agent in gh-aw's read-only AWF sandbox, behind its network firewall, with the app reached in the repo's devcontainer started by `pre-agent-steps`. Its only way to change anything is gh-aw safe outputs, applied after threat detection in separate jobs: the builder's code arrives as `create-pull-request` (a draft on its `factory/*` branch) and later attempts as `push-to-pull-request-branch`; comments and labels as `add-comment` and `add-labels`. The caller passes this role's `protected-files` policy. A `post-steps` step runs memex to write the step report |
 | `factory-policy` | `pull_request_target` (PR opened, pushed, labeled), review submitted | `bsf policy` | The `factory/policy` check. Because it runs on `pull_request_target`, GitHub always uses main's copy of this workflow, so a PR can't edit it. It never checks out or runs the PR's code: it reads only the list of changed files, reviews and labels, and fails any PR that touches `.github/workflows/`, `.github/dependabot.yml` or `.factory/definition/` without a trusted human's approval, plus the per-pipeline path and test-edit rules |
 | `factory-gates` | Push to a `factory/*` branch; every human PR and push to it; `merge_group` (native merge queue) | `bsf gates` | Agent branches: static rules, ratchets, weakening check, coverage, tests, runtime verification. A commit that only merges main into the branch (the queue's update) re-runs static rules and tests, and agent verification only if main's incoming changes touch the PR's feature folders. Human PRs: the deterministic gates only (agent verification when labeled `factory:verify`). Results are keyed by commit, so they're never repeated for the same commit |
 | `factory-merge` | PR approved, a factory check completed, a PR becoming eligible for auto-merge | `bsf merge-queue` | Where the repo has GitHub's native merge queue: enables auto-merge so GitHub queues the PR. Elsewhere: the factory's fallback queue; one job works through the whole queue, then exits |
@@ -147,7 +147,21 @@ The factory acts on GitHub as its own GitHub App, created during setup and insta
 - **Tokens are short-lived and down-scoped.** Each job mints its own installation token with `actions/create-github-app-token`, asking only for the permissions that job needs; only `factory-sync` gets Administration. Nothing long-lived is stored except the App's private key in repo secrets.
 - **The agent never holds a write token.** Agent jobs are gh-aw's read-only sandbox; every write (pushing code, opening the draft PR, commenting, labelling) is a gh-aw safe output, checked by gh-aw's threat detection for prompt injection, leaked secrets and malicious patches, then applied in a separate job with the App's token, so those pushes trigger the gates. gh-aw's network firewall lets the agent reach only the model API, package registries and the app's own sidecar services.
 - **The App's actions trigger workflows.** Unlike the built-in `GITHUB_TOKEN`, PRs and pushes made with the App token start `factory-gates` normally.
-- **Approvals never come from the App.** The path policy and merge queue ignore any approval whose author is the App; only trusted humans approve.
+- **Approvals never come from the App.** The path policy and merge queue ignore any approval whose author is the App; only trusted humans approve. gh-aw's protected-file check can make the App submit an automatic `REQUEST_CHANGES` review (below), so the merge queue treats an App *rejection* as a gate signal to resolve, not as a human's objection.
+- **gh-aw's protected-file check is a second, independent layer.** `create-pull-request`, `push-to-pull-request-branch` and `merge-pull-request` protect dependency manifests, `.github/`, engine instruction files and **every top-level dot-folder, `.factory/` included**, defaulting to an automatic `REQUEST_CHANGES` review. Each role workflow is therefore passed a per-pipeline `protected-files` policy by its caller (`policy.yaml`, doc 09): only hardening excludes `.factory/guardrails/` and the rooted manifest paths found at setup, only definition PRs exclude `.factory/definition/`, and nothing excludes `.github/` in any role. The overlap with the factory's own `factory/policy` path check is deliberate: two different layers, enforced by different code.
+
+### The recompiler App
+
+gh-aw's compiled `.lock.yml` files live in `.github/workflows/`, which the factory App must never be able to write. So a second, deliberately minimal App does the recompiling:
+
+| App | Permissions | Used by |
+| --- | --- | --- |
+| Factory App | the table above, no `workflows` | every factory workflow |
+| Recompiler App | `contents: write`, `workflows: write`, nothing else | one workflow: install the pinned gh-aw CLI with `github/gh-aw/actions/setup-cli`, run `gh aw compile`, open a PR |
+
+The recompiler can change files and nothing else — it cannot approve, merge, label or administer — and its PRs hit `factory/policy`, which fails any PR touching `.github/workflows/` until a trusted human approves. The invariant holds: neither App can both rewrite a gate and clear it.
+
+Setup offers this App as two more clicks. A user who declines gets the skill's repair mode instead, recompiling locally with their own credentials. Either way, gh-aw's `check-for-updates` fails the activation job of a lock file that has gone too stale, which the dashboard shows as its own health state rather than a generic run failure.
 
 ## Agent CLI adapters
 
@@ -156,12 +170,16 @@ Every supported harness (Hermes Agent, Claude Code, Kilo Code, pi, Cursor CLI) r
 | Harness | How gh-aw runs it |
 | --- | --- |
 | Claude Code, pi | gh-aw's built-in engines |
-| Kilo Code, Cursor CLI, Hermes Agent | gh-aw's custom engine (`engine.command`), running the CLI in its headless mode; the engine definition ships in `/adapters` |
+| Kilo Code, Cursor CLI, Hermes Agent | `engine.command` with `args`, `env` and `cwd`, running the CLI in its headless mode; the engine definition and its setup steps ship in `/adapters` |
+
+- **`engine.command` skips gh-aw's engine installer, not its sandbox**, so each adapter for these three ships setup steps that install the CLI itself. gh-aw's `engine.harness` can replace prompt delivery entirely, but a replacement owns its own retry, timeout and tool-policy behavior, so adapters stay on `command` + `args` and keep gh-aw's.
+- **Only the App's safe-output token is a write path.** Each role workflow sets `safe-outputs.github-app` to the factory App, so every safe output is applied with that token and its pushes start `factory-gates`.
 
 ```ts
 interface HarnessAdapter {
   id: "claude-code" | "cursor-cli" | "kilo-code" | "pi" | "hermes-agent";
   ghawEngine: EngineSpec;   // built-in engine id, or a custom engine definition
+  setupSteps: Step[];       // installs the CLI; engine.command skips gh-aw's own installer
   memexSource: string;      // memex source name for this harness's session log
   localHook(): HookInstall; // config that captures local sessions
 }

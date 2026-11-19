@@ -20,7 +20,8 @@ The factory runs three fixed pipelines (product work, gardening, hardening) plus
 - **The verifier never sees the builder's transcript,** only the spec and the result, so no agent grades its own work.
 - Each role's model comes from `factory.yaml`; prompts come from `roles/<role>.yaml`.
 - **No role sees untrusted text.** Issue bodies and comments from untrusted authors are stripped before a prompt is built; an accepted outside issue is passed in clearly marked as user-supplied.
-- **Each role is a gh-aw workflow.** Every role runs in its own GitHub Agentic Workflows (gh-aw) job: a read-only sandbox behind gh-aw's network firewall, inside the repo's devcontainer. No role holds a write token; its only way to change anything (push code, open a PR, comment, label) is gh-aw safe outputs, checked by gh-aw's threat detection before a separate job applies them. `factory-run` (deterministic) dispatches the role workflows in order and collects their results.
+- **Each role is a gh-aw `workflow_call` workflow.** Every role runs in its own GitHub Agentic Workflows (gh-aw) job: a read-only AWF sandbox behind gh-aw's network firewall, with the app reached in the repo's devcontainer started by `pre-agent-steps`. No role holds a write token; its only way to change anything (push code, open a PR, comment, label) is gh-aw safe outputs, checked by gh-aw's threat detection before a separate job applies them with the factory App's token. `factory-run` (deterministic) calls the role workflows as jobs in order, sequenced with `needs:`, and passes each the `protected-files` policy for the calling pipeline.
+- **Because each role is its own job, the verifier cannot reach the builder's transcript** — separate jobs run on separate runners with separate filesystems. Role results travel as job outputs, which are capped at 1 MB per run, so a role writes its report to `factory-data` and returns only ids.
 
 ## Intake: trust, work items, routing, the ledger
 
@@ -148,7 +149,8 @@ A cleared PR reaches main only through approval (human or toggle) and the factor
    - Auto-merge **on** → the PR is eligible as soon as its gates pass.
    - Definition PRs and anything the weakening check flags always need a trusted human, whatever the toggles say.
 2. **Merge queue** (`factory-merge`, one PR at a time, started by approvals and check results, working through the queue in one job): fast-path merge if already up to date with gates passed on that commit; otherwise update from main and re-run the gates (static rules and tests always; agent verification only if the incoming changes touch the PR's feature folders; the gates recognize this update commit and apply the rule themselves). On pass, the queue marks the draft PR ready for review and squash-merges it.
-3. **Gate failure in the queue** → back to the PR's run as a failed attempt (counts toward the retry cap of 3).
+3. **Gate failure in the queue** → back to the PR's run as a failed attempt (counts toward the retry cap of 3). An attempt is a fresh `factory-run` dispatch, so each attempt's cost is billed and reported separately.
+   - **An automatic `REQUEST_CHANGES` from the factory App is not a human objection.** gh-aw's protected-file check makes the App reject a PR that touches a protected path (every top-level dot-folder, `.factory/` included, plus dependency manifests and `.github/`). The queue treats it as a gate signal: if the path is one this pipeline legitimately changes, the role's `protected-files.exclude` was wrong and that is a factory-definition fix; if it is not, the attempt failed correctly. App approvals are still ignored outright.
 4. **Conflict** (in the queue, or detected by `factory-conflicts` after a push to main) → a conflict-resolution work item:
    - rebase onto main;
    - the builder resolves using both intents (this PR's spec and the merged change's description);

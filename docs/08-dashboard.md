@@ -70,6 +70,7 @@ A board of everything in flight, refreshed every 5 seconds while the page is ope
 - **Merge queue strip** under the board: queued PRs in order, the one being processed, and its gate status.
 - **Escalations** appear as pinned cards in a red lane at the top until a human acts.
 - **Factory health bar** at the top: runs in flight vs. concurrency limit, budget used per share, gardening schedule active, last review date, runner version. A disabled gardening schedule (public repo inactivity) shows as a warning with a one-click re-enable.
+- **Stale lock files get their own state, not a run failure.** gh-aw's `check-for-updates` fails a role workflow's activation job when its compiled `.lock.yml` is below the minimum supported version or is blocked. That is a maintenance state, not a broken run: the bar shows "lock files need recompiling" with a button that starts the recompiler workflow (or, where the user declined the recompiler App, the command to run the skill's repair mode).
 - Clicking a card opens its run detail.
 
 ## Runs and run detail
@@ -148,7 +149,7 @@ The Factory page shows the whole factory definition in readable form and lets a 
 | **Roles and context** | Each role's prompt and the four context files, rendered, with the source id on each factory-added line | View (edits go through a definition PR in GitHub) |
 | **Trust and triggers** | Trusted associations, accept label, enabled trigger sources, Slack/Linear/Sentry connection status | Enable/disable triggers |
 | **Enforcement** | Plan detected, branch protection on/off, audit mode, private data storage, session capture on/off and why | Turn on audit revert PRs |
-| **Health** | Pinned runner version and latest release, any open upgrade PR, Dependabot entry present, App installation, secrets present, schedules active, private data repo collaborators in sync | Open the upgrade PR for review |
+| **Health** | Pinned runner version and latest release, any open upgrade PR, Dependabot entry present, both App installations (factory and recompiler), secrets present, schedules active, private data repo collaborators in sync, **lock files current** | Open the upgrade PR for review; start a recompile |
 
 ## Data access and auth
 
