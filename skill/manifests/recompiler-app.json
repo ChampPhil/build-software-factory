@@ -1,0 +1,33 @@
+{
+  "_comment": [
+    "Manifest for the recompiler App (spike §5). Deliberately minimal: it can",
+    "change files and nothing else — it cannot approve, merge, label or",
+    "administer. Its one job is to run `gh aw compile` in Actions and open a",
+    "PR with the regenerated .lock.yml files.",
+    "",
+    "It holds `workflows: write`, which the factory App must never have. That",
+    "split is the point: the factory App can clear a gate but not rewrite one,",
+    "and this App can rewrite one but not clear it. Its PRs hit factory/policy",
+    "like any other, which fails any PR touching .github/workflows until a",
+    "trusted human approves.",
+    "",
+    "Optional. A user who declines gets the skill's repair mode instead."
+  ],
+  "name": "Build Software Factory Recompiler",
+  "url": "{{REPO_URL}}",
+  "description": "Recompiles the factory's gh-aw workflow lock files and opens a pull request. Cannot approve, merge or administer anything.",
+  "public": false,
+  "redirect_url": "{{REDIRECT_URL}}",
+  "hook_attributes": {
+    "url": "{{REPO_URL}}",
+    "active": false
+  },
+  "request_oauth_on_install": false,
+  "setup_on_update": false,
+  "default_events": [],
+  "default_permissions": {
+    "contents": "write",
+    "workflows": "write",
+    "metadata": "read"
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "_comment": [
+    "Manifest for the factory's GitHub App. Phase 6 of setup POSTs this to",
+    "GitHub, the user clicks Create, and the script converts the returned code",
+    "into the app id, client id and private key.",
+    "",
+    "`workflows` is absent on purpose, not set to none: a permission that is",
+    "not requested cannot be granted. That is what stops the factory editing",
+    ".github/workflows and so tampering with the gates that judge it.",
+    "",
+    "{{REPO_URL}} and {{REDIRECT_URL}} are substituted by create-app.mjs."
+  ],
+  "name": "Build Software Factory",
+  "url": "{{REPO_URL}}",
+  "description": "Runs the software factory on this repository: opens draft PRs, reports gate results, and labels and comments on issues. Cannot edit workflows.",
+  "public": false,
+  "redirect_url": "{{REDIRECT_URL}}",
+  "hook_attributes": {
+    "url": "{{REPO_URL}}",
+    "active": false
+  },
+  "request_oauth_on_install": false,
+  "setup_on_update": false,
+  "default_events": [],
+  "default_permissions": {
+    "contents": "write",
+    "pull_requests": "write",
+    "issues": "write",
+    "checks": "write",
+    "statuses": "write",
+    "actions": "write",
+    "administration": "write",
+    "metadata": "read"
+  }
+}
