@@ -73,3 +73,46 @@ export async function loadCoverage(loader: Loader): Promise<Coverage> {
   }
   return assertValid<Coverage>("coverage", JSON.parse(text));
 }
+
+/* -------------------------------------------------- reading from another ref */
+
+import { execFileSync } from "node:child_process";
+
+/**
+ * Reads a file as it stands on another ref, for the "before" side of the
+ * ratchet. Tries git first — the gate workflows check out with full history —
+ * and falls back to the contents API.
+ */
+export class RefLoader implements Loader {
+  constructor(
+    private readonly ref: string,
+    private readonly fallback?: { read(path: string, ref: string): Promise<string | null> },
+  ) {}
+
+  async read(path: string): Promise<string | null> {
+    try {
+      return execFileSync("git", ["show", `${this.ref}:${path}`], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    } catch {
+      // The file may not exist on that ref, which is a legitimate answer: a
+      // first-time baseline has no "before".
+      if (this.fallback !== undefined) return this.fallback.read(path, this.ref);
+      return null;
+    }
+  }
+}
+
+/** Files changed between a ref and the working tree. */
+export function changedFilesSince(ref: string): readonly string[] {
+  try {
+    const out = execFileSync("git", ["diff", "--name-only", `${ref}...HEAD`], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    return out.split("\n").map((s) => s.trim()).filter((s) => s !== "");
+  } catch {
+    return [];
+  }
+}

@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 import { GitHub } from "./lib/github.js";
-import { DiskLoader, loadPolicy } from "./lib/config.js";
+import {
+  DiskLoader, RefLoader, loadPolicy, loadBaselines, loadCoverage, changedFilesSince,
+} from "./lib/config.js";
+import { runStaticGate, runCoverageGate, recordGateResult, alreadyChecked } from "./commands/gates-run.js";
 import { runPolicyCommand } from "./commands/policy-run.js";
 import { planGates } from "./commands/gates.js";
 import { SCHEMA_NAMES, assertValid, type SchemaName } from "./lib/schema.js";
@@ -26,6 +29,18 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
 
   bsf gates plan [--commit SHA] [--actor agent|human]
       Decide which gates to run for a commit, and say why.
+
+  bsf gates static [--base REF] [--report-check NAME]
+      Gate 1. Runs the repo's own linters, compares every rule's count per
+      file against the baselines on the base ref, and checks for weakening.
+
+  bsf gates coverage [--base REF] [--report-check NAME]
+      Gate 2's coverage half. Diff coverage of the changed files is the main
+      check; total coverage must stay above the floor.
+
+  bsf gates record --gate static|verification --result pass|fail|skipped
+      Record a gate's result against the head commit, so the same commit is
+      never checked twice.
 
   bsf validate SCHEMA FILE
       Validate a file against one of the shared schemas.
@@ -166,7 +181,10 @@ async function main(argv: readonly string[]): Promise<number> {
     }
 
     case "gates": {
-      if (second !== "plan") die("usage: bsf gates plan");
+      if (second === "static") return await gatesStatic(args);
+      if (second === "coverage") return await gatesCoverage(args);
+      if (second === "record") return gatesRecord(args);
+      if (second !== "plan") die("usage: bsf gates plan|static|coverage|record");
       const commit = typeof args["commit"] === "string" ? args["commit"] : process.env["GITHUB_SHA"] ?? "";
       if (commit === "") die("no commit: pass --commit SHA or run inside Actions");
       const actor = args["actor"] === "human" ? "human" : "agent";
@@ -175,11 +193,15 @@ async function main(argv: readonly string[]): Promise<number> {
       const verifyLabel =
         typeof args["verify-label"] === "string" ? args["verify-label"] : "factory:verify";
 
+      // Results are keyed by commit on disk, so a commit already checked
+      // re-runs nothing. Without reading them here, every push would re-run
+      // both gates and the once-per-commit rule would only exist in tests.
+      const checked = alreadyChecked(process.cwd(), commit);
       const plan = planGates({
         commit,
         actor,
         labels,
-        alreadyChecked: {},
+        alreadyChecked: { [commit]: checked },
         isUpdateFromMain: args["update-from-main"] === true,
         mainTouchesFeatureFolders: args["touches-feature-folders"] === true,
         verifyLabel,
@@ -198,6 +220,109 @@ async function main(argv: readonly string[]): Promise<number> {
     default:
       die(`unknown command: ${[first, second].filter(Boolean).join(" ")}\n\n${USAGE}`);
   }
+}
+
+/* ------------------------------------------------------------- gate commands */
+
+function baseRef(args: Args): string {
+  if (typeof args["base"] === "string") return args["base"];
+  const envBase = process.env["GITHUB_BASE_REF"];
+  if (envBase !== undefined && envBase !== "") return `origin/${envBase}`;
+  return "origin/HEAD";
+}
+
+function headSha(): string {
+  return process.env["GITHUB_SHA"] ?? process.env["GITHUB_HEAD_SHA"] ?? "HEAD";
+}
+
+async function maybeReportCheck(
+  args: Args,
+  conclusion: "success" | "failure" | "neutral",
+  title: string,
+  summary: string,
+  fallbackName: string,
+): Promise<void> {
+  const name = typeof args["report-check"] === "string" ? args["report-check"] : null;
+  if (name === null) return;
+  const repo = process.env["GITHUB_REPOSITORY"];
+  if (repo === undefined || repo === "") {
+    process.stderr.write("bsf: --report-check needs GITHUB_REPOSITORY\n");
+    return;
+  }
+  const gh = new GitHub({ repo });
+  await gh.reportCheck({ name: name === "" ? fallbackName : name, headSha: headSha(), conclusion, title, summary });
+}
+
+async function gatesStatic(args: Args): Promise<number> {
+  const root = process.cwd();
+  const base = baseRef(args);
+  const disk = new DiskLoader(root);
+  const beforeLoader = new RefLoader(base);
+
+  const policy = await loadPolicy(disk);
+  const result = await runStaticGate({
+    root,
+    policy,
+    baselineBefore: await loadBaselines(beforeLoader),
+    baselineAfter: await loadBaselines(disk),
+    coverageBefore: await loadCoverage(beforeLoader),
+    coverageAfter: await loadCoverage(disk),
+    changedFiles: changedFilesSince(base),
+  });
+
+  process.stdout.write(`${result.summary}\n`);
+  await maybeReportCheck(
+    args,
+    result.conclusion,
+    result.conclusion === "success" ? "No new violations" : "Static rules failed",
+    result.summary,
+    "factory/gate-static",
+  );
+  setOutput("conclusion", result.conclusion);
+  return result.conclusion === "failure" ? 1 : 0;
+}
+
+async function gatesCoverage(args: Args): Promise<number> {
+  const root = process.cwd();
+  const base = baseRef(args);
+  const result = await runCoverageGate({
+    root,
+    current: await loadCoverage(new DiskLoader(root)),
+    changedFiles: changedFilesSince(base),
+  });
+
+  process.stdout.write(`${result.summary}\n`);
+  await maybeReportCheck(
+    args,
+    result.conclusion,
+    result.conclusion === "success" ? "Coverage held" : "Coverage failed",
+    result.summary,
+    "factory/gate-coverage",
+  );
+  setOutput("diff_pct", String(result.diff_pct ?? ""));
+  setOutput("total_pct", String(result.total_pct ?? ""));
+  return result.conclusion === "failure" ? 1 : 0;
+}
+
+function gatesRecord(args: Args): number {
+  const gate = args["gate"];
+  const resultArg = args["result"];
+  if (gate !== "static" && gate !== "verification") {
+    die("usage: bsf gates record --gate static|verification --result pass|fail|skipped");
+  }
+  if (resultArg !== "pass" && resultArg !== "fail" && resultArg !== "skipped") {
+    die("--result must be pass, fail or skipped");
+  }
+  const attempt = typeof args["attempt"] === "string" ? Number(args["attempt"]) : 1;
+  recordGateResult(process.cwd(), {
+    commit: headSha(),
+    gate,
+    attempt: Number.isInteger(attempt) && attempt > 0 ? attempt : 1,
+    result: resultArg,
+    recorded_at: new Date().toISOString(),
+  });
+  process.stdout.write(`recorded ${gate}=${resultArg} for ${headSha()}\n`);
+  return 0;
 }
 
 function parseYamlLazy(text: string): unknown {
