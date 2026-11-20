@@ -143,8 +143,10 @@ Small fixture repos in `/fixtures` cover every path setup can take; each is rese
 | `js-legacy` — messy JS app, no tests | No-tests path, large baselines, cleanup through gardening | v0.1 setup, v0.2 cleanup |
 | `go-cli` — command-line tool | Non-web runtime verification (run the binary, check output) | v0.2 |
 | `java-service` — Spring Boot app | Go/Java rule packs, slower builds within time budgets | v0.2 |
-| `polyglot-monorepo` — TS frontend + Python backend | One factory, per-app sections in feature map and runbook | v1.0 |
-| `rust-lib`, `csharp-api`, `ruby-app` | The remaining rule packs | v1.0 |
+| `polyglot-monorepo` — TS frontend + Python backend | One factory, per-app sections in feature map and runbook; the right tools in the right directory; a contract stated once in `CONTRACT.md` and implemented twice, so breaking one implementation fails exactly one suite | v1.0 |
+| `rust-lib` | The Rust rule pack, and runtime verification with nothing to open: a library, so the verifier has to call the code | v1.0 |
+| `csharp-api` | The C# rule pack | v1.0 |
+| `ruby-app` | The Ruby rule pack | v1.0 |
 | `private-free` — copy of `ts-webapp` in a free private repo | Audit fallback without branch protection | v0.2 |
 
 Beyond fixtures, each milestone is also tried on Philip's old repo before release. Scheduled steps (nightly gardening, the review) are started by hand with `workflow_dispatch` so the whole loop can be exercised the same day.
