@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { runPolicy, isTrustedActor, hasTrustedHumanApproval, appRequestedChanges, type PolicyContext } from "../src/commands/policy.js";
+import { toReview } from "../src/commands/policy-run.js";
 import type { Policy, PullRequestFacts, Review } from "../src/lib/types.js";
 
 const policy: Policy = {
@@ -310,5 +311,60 @@ describe("the ordinary case", () => {
       declared_test_edits: undefined,
     }));
     expect(res.conclusion).toBe("success");
+  });
+});
+
+describe("the review mapper both commands share", () => {
+  it("maps GitHub's commit_id to commit_sha, so a stale approval cannot count", () => {
+    // This is the regression test for a real bug: the merge queue had its own
+    // mapping that set `commit_id` and `author_is_bot` where the type wants
+    // `commit_sha` and `is_app`. The effect was that the "an approval does not
+    // carry to a later commit" check silently did nothing — in the one place
+    // that decides whether to merge.
+    const r = toReview({
+      user: { login: "alice", type: "User" },
+      author_association: "MEMBER",
+      state: "APPROVED",
+      submitted_at: "2026-11-19T00:00:00Z",
+      commit_id: "oldsha",
+    } as never);
+    expect(r.commit_sha).toBe("oldsha");
+    expect(r).not.toHaveProperty("commit_id");
+    expect(r.is_app).toBe(false);
+  });
+
+  it("marks an App's review as an App's, by type and by login", () => {
+    for (const user of [
+      { login: "alice", type: "Bot" },
+      { login: "factory-bsf[bot]", type: "User" },
+    ]) {
+      const r = toReview({
+        user,
+        author_association: "NONE",
+        state: "APPROVED",
+        submitted_at: "t",
+      } as never);
+      expect(r.is_app, user.login).toBe(true);
+    }
+  });
+
+  it("an approval mapped this way does not satisfy the gate on a newer commit", () => {
+    const reviews = [
+      toReview({
+        user: { login: "alice", type: "User" },
+        author_association: "MEMBER",
+        state: "APPROVED",
+        submitted_at: "t",
+        commit_id: "old",
+      } as never),
+    ];
+    const base = {
+      policy,
+      pr: { ...pr(), head_sha: "new", reviews },
+      appLogins: [],
+    };
+    expect(hasTrustedHumanApproval(base as never)).toBe(false);
+    const onSame = { ...base, pr: { ...base.pr, head_sha: "old" } };
+    expect(hasTrustedHumanApproval(onSame as never)).toBe(true);
   });
 });

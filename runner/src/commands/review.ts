@@ -2,7 +2,8 @@ import type { GitHub } from "../lib/github.js";
 import { FactoryStore, LEDGER, json, workItemPath, reviewPath } from "../lib/store.js";
 import type { Change } from "../lib/dataref.js";
 import { readAll } from "./rollup-run.js";
-import { fingerprint } from "./intake.js";
+import { fingerprint, sourceKind } from "./intake.js";
+import { workItemId, reviewId } from "../lib/ids.js";
 import type { Pipeline } from "../lib/types.js";
 
 /**
@@ -260,12 +261,12 @@ export async function runReviewRoute(
 
   for (const [n, p] of problems.entries()) {
     const pipeline: Pipeline = p.destination === "hardening" ? "hardening" : "definition";
-    const id = `wi-${opts.now.slice(0, 10)}-r${String(n + 1).padStart(2, "0")}`;
+    const id = workItemId(Date.parse(opts.now) || Date.now());
     const item = {
       schema: "work-item/1" as const,
       id,
       created_at: opts.now,
-      source: { kind: "review_routed", ref: null, actor: "factory", via: null },
+      source: { kind: sourceKind("review_routed"), ref: null, actor: "factory", via: null },
       trigger_class: "self" as const,
       pipeline,
       title: `${p.tag} in ${p.area !== "" ? p.area : p.role} (${p.occurrences}×)`,
@@ -298,7 +299,7 @@ export async function runReviewRoute(
       path: reviewPath(opts.now.slice(0, 10)),
       content: json({
         schema: "review/1",
-        id: `rev-${opts.now.slice(0, 10)}`,
+        id: reviewId(opts.now),
         window: {
           from: opts.windowFrom ?? opts.now,
           to: opts.now,

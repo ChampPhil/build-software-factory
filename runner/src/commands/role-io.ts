@@ -158,7 +158,7 @@ export async function writeSpec(
   gh: GitHub,
   id: string,
   from: string,
-  now: string,
+  _now: string,
 ): Promise<WriteSpecReport> {
   const store = new FactoryStore(gh);
   const item = await store.get<WorkItemFile>(workItemPath(id), "work-item");
@@ -174,7 +174,9 @@ export async function writeSpec(
     throw new Error(`${from} lists no acceptance checks`);
   }
 
-  const next = { ...item, spec, updated_at: now };
+  // No updated_at: the work-item schema sets additionalProperties false, and
+  // the file's own history on the data ref is the record of when it changed.
+  const next = { ...item, spec };
   assertValid("work-item", next);
   const commit = await store.put(
     [{ path: workItemPath(id), content: json(next) }],

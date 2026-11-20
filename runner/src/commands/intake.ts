@@ -275,7 +275,13 @@ function decide(event: IncomingEvent, ctx: IntakeContext): IntakeDecision {
   };
 }
 
-function sourceKind(kind: EventKind): string {
+/**
+ * The `source.kind` the work-item schema allows, for each event kind the
+ * factory routes on. Two vocabularies exist because one names the trigger and
+ * the other names the origin; exported so every writer uses this mapping
+ * rather than inventing a third.
+ */
+export function sourceKind(kind: EventKind): string {
   switch (kind) {
     case "issue_opened":
     case "issue_labeled": return "issue";

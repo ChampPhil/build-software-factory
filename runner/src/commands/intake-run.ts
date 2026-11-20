@@ -5,6 +5,7 @@ import { FactoryStore, CURSOR, INCOMING, LEDGER, json, workItemPath } from "../l
 import type { Change } from "../lib/dataref.js";
 import { runIntake, chooseDispatches, type IncomingEvent, type EventKind, type IntakeResult, type LedgerOpenItem, type DispatchDecision } from "./intake.js";
 import type { Policy, Association, Pipeline as QueuedPipeline } from "../lib/types.js";
+import { workItemId } from "../lib/ids.js";
 
 /**
  * `bsf intake` — the deterministic side of intake.
@@ -209,7 +210,10 @@ export async function runIntakeCommand(opts: IntakeRunOptions): Promise<IntakeRu
         ...(r.fingerprint === undefined ? {} : { fingerprint: r.fingerprint }),
         ...(r.pr == null ? {} : { pr: r.pr }),
       })),
-    newId: (e) => `wi-${new Date(e.at).toISOString().slice(0, 10)}-${String(e.id).slice(-6)}`,
+    // A ULID, so the id sorts chronologically and matches the schema's
+    // pattern. The event's own timestamp seeds it, so re-running intake over
+    // the same event queue produces ids in the same order.
+    newId: (e) => workItemId(Date.parse(e.at) || Date.now()),
   });
 
   const changes: Change[] = [];

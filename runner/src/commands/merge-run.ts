@@ -2,6 +2,7 @@ import type { GitHub, PullResponse } from "../lib/github.js";
 import { FactoryStore, LEDGER, json } from "../lib/store.js";
 import { isEligible, queueOrder, nextAction, humanPrMayMerge, type QueueCandidate, type QueueAction } from "./merge-queue.js";
 import { hasTrustedHumanApproval } from "./policy.js";
+import { toReview } from "./policy-run.js";
 import type { Policy, Pipeline, Association } from "../lib/types.js";
 
 /**
@@ -90,14 +91,7 @@ export async function runMergeCommand(opts: MergeOptions): Promise<MergeReport> 
         labels: pr.labels.map((l) => l.name),
         changed_files: [],
         draft: pr.draft,
-        reviews: reviews.map((r) => ({
-          author: r.user?.login ?? "",
-          author_association: r.author_association as Association,
-          state: r.state as "APPROVED" | "CHANGES_REQUESTED" | "COMMENTED" | "DISMISSED",
-          commit_id: r.commit_id,
-          submitted_at: r.submitted_at,
-          author_is_bot: r.user?.type === "Bot",
-        })),
+        reviews: reviews.map(toReview),
         ...(pipeline === undefined ? {} : { pipeline }),
       },
       appLogins: opts.appLogins ?? [],

@@ -4,7 +4,8 @@ import type { GitHub } from "../lib/github.js";
 import { FactoryStore, LEDGER, json, workItemPath } from "../lib/store.js";
 import type { Change } from "../lib/dataref.js";
 import type { Baselines } from "../lib/types.js";
-import { fingerprint } from "./intake.js";
+import { fingerprint, sourceKind } from "./intake.js";
+import { workItemId } from "../lib/ids.js";
 
 const exec = promisify(execFile);
 
@@ -192,13 +193,13 @@ export async function runGardenCommand(opts: GardenOptions): Promise<GardenRepor
   const filed: string[] = [];
   const open = [...ledger.open];
 
-  for (const [n, item] of picked.entries()) {
-    const id = `wi-${opts.now.slice(0, 10)}-g${String(n + 1).padStart(2, "0")}`;
+  for (const item of picked) {
+    const id = workItemId(Date.parse(opts.now) || Date.now());
     const workItem = {
       schema: "work-item/1" as const,
       id,
       created_at: opts.now,
-      source: { kind: "schedule_gardening", ref: null, actor: "factory", via: null },
+      source: { kind: sourceKind("schedule_gardening"), ref: null, actor: "factory", via: null },
       trigger_class: "scheduled" as const,
       pipeline: "gardening" as const,
       title: `Gardening: ${item.problem_class}`,

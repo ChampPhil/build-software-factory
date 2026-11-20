@@ -93,7 +93,15 @@ function changedPaths(files: readonly PullFile[]): string[] {
   return [...out];
 }
 
-function toReview(r: ReviewResponse): PullRequestFacts["reviews"][number] {
+/**
+ * GitHub's review response, as the policy's `Review` shape.
+ *
+ * Exported so the merge queue uses this and not its own mapping. It had one,
+ * and it set `commit_id` and `author_is_bot` where the type wants `commit_sha`
+ * and `is_app` — which silently disabled the "an approval does not carry to a
+ * later commit" check in the one place that decides whether to merge.
+ */
+export function toReview(r: ReviewResponse): PullRequestFacts["reviews"][number] {
   const isApp = r.user?.type === "Bot" || /\[bot\]$/.test(r.user?.login ?? "");
   const state = r.state as "APPROVED" | "CHANGES_REQUESTED" | "COMMENTED" | "DISMISSED";
   return {

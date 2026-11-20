@@ -110,6 +110,36 @@ function openBrowser(url) {
   }
 }
 
+
+/** GitHub's hard limit on a GitHub App's name. */
+export const APP_NAME_MAX = 34;
+
+/**
+ * Build an App name that fits GitHub's 34-character limit.
+ *
+ * Truncating the finished string is what produced names like
+ * `Build Software Factory (bsf-fixtur` — cut mid-word, closing paren gone.
+ * The repo suffix is the part that makes the name unique across GitHub, so it
+ * is the part to protect: shorten the prefix until the whole suffix fits, and
+ * only cut into the repo as a last resort, keeping the paren either way.
+ */
+export function appName(base, slug) {
+  const prefixes = /recompiler/i.test(base)
+    ? ["Factory Recompiler", "Recompiler", "Recomp"]
+    : ["Build Software Factory", "Software Factory", "Factory"];
+
+  for (const prefix of prefixes) {
+    const full = `${prefix} (${slug})`;
+    if (full.length <= APP_NAME_MAX) return full;
+  }
+
+  // Still too long: keep the shortest prefix, which leaves the most room, and
+  // cut the repo rather than the structure.
+  const shortest = prefixes[prefixes.length - 1];
+  const room = APP_NAME_MAX - shortest.length - " ()".length;
+  return `${shortest} (${slug.slice(0, Math.max(1, room))})`;
+}
+
 function escapeHtml(s) {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
@@ -135,7 +165,7 @@ function buildManifest({ recompiler, repo, redirectUrl }) {
 
   // The name has to be unique across GitHub, so suffix it with the repo.
   const slug = repo.replace("/", "-");
-  manifest.name = `${manifest.name} (${slug})`.slice(0, 34);
+  manifest.name = appName(manifest.name, slug);
 
   if (!recompiler && "workflows" in (manifest.default_permissions ?? {})) {
     fail(
@@ -370,4 +400,12 @@ function storeCredentials({ repo, kind, app }) {
   }
 }
 
-main().catch((err) => fail(err?.message ?? String(err)));
+// Only run when executed directly, so the pure helpers above can be imported
+// and tested without the script trying to create an App.
+const invokedDirectly =
+  process.argv[1] !== undefined &&
+  import.meta.url === new URL(`file://${process.argv[1].replace(/\\/g, "/")}`).href;
+
+if (invokedDirectly || process.env["BSF_CREATE_APP_RUN"] === "1") {
+  main().catch((err) => fail(err?.message ?? String(err)));
+}

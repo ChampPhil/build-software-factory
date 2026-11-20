@@ -3,6 +3,10 @@ import { spawn, execFileSync, type ChildProcess } from "node:child_process";
 import { readFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+// @ts-expect-error -- a plain .mjs script with no type declarations; the
+// helpers under test are pure, and importing them is only possible because
+// the script now guards its own entry point.
+import { appName, APP_NAME_MAX } from "../../skill/scripts/create-app.mjs";
 
 /**
  * Exercises the App-creation script's local server: the page it posts to
@@ -185,5 +189,50 @@ describe("create-app.mjs local server", () => {
   it("tells the user what permissions it will ask for before opening the browser", () => {
     expect(stdout).toContain("contents: write");
     expect(stdout).toContain("workflows: not requested");
+  });
+});
+
+describe("the App's name", () => {
+  it("never exceeds GitHub's 34-character limit", () => {
+    for (const slug of ["a-b", "bsf-fixtures-ts-webapp", "ChampPhil-trinsports", "x".repeat(80)]) {
+      const name = appName("Build Software Factory", slug);
+      expect(name.length, name).toBeLessThanOrEqual(APP_NAME_MAX);
+    }
+  });
+
+  it("never leaves a dangling parenthesis", () => {
+    // The bug this replaces: slicing the finished string to 34 produced
+    // "Build Software Factory (bsf-fixtur" — cut mid-word, paren gone. The
+    // name shows as the author on every factory PR, so it is user-visible.
+    for (const slug of ["a-b", "bsf-fixtures-ts-webapp", "x".repeat(80)]) {
+      const name = appName("Build Software Factory", slug);
+      expect(name.endsWith(")"), name).toBe(true);
+      expect((name.match(/\(/g) ?? []).length).toBe(1);
+    }
+  });
+
+  it("keeps the whole repo suffix, shortening the prefix instead", () => {
+    // The suffix is what makes the name unique across GitHub, so it is the
+    // part worth protecting.
+    expect(appName("Build Software Factory", "bsf-fixtures-ts-webapp")).toBe(
+      "Factory (bsf-fixtures-ts-webapp)",
+    );
+  });
+
+  it("keeps the long prefix when there is room for it", () => {
+    expect(appName("Build Software Factory", "a-b")).toBe("Build Software Factory (a-b)");
+  });
+
+  it("cuts into the repo only when no prefix fits, and still closes the paren", () => {
+    const name = appName("Build Software Factory", "some-really-long-organisation-name");
+    expect(name.length).toBeLessThanOrEqual(APP_NAME_MAX);
+    expect(name.startsWith("Factory (")).toBe(true);
+    expect(name.endsWith(")")).toBe(true);
+  });
+
+  it("has its own prefixes for the recompiler App", () => {
+    const name = appName("Factory Recompiler", "bsf-fixtures-ts-webapp");
+    expect(name.length).toBeLessThanOrEqual(APP_NAME_MAX);
+    expect(name.toLowerCase()).toContain("recomp");
   });
 });
