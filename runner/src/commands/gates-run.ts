@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Baselines, Coverage, Policy } from "../lib/types.js";
 import {
@@ -6,8 +6,18 @@ import {
   type RuleCounts, type RatchetResult, type WeakeningFinding,
 } from "./gates.js";
 import {
-  runEslint, runRuff, eslintSuppressions, readCoverage, diffCoverage, countSkips,
-  type Finding, type ToolRunResult,
+  runEslint,
+  runRuff,
+  eslintSuppressions,
+  readCoverage,
+  diffCoverage,
+  countSkips,
+  type Finding,
+  type ToolRunResult,
+  runClippy,
+  runGoVet,
+  runRubocop,
+  runSemgrep,
 } from "../lib/tools.js";
 
 /**
@@ -76,6 +86,14 @@ export function withZeroBaselines(baselines: Baselines, measured: RuleCounts): R
   return out;
 }
 
+function gemfileHas(root: string, gem: string): boolean {
+  try {
+    return new RegExp(`gem\\s+["']${gem}["']`).test(readFileSync(join(root, "Gemfile"), "utf8"));
+  } catch {
+    return false;
+  }
+}
+
 export async function runStaticGate(input: StaticGateInput): Promise<StaticGateResult> {
   const { root } = input;
   const results: ToolRunResult[] = [];
@@ -89,6 +107,23 @@ export async function runStaticGate(input: StaticGateInput): Promise<StaticGateR
   if (existsSync(join(root, "pyproject.toml")) || existsSync(join(root, "ruff.toml"))) {
     const r = await runRuff(root);
     if (r.unavailable) unavailable.push({ tool: "ruff", detail: r.detail });
+    else results.push(r);
+  }
+  // Each language's own linter, where the repo is in that language. Before
+  // these, a Rust, Go or Ruby repo ran nothing and the gate said success.
+  const native: [string, () => Promise<ToolRunResult>][] = [];
+  if (existsSync(join(root, "Cargo.toml"))) native.push(["clippy", () => runClippy(root)]);
+  if (existsSync(join(root, "go.mod"))) native.push(["go-vet", () => runGoVet(root)]);
+  if (existsSync(join(root, "Gemfile")) && (existsSync(join(root, ".rubocop.yml")) || gemfileHas(root, "rubocop"))) {
+    native.push(["rubocop", () => runRubocop(root)]);
+  }
+  // The repo's own semgrep rules — where declared practices that a pattern can
+  // check end up — run on any language.
+  const semgrepDir = join(root, ".factory/guardrails/semgrep");
+  if (existsSync(semgrepDir)) native.push(["semgrep", () => runSemgrep(root, semgrepDir)]);
+  for (const [tool, run] of native) {
+    const r = await run();
+    if (r.unavailable) unavailable.push({ tool, detail: r.detail });
     else results.push(r);
   }
 
@@ -115,14 +150,11 @@ export async function runStaticGate(input: StaticGateInput): Promise<StaticGateR
     input.policy,
   );
 
-  // A tool that could not run is not a pass. It is reported as neutral, so a
-  // broken toolchain shows up as something to fix rather than as a green tick.
+  // A tool that could not run is not a pass, and neither is no tool at all:
+  // both are neutral, so "nothing was checked" never shows as a green tick.
+  const nothingRan = results.length === 0;
   const conclusion: StaticGateResult["conclusion"] =
-    ratchet.ok && weakening.length === 0
-      ? unavailable.length > 0 && results.length === 0
-        ? "neutral"
-        : "success"
-      : "failure";
+    ratchet.ok && weakening.length === 0 ? (nothingRan ? "neutral" : "success") : "failure";
 
   return {
     conclusion,
@@ -131,7 +163,12 @@ export async function runStaticGate(input: StaticGateInput): Promise<StaticGateR
     findings: results.flatMap((r) => r.findings),
     toolsRun: results.map((r) => r.tool),
     toolsUnavailable: unavailable,
-    summary: summarizeStatic({ ratchet, weakening, results, unavailable }),
+    summary:
+      nothingRan && unavailable.length === 0
+        ? "Not applicable: no static checker here applies to this repo's languages, so nothing was checked. " +
+          "Declared practices that a pattern can check are written as semgrep rules under .factory/guardrails/semgrep, " +
+          "which run on any language.\n\n" + summarizeStatic({ ratchet, weakening, results, unavailable })
+        : summarizeStatic({ ratchet, weakening, results, unavailable }),
   };
 }
 

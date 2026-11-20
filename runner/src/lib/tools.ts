@@ -179,6 +179,120 @@ export async function runRuff(root: string, paths: readonly string[] = ["."]): P
   return { tool: "ruff", counts, findings, unavailable: false, detail: "" };
 }
 
+/* ------------------------------------------------- more languages' linters */
+
+/**
+ * Runs a tool and returns its stdout even when it exits non-zero, which most
+ * linters do when they find something. `null` means it could not run at all.
+ */
+async function capture(
+  cmd: string,
+  args: readonly string[],
+  root: string,
+  looksValid: (stdout: string) => boolean,
+): Promise<{ stdout: string } | { unavailable: string }> {
+  try {
+    const res = await exec(cmd, [...args], { cwd: root, encoding: "utf8", maxBuffer: 256 * 1024 * 1024 });
+    return { stdout: String(res.stdout) };
+  } catch (err) {
+    const e = err as { stdout?: string; stderr?: string; message?: string };
+    if (typeof e.stdout === "string" && looksValid(e.stdout)) return { stdout: e.stdout };
+    // `||`, not `??`: a tool that is not installed has an empty stderr.
+    return { unavailable: (e.stderr || e.message || `${cmd} failed`).toString().slice(0, 4000) };
+  }
+}
+
+/** clippy, for Rust: one JSON message per line from cargo. */
+export async function runClippy(root: string): Promise<ToolRunResult> {
+  const r = await capture("cargo", ["clippy", "--quiet", "--message-format=json", "--", "-W", "clippy::all"], root,
+    (o) => o.includes('"reason"'));
+  if ("unavailable" in r) return { tool: "clippy", counts: {}, findings: [], unavailable: true, detail: r.unavailable };
+  const counts: Record<string, Record<string, number>> = {};
+  const findings: Finding[] = [];
+  for (const line of r.stdout.split("\n")) {
+    if (!line.startsWith("{")) continue;
+    let msg: { reason?: string; message?: { code?: { code?: string } | null; message?: string; level?: string; spans?: { file_name?: string; line_start?: number; is_primary?: boolean }[] } };
+    try { msg = JSON.parse(line) as typeof msg; } catch { continue; }
+    if (msg.reason !== "compiler-message" || msg.message?.level === "note") continue;
+    const span = msg.message?.spans?.find((s) => s.is_primary === true) ?? msg.message?.spans?.[0];
+    if (span?.file_name === undefined) continue;
+    const rule = msg.message?.code?.code ?? "rustc";
+    const file = rel(root, span.file_name);
+    addCount(counts, rule, file);
+    findings.push({ rule, file, ...(span.line_start === undefined ? {} : { line: span.line_start }), message: msg.message?.message ?? "", severity: "error" });
+  }
+  return { tool: "clippy", counts, findings, unavailable: false, detail: "" };
+}
+
+/** go vet: `file:line:col: message`, keyed by analyzer where it says one. */
+export async function runGoVet(root: string): Promise<ToolRunResult> {
+  let out: string;
+  try {
+    const res = await exec("go", ["vet", "./..."], { cwd: root, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+    out = `${String(res.stdout)}\n${String(res.stderr)}`;
+  } catch (err) {
+    const e = err as { stdout?: string; stderr?: string; message?: string; code?: unknown };
+    const text = `${e.stdout ?? ""}\n${e.stderr ?? ""}`;
+    // go vet exits 1 with findings on stderr; anything else is a failure to run.
+    if (!/\.go:\d+:\d+: /.test(text)) {
+      return { tool: "go-vet", counts: {}, findings: [], unavailable: true, detail: (e.stderr ?? e.message ?? "go vet failed").toString().slice(0, 4000) };
+    }
+    out = text;
+  }
+  const counts: Record<string, Record<string, number>> = {};
+  const findings: Finding[] = [];
+  for (const line of out.split("\n")) {
+    const m = /^(?:vet: )?([^:\s][^:]*\.go):(\d+):\d+: (.*)$/.exec(line.trim());
+    if (m?.[1] === undefined) continue;
+    // go vet prints `./pkg/file.go`; the other tools print `pkg/file.go`, and
+    // the baselines are keyed by path, so they must agree.
+    const file = rel(root, m[1].replace(/^\.\//, ""));
+    const rule = "go-vet";
+    addCount(counts, rule, file);
+    findings.push({ rule, file, line: Number(m[2]), message: m[3] ?? "", severity: "error" });
+  }
+  return { tool: "go-vet", counts, findings, unavailable: false, detail: "" };
+}
+
+/** RuboCop, for Ruby. */
+export async function runRubocop(root: string): Promise<ToolRunResult> {
+  const r = await capture("rubocop", ["--format", "json", "--force-exclusion"], root, (o) => o.trim().startsWith("{"));
+  if ("unavailable" in r) return { tool: "rubocop", counts: {}, findings: [], unavailable: true, detail: r.unavailable };
+  const doc = JSON.parse(r.stdout) as { files?: { path?: string; offenses?: { cop_name?: string; message?: string; location?: { line?: number } }[] }[] };
+  const counts: Record<string, Record<string, number>> = {};
+  const findings: Finding[] = [];
+  for (const f of doc.files ?? []) {
+    for (const o of f.offenses ?? []) {
+      const rule = o.cop_name ?? "rubocop";
+      const file = rel(root, f.path ?? "");
+      addCount(counts, rule, file);
+      findings.push({ rule, file, ...(o.location?.line === undefined ? {} : { line: o.location.line }), message: o.message ?? "", severity: "error" });
+    }
+  }
+  return { tool: "rubocop", counts, findings, unavailable: false, detail: "" };
+}
+
+/**
+ * semgrep, over the repo's own guardrail rules. Language-independent, which
+ * is what makes it the place a declared practice becomes a checked rule for
+ * any codebase, whatever linter it does or does not use.
+ */
+export async function runSemgrep(root: string, configDir: string): Promise<ToolRunResult> {
+  const r = await capture("semgrep", ["--config", configDir, "--json", "--quiet", "--metrics=off", "."], root,
+    (o) => o.trim().startsWith("{"));
+  if ("unavailable" in r) return { tool: "semgrep", counts: {}, findings: [], unavailable: true, detail: r.unavailable };
+  const doc = JSON.parse(r.stdout) as { results?: { check_id?: string; path?: string; start?: { line?: number }; extra?: { message?: string } }[] };
+  const counts: Record<string, Record<string, number>> = {};
+  const findings: Finding[] = [];
+  for (const h of doc.results ?? []) {
+    const rule = (h.check_id ?? "semgrep").split(".").pop() ?? "semgrep";
+    const file = rel(root, h.path ?? "");
+    addCount(counts, rule, file);
+    findings.push({ rule, file, ...(h.start?.line === undefined ? {} : { line: h.start.line }), message: h.extra?.message ?? "", severity: "error" });
+  }
+  return { tool: "semgrep", counts, findings, unavailable: false, detail: "" };
+}
+
 /* ----------------------------------------------------------------- coverage */
 
 export interface CoverageNumbers {
