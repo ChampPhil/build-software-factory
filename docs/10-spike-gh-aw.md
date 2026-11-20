@@ -302,11 +302,35 @@ adapters carry these, and setup still verifies them against the installed
 memex, because a rename upstream would otherwise appear only as a step that
 reports zero tokens.
 
-**What is actually left.** Kilo Code and Hermes Agent are the two of the five
-that nothing open-source covers for *running*. memex reads both of their
-session stores, so local correction mining would work; no project ships an
-engine that drives either headlessly. The asymmetry is the state of play: the
-session side is solved for all five, the execution side for three.
+**What is actually left, after reading the other two vendors' docs.** Both
+Kilo Code and Hermes Agent document their headless modes precisely, so both
+definitions are now written from documentation rather than left as
+placeholders, with every value sourced in the file:
+
+- **Kilo Code**: `@kilocode/cli` on npm, binary `kilo`,
+  `kilo run --auto --format json`. `--auto` is not optional — without it a
+  non-interactive run auto-rejects every permission request and exits 1, so
+  the step would fail having done nothing. `ANTHROPIC_API_KEY`. Its CLI is a
+  fork of OpenCode, so gh-aw's OpenCode log parser is the starting point for
+  the one piece still missing.
+- **Hermes Agent**: `hermes chat --oneshot --query-file - --format stream-json`.
+  `--query-file -` takes the prompt on stdin with nothing shell-interpreted,
+  which is the right way to pass a prompt assembled from an untrusted work
+  item. Its session store is `~/.hermes/state.db` (`$HERMES_HOME` relocates
+  it) — which also fills a gap memex left, since memex says only "a local
+  `state.db`"; `ccusage` reads the same file, so there is a second
+  implementation to check a parser against.
+
+What documentation cannot supply is the shape of the JSONL events each emits,
+which is what a log parser needs. And Hermes has a second problem: its
+installer clones the latest stable tag and downloads its own uv, Python, Node
+and ffmpeg, so it is neither a package-manager install nor a pin. It needs the
+treatment gh-aw gave Cursor — a harness script that fetches a fixed release —
+and that cannot be written honestly without running the installer once.
+
+So the asymmetry stands, but smaller than it looked: the session side is
+solved for all five, the execution side is solved for three and documented for
+two.
 
 **And the set can grow much more cheaply than the spec assumed.** Every engine
 gh-aw ships — thirteen beyond the five named here — is one it already

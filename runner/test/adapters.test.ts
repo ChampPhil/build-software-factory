@@ -221,7 +221,17 @@ describe("engine definition files", () => {
       // Cursor definition does).
       const b = doc.engine?.behaviors as Record<string, unknown>;
       const installs = "installation" in b || "harness-script" in b;
-      expect(installs, `${f} never installs the CLI`).toBe(true);
+      if (!installs) {
+        // A definition that never installs the CLI cannot run a step. That is
+        // allowed only while the adapter says the install is unresolved — as
+        // Hermes Agent's is, because its installer builds its own toolchain
+        // and pins nothing.
+        const id = IDS.find((x) => ADAPTERS[x].engineDefinition === f)!;
+        expect(
+          ADAPTERS[id].status.needs.join(" "),
+          `${f} never installs the CLI and the adapter does not say so`,
+        ).toMatch(/install/i);
+      }
     }
   });
 
@@ -282,7 +292,9 @@ describe("engine definition files", () => {
       const f = ADAPTERS[id].engineDefinition;
       if (f === null || ADAPTERS[id].status.kind === "vendored") continue;
       const text = readFileSync(join(dir, f), "utf8");
-      expect(text.toLowerCase(), `${f} does not say it is unverified`).toMatch(/unverified|not been run|unconfirmed/);
+      expect(text.toLowerCase(), `${f} does not say it is unverified`).toMatch(
+        /unverified|not verified|not been run|unconfirmed/,
+      );
     }
   });
 });

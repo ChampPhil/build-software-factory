@@ -68,12 +68,6 @@ export interface AdapterStatus {
   readonly needs: readonly string[];
 }
 
-const NEEDS_CLI_FACTS = [
-  "gh-aw ships no engine for this CLI, built in or shared, so the definition would have to be written here",
-  "the CLI's exact headless flags and JSON event shape, which needs the CLI installed and run",
-  "a log parser, so per-step tokens reach gh-aw's session artifact",
-  "a conformance run proving the step yields token data",
-] as const;
 
 export const ADAPTERS: Readonly<Record<HarnessId, HarnessAdapter>> = {
   "claude-code": {
@@ -131,8 +125,17 @@ export const ADAPTERS: Readonly<Record<HarnessId, HarnessAdapter>> = {
       store: "~/.local/share/kilo/kilo.db (or $XDG_DATA_HOME/kilo/kilo.db; KILO_DATA_DIR adds stores)",
       tokenUsage: "yes",
     },
-    localHook: { path: ".kilocode/config.json", kind: "none" },
-    status: { kind: "definition", conformance: "not_run", needs: [...NEEDS_CLI_FACTS] },
+    localHook: { path: ".kilo/kilo.jsonc", kind: "none" },
+    status: {
+      kind: "definition",
+      conformance: "not_run",
+      needs: [
+        "gh-aw ships no engine for this CLI, built in or shared, so the definition is written here",
+        "a log parser: its CLI is a fork of OpenCode, so gh-aw's OpenCode parser is the starting point",
+        "the version pin confirmed against the npm registry, rather than the one its docs named",
+        "a conformance run proving the step yields token data",
+      ],
+    },
   },
 
   "hermes-agent": {
@@ -142,13 +145,18 @@ export const ADAPTERS: Readonly<Record<HarnessId, HarnessAdapter>> = {
     keySecret: "ANTHROPIC_API_KEY",
     // memex reads Hermes's usage counters and metadata only, not message
     // content — enough for a step report, not enough for correction mining.
-    memex: { engineLabel: "Hermes", source: "hermes", store: "a local state.db (path undocumented)", tokenUsage: "yes" },
-    localHook: { path: ".hermes/config.toml", kind: "none" },
+    // memex says "a local state.db" without a path; Hermes's own docs and
+    // ccusage both name it.
+    memex: { engineLabel: "Hermes", source: "hermes", store: "~/.hermes/state.db (or $HERMES_HOME/state.db)", tokenUsage: "yes" },
+    localHook: { path: ".hermes/", kind: "none" },
     status: {
       kind: "definition",
       conformance: "not_run",
       needs: [
-        ...NEEDS_CLI_FACTS,
+        "gh-aw ships no engine for this CLI, built in or shared, so the definition is written here",
+        "a pinned install: its own installer clones the latest stable tag and downloads its own uv, Python, Node and ffmpeg, which is neither a package-manager install nor a pin — it needs a harness script that fetches a fixed release, as gh-aw's Cursor definition does",
+        "a log parser for its stream-json events",
+        "a conformance run proving the step yields token data",
         "correction mining cannot use Hermes sessions: memex reads its counters and metadata, not message content",
       ],
     },

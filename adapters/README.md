@@ -44,14 +44,24 @@ better than anything this project could write without the CLI in hand. See
 | Claude Code | gh-aw built-in engine `claude` | A conformance run |
 | pi | gh-aw built-in engine `pi` | A conformance run |
 | Cursor CLI | gh-aw's own definition, vendored here | A conformance run |
-| Kilo Code | — | gh-aw ships no engine for it, so the definition has to be written, which needs the CLI installed and run |
-| Hermes Agent | — | The same. memex can read its sessions, so local correction mining would work; running it in CI is the gap |
+| Kilo Code | A definition written here from Kilo's own CLI docs | A log parser, a confirmed version pin, a conformance run |
+| Hermes Agent | A definition written here from Hermes's own CLI docs | A **pinned install** (its own installer pins nothing and builds its own toolchain), a log parser, a conformance run |
 
-Kilo Code and Hermes Agent are the two of the five that nothing open-source
-covers for *running*: memex reads their session stores, and no project ships
-an engine that drives them headlessly. That asymmetry is the whole state of
-play — the session side is solved for every harness, the execution side is
-solved for three of five.
+Neither of the last two needed a CLI in hand to get this far: both vendors
+document their headless mode precisely, and every value in those two files has
+a source recorded in the file itself. What documentation cannot give is the
+shape of the JSONL events each emits, which is what a log parser needs, and in
+Hermes's case a way to install a fixed version. Those are the honest remainder.
+
+Kilo Code's is the easier of the two for a reason worth knowing: its CLI is a
+fork of OpenCode, and gh-aw ships an OpenCode definition with a working
+parser, so that parser is the starting point rather than a blank page.
+
+The pattern across all five: **the session side is solved for every harness**
+(gh-aw parses its own, memex reads all five locally, and for Hermes `ccusage`
+reads the same `state.db` as a second implementation to check against), while
+**the execution side is solved for three of five** outright and documented for
+the other two.
 
 **Thirteen more engines gh-aw can already run** are listed in
 `GH_AW_ENGINES_NOT_YET_ADOPTED` in `adapters.ts`, including Codex, Copilot,

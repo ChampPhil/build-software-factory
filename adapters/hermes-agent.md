@@ -1,52 +1,61 @@
 ---
-# UNVERIFIED. This definition is written from gh-aw's engine schema and its own
-# worked samples (pkg/workflow/data/engines/*.md and
-# .github/workflows/shared/opencode.md), not from having run the CLI. The
-# package name, the headless flags, the event shape and the version pin are all
-# unconfirmed, and the adapter's status.needs says so. Nothing selects this
-# engine until a conformance run proves a step yields token data.
+# Written from Hermes Agent's own CLI documentation (NousResearch/hermes-agent),
+# not from having run the CLI here. Every value below has a source, recorded in
+# the notes at the bottom. Two things are NOT established: the shape of the
+# JSONL events `--format stream-json` emits, and whether gh-aw's installation
+# block can install this CLI at all — see "The install problem" below.
 engine:
   id: hermes-agent
   display-name: Hermes Agent
-  description: Hermes Agent in headless mode, as a gh-aw behaviour-defined engine
+  description: Hermes Agent's CLI in one-shot mode, as a gh-aw behaviour-defined engine
   experimental: true
-  # Prompt rendering and threat detection fall back to a known engine, as
-  # gh-aw's own third-party samples do.
   detection-engine: copilot
   runtime-id: hermes-agent
-  version: "0.0.0-unverified"
+  version: "0.23.1"
   provider:
     name: anthropic
+  auth:
+    - role: api-key
+      secret: ANTHROPIC_API_KEY
   behaviors:
     secret-strategy: universal-llm-consumer
+    supported-env-var-keys:
+      - ANTHROPIC_API_KEY
+      - HERMES_HOME
     capabilities:
-      # Declared conservatively: gh-aw adapts prompt delivery to what the
-      # engine says it supports, and claiming a capability the CLI lacks
-      # produces a run that fails in the middle rather than at the start.
       tools-allowlist: false
       max-turns: false
       web-search: false
       native-agent-file: false
+    manifest:
+      files:
+        - MEMORY.md
+        - USER.md
+      path-prefixes:
+        - .hermes/
     network:
       defaults:
         - github.com
         - raw.githubusercontent.com
+        - api.github.com
       provider-domains:
         anthropic: api.anthropic.com
-    installation:
-      package-manager: npm
-      package-name: "hermes-agent"
-      version: "0.0.0-unverified"
-      binary-name: hermes
-      include-node-setup: true
-      cooldown: true
-      step-name: Install Hermes Agent
-      verify-command: hermes --version
-      verify-step-name: Verify Hermes Agent installation
     execution:
       command-name: hermes
       args:
-        - --print
+        - chat
+        # --oneshot is load-bearing: without it, a run on a TTY seeds an
+        # interactive session instead of answering and exiting.
+        - --oneshot
+        # --format stream-json requires -q or --query-file and implies quiet
+        # non-interactive mode. --query-file - takes the prompt on stdin, and
+        # nothing there is shell-interpreted, so a prompt containing quotes,
+        # backticks or $(...) arrives verbatim — which is the right way to
+        # pass a prompt assembled from a work item.
+        - --query-file
+        - "-"
+        - --format
+        - stream-json
       step-name: Execute Hermes Agent
       model-env-var: FACTORY_MODEL
       mcp-config-env-var: GH_AW_MCP_CONFIG
@@ -54,29 +63,57 @@ engine:
       provider-env-mode: universal-llm-consumer
       env:
         NO_COLOR: "1"
+        # Keep the agent's state inside the job rather than wherever a runner
+        # image happens to put a home directory.
+        HERMES_HOME: /tmp/hermes
 ---
 
 <!--
 # Hermes Agent adapter
 
-**Status: unverified.** Every value above that describes the CLI rather than
-gh-aw is a placeholder, including the npm package name, the `--print` headless
-flag and the version pin. They are marked rather than omitted so the shape of
-the definition can be reviewed and tested now, and so the one thing that has to
-happen next is unambiguous: install the CLI, run one step, and replace each
-placeholder with what the CLI actually does.
+**Status: written from documentation, not verified by a run,** and with one
+unresolved design question below. The adapter registry says the same.
 
-**Why a definition and not `engine.command`.** gh-aw's `engine.command` runs a
-binary but leaves us owning the install steps and the log parsing. A
-behaviour-defined engine hands both back to gh-aw and keeps its retry, timeout
-and tool-policy behaviour, which `engine.harness` would replace. gh-aw's own
-OpenCode sample is the worked example.
+## Where each value comes from
 
-**What is still missing after the placeholders are filled in.** A log parser.
-gh-aw ships parsers for its own engines; for anything else, per-step tokens and
-cost come from the parser this definition supplies. Until then the step report
-falls back to memex and, failing that, reports `cost_source: unknown` — which
-is correct behaviour, not a working adapter.
+| Value | Source |
+| --- | --- |
+| `hermes chat --oneshot -q` / `--query-file` | Hermes Agent's CLI command reference |
+| `--format stream-json` emits JSONL, requires `-q`/`--query-file`, implies quiet non-interactive mode and rejects `--tui` | The same reference |
+| `--query-file -` reads stdin verbatim, nothing shell-interpreted | Hermes Agent's CLI interface docs |
+| `--model "anthropic/claude-sonnet-4"` form, `--provider` | The same |
+| Session store `~/.hermes/state.db`, or `$HERMES_HOME/state.db` | Hermes Agent's sessions documentation, and ccusage's Hermes data source, which reads the same file |
+| Version `0.23.1` | The version its docs referenced when this was written. **Re-pin before shipping** |
 
-**The key.** `ANTHROPIC_API_KEY` for this harness.
+This also fills a gap memex left: memex documents that it reads Hermes from "a
+local `state.db`" without saying where. It is `~/.hermes/state.db`, relocatable
+with `HERMES_HOME`, and `ccusage` reads the same file for token usage — a
+second open-source implementation to check this one against.
+
+## The install problem
+
+Hermes Agent does not install like the others. Its installer clones the latest
+stable tag into `~/.hermes/hermes-agent` and downloads its own uv, Python,
+Node.js, ripgrep and FFmpeg into `~/.hermes/tools`, building a hash-verified
+virtualenv. That is deliberate on their part — nothing touches the system
+Python — but it means:
+
+- `installation.package-manager: npm` does not describe it, which is why this
+  definition has no `installation` block;
+- the install is large, so a role step would pay for it on every run unless it
+  is cached;
+- "the latest stable tag" is not a pin, and a factory whose builder changes
+  version between runs cannot have reproducible runs.
+
+So this adapter needs the same treatment gh-aw gave Cursor: a `harness-script`
+that fetches a **pinned** release itself and verifies it, rather than an
+`installation` block. That is the piece of real work left here, and it cannot
+be written honestly without running the installer once to see what it produces.
+
+## What is still missing
+
+A log parser, as with every non-gh-aw engine. Until there is one, tokens come
+from memex's reading of `state.db` — which, for Hermes, is counters and
+metadata only, not message content. That is enough to cost a step and not
+enough to mine corrections from, so Hermes is costable but not minable.
 -->
