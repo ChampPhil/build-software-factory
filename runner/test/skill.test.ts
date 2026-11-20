@@ -256,3 +256,53 @@ describe("every script", () => {
     });
   }
 });
+
+describe("preflight's prerequisite checks", () => {
+  const src = readFileSync(join(ROOT, "skill/scripts/preflight.mjs"), "utf8");
+
+  it("checks Node's version, because the runner needs a current one", () => {
+    expect(src).toContain("MIN_NODE_MAJOR");
+    expect(src).toMatch(/record\(\s*"node"/);
+  });
+
+  it("checks for a browser, because the App flow redirects to localhost", () => {
+    // GitHub's manifest flow sends the private key to a localhost redirect, so
+    // a browser on another machine cannot complete it. Finding that out at
+    // phase 6 wastes the five phases before it.
+    expect(src).toMatch(/record\(\s*"browser"/);
+    expect(src).toContain("DISPLAY");
+    expect(src).toContain("localhost");
+  });
+
+  it("runs both before anything that takes time", () => {
+    // The call sites, not the definitions, which appear earlier in the file.
+    const node = src.indexOf("checkNode();");
+    const browser = src.indexOf("checkBrowser();");
+    const docker = src.indexOf("checkDocker(args.skipDocker)");
+    expect(node).toBeGreaterThan(0);
+    expect(browser).toBeGreaterThan(0);
+    // Docker's check pulls an image; the cheap checks come first.
+    expect(node).toBeLessThan(docker);
+    expect(browser).toBeLessThan(docker);
+  });
+});
+
+describe("the App script across platforms", () => {
+  const src = readFileSync(join(ROOT, "skill/scripts/create-app.mjs"), "utf8");
+
+  it("opens a browser on Windows through cmd, not by spawning `start`", () => {
+    // `start` is a cmd builtin, not an executable: spawning it directly fails,
+    // and fails asynchronously, so the script would claim success.
+    expect(src).toContain('"cmd", ["/c", "start", ""');
+    expect(src).not.toMatch(/spawn\(\s*"start"/);
+  });
+
+  it("handles spawn's error event, so a headless machine is told the truth", () => {
+    expect(src).toMatch(/child\.on\("error"/);
+  });
+
+  it("covers all three platforms", () => {
+    for (const p of ["darwin", "win32"]) expect(src).toContain(p);
+    expect(src).toContain("xdg-open");
+  });
+});

@@ -119,6 +119,60 @@ function checkOnDefaultBranch(repo) {
   record("default-branch", true, `on ${branch}, the default branch`);
 }
 
+
+/* --------------------------------------------------------------------- node */
+
+/** The oldest Node the runner and these scripts are written against. */
+const MIN_NODE_MAJOR = 20;
+
+function checkNode() {
+  const major = Number(process.versions.node.split(".")[0]);
+  if (Number.isNaN(major) || major < MIN_NODE_MAJOR) {
+    record(
+      "node",
+      false,
+      `Node ${process.versions.node}; the runner needs ${MIN_NODE_MAJOR} or newer`,
+      "install a current Node from https://nodejs.org, then run this again",
+    );
+    return;
+  }
+  record("node", true, `Node ${process.versions.node}`);
+}
+
+/* ------------------------------------------------------------------ browser */
+
+/**
+ * Creating the GitHub App needs a browser on *this* machine.
+ *
+ * GitHub's App Manifest flow redirects to localhost, so a browser on another
+ * machine cannot complete it — and the private key arrives in that redirect,
+ * which is why it works this way rather than through a hosted page. A headless
+ * box therefore cannot finish phase 6, and finding that out at phase 6 is a
+ * waste of the five phases before it.
+ */
+function checkBrowser() {
+  if (process.platform === "darwin" || process.platform === "win32") {
+    record("browser", true, `a desktop session on ${process.platform}`);
+    return;
+  }
+  const display = process.env.DISPLAY ?? process.env.WAYLAND_DISPLAY ?? "";
+  if (display !== "") {
+    record("browser", true, "a graphical session is available");
+    return;
+  }
+  if (run("which", ["xdg-open"]) !== null) {
+    record("browser", true, "xdg-open is present, so a browser can probably be opened");
+    return;
+  }
+  record(
+    "browser",
+    false,
+    "no graphical session found, and creating the GitHub App needs a browser on this machine",
+    "run setup from a machine with a desktop, or finish just the App step there: GitHub's " +
+      "manifest flow redirects to localhost, so the browser has to be the one on this computer",
+  );
+}
+
 /* ----------------------------------------------------------------------- gh */
 
 function checkGh(repo) {
@@ -317,6 +371,8 @@ Check everything setup needs before it changes anything.
 }
 
 const repo = args.repo ?? checkGit();
+checkNode();
+checkBrowser();
 checkCleanTree();
 checkOnDefaultBranch(repo ?? null);
 checkGh(repo ?? null);
