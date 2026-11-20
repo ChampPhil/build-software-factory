@@ -214,3 +214,61 @@ seven pass. They did not at first — it found four things the design had wrong:
 What the schema does *not* constrain, so these tests cannot catch it: `engine`
 as a bare string is a catalog lookup rather than an enum, so an unknown engine
 id validates here and fails only at compile time.
+
+## Second addendum — what gh-aw's source showed (Nov 19)
+
+The first spike read gh-aw's JSON schema. This one reads its source, which
+became available mid-build. Four findings, two of which changed the design.
+
+**1. Adapters should be engine definitions, not `engine.command`.** gh-aw's
+`engine_config` has a variant that is a complete engine definition:
+`engine.behaviors` with `installation` (package manager, package name, version
+pin, binary name, verify command), `execution` (command, args, env, model
+flag, MCP config env var), `capabilities`, `network.provider-domains`, an
+`output-files` list, a `log-parser` and optionally a `harness-script`. gh-aw
+then installs the CLI, runs it, and parses its log into the unified session
+artifact — all the work doc 07 had assigned to hand-written setup steps. The
+worked examples are gh-aw's own `pkg/workflow/data/engines/*.md` and its
+third-party sample `.github/workflows/shared/opencode.md`. Doc 07 is updated.
+
+**2. "Adding a harness = one adapter entry" is true only for a well-behaved
+CLI.** The OpenCode sample — written by gh-aw's own team — carries a ~200-line
+`harness-script` to reconcile sessions and enforce turn limits, plus a custom
+log parser, and is labelled an unsupported repository sample. So the three
+harnesses with no built-in engine are not three config entries; they are three
+integrations of unknown size, each needing the CLI installed and run before its
+definition can be anything but a placeholder. The definitions in `/adapters`
+are marked unverified for exactly this reason, and the adapter registry records
+what each still needs.
+
+**3. gh-aw already produces the token and cost numbers the step report needs.**
+`agent-session.jsonl` carries normalized per-step `totalCostUsd` and `usage`,
+and the API proxy meters tokens into `token-usage.jsonl` independently of what
+the CLI reports about itself. Both are written in the agent job, which is where
+a role workflow's post-step runs. (The fully merged `usage/aw_session.jsonl`
+comes later, in the conclusion job, so a post-step cannot use it.) memex keeps
+its other job — past local sessions on the user's machine — which gh-aw knows
+nothing about. Doc 07's cost order is updated.
+
+gh-aw's session specification also states, as a requirement, the rule this
+factory had already arrived at independently: *absence is not zero*, and a cost
+that cannot be determined must stay unavailable rather than become zero. The
+step report's `cost_source: "unknown"` is that rule, and it is the reason the
+schema gained the value.
+
+**4. The lock-file staleness check can be exact.** gh-aw writes
+`# gh-aw-metadata: {"frontmatter_hash":…,"body_hash":…}` as the first line of
+every lock file, over the *normalized* frontmatter and body with imports
+resolved and merged in sorted order. It also ships a pure-JavaScript
+implementation of those hashes (`actions/setup/js/frontmatter_hash_pure.cjs`)
+with a parity test against its Go compiler. That file is vendored into
+`runner/vendor/gh-aw/`, so `bsf audit` computes the same hash the compiler did
+rather than approximating the normalization from outside. Verified against a
+real gh-aw workflow and its real lock file: clean when unmodified, caught on a
+body edit, caught on a frontmatter edit, reported when the lock file is absent.
+
+**Still blocked.** `gh aw compile` cannot run here: the extension's release
+binaries are unreachable, and building from source needs Go 1.27.4 (go.mod)
+against a local Go 1.24.7 with the module proxy unreachable and no vendored
+dependencies. The frontmatter is validated against gh-aw's own schema in the
+test suite instead, which is what caught the four bugs in the first addendum.

@@ -1,15 +1,26 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync, existsSync, writeFileSync, mkdirSync } from "node:fs";
+import { readSessionUsage } from "../lib/session.js";
 import { join, dirname } from "node:path";
 
 /**
  * `bsf step-report` — writes one role's step report (doc 09).
  *
- * This runs in the role workflow's `post-steps`, after the agent has finished.
- * Where the harness wrote a usage file, the numbers come from it; where it did
- * not, the report says the cost is unknown rather than estimating one. A cost
- * invented here would be averaged into the spend the budget pauses on, which
- * is the one number in the factory nobody should be guessing.
+ * This runs in the role workflow's `post-steps`, after the agent has finished,
+ * and asks four sources in order:
+ *
+ * 1. **gh-aw's own session evidence** — `agent-session.jsonl` and the API
+ *    proxy's `token-usage.jsonl`, both present in the agent job. Proxy
+ *    metering beats a CLI's self-report, and gh-aw has already normalized it.
+ * 2. **The harness's own session log**, read with memex, when gh-aw's evidence
+ *    carried nothing for this step.
+ * 3. **The bundled price table**, to price tokens that arrived with no cost.
+ * 4. **Nothing** — `cost_source: "unknown"`.
+ *
+ * The fourth is the point. A cost invented here is averaged into the spend the
+ * budget pauses pipelines on, so a guessed zero quietly raises the ceiling on
+ * what the factory may spend. gh-aw's session specification states the same
+ * rule for the same reason: absence is not zero.
  */
 
 /** The harnesses the schemas name (schema/_common.json). */
@@ -23,8 +34,10 @@ export interface StepReportInput {
   readonly durationSec: number;
   readonly filesChanged: readonly string[];
   readonly transcript: string;
-  /** The harness's own usage file, when it wrote one. */
+  /** The harness's own usage file (memex's output), when it wrote one. */
   readonly usagePath?: string;
+  /** Where gh-aw left its session evidence in this job. */
+  readonly sessionDirs?: readonly string[];
   readonly priceTable?: Readonly<Record<string, { readonly in: number; readonly out: number }>>;
 }
 
@@ -38,6 +51,8 @@ export interface StepReport {
   readonly tokens: { readonly in: number; readonly out: number };
   readonly cost_usd: number;
   readonly cost_source: "session_log" | "price_table" | "unknown";
+  /** Which evidence the numbers came from, for diagnosing a missing cost. */
+  readonly usage_source?: "agent_session" | "token_usage" | "harness_log";
   readonly files_changed: readonly string[];
   readonly transcript: string;
 }
@@ -67,7 +82,16 @@ export function readUsage(path: string): { tokensIn: number; tokensOut: number; 
 }
 
 export function buildStepReport(input: StepReportInput): StepReport {
-  const usage = input.usagePath === undefined ? null : readUsage(input.usagePath);
+  // gh-aw first, the harness's own log second.
+  const session = input.sessionDirs === undefined ? null : readSessionUsage(input.sessionDirs);
+  const harnessLog = input.usagePath === undefined ? null : readUsage(input.usagePath);
+
+  const usage: { tokensIn: number; tokensOut: number; costUsd: number | null; from: StepReport["usage_source"] } | null =
+    session !== null
+      ? { tokensIn: session.tokensIn, tokensOut: session.tokensOut, costUsd: session.costUsd, from: session.from }
+      : harnessLog !== null
+        ? { tokensIn: harnessLog.tokensIn, tokensOut: harnessLog.tokensOut, costUsd: harnessLog.costUsd, from: "harness_log" }
+        : null;
 
   let cost = 0;
   let source: StepReport["cost_source"] = "unknown";
@@ -91,6 +115,7 @@ export function buildStepReport(input: StepReportInput): StepReport {
     tokens: { in: usage?.tokensIn ?? 0, out: usage?.tokensOut ?? 0 },
     cost_usd: cost,
     cost_source: source,
+    ...(usage?.from === undefined ? {} : { usage_source: usage.from }),
     files_changed: [...input.filesChanged],
     transcript: input.transcript,
   };

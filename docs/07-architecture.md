@@ -169,26 +169,36 @@ Every supported harness (Hermes Agent, Claude Code, Kilo Code, pi, Cursor CLI) r
 
 | Harness | How gh-aw runs it |
 | --- | --- |
-| Claude Code, pi | gh-aw's built-in engines |
-| Kilo Code, Cursor CLI, Hermes Agent | `engine.command` with `args`, `env` and `cwd`, running the CLI in its headless mode; the engine definition and its setup steps ship in `/adapters` |
+| Claude Code, pi | gh-aw's built-in engines (`claude`, `pi`) |
+| Kilo Code, Cursor CLI, Hermes Agent | A gh-aw **behaviour-defined engine definition** shipped in `/adapters`, imported by the role workflow and selected by id |
 
 - **The sandbox posture is a compile-time decision.** gh-aw accepts no expression for `sandbox.agent.runtime` — it is a literal from a four-value enum — so the posture cannot come from a repo variable. Phase 2 of setup decides it and phase 6 writes the literal in before compiling; changing it afterwards needs a recompile, which is the recompiler App's job or the skill's repair mode.
 - **`allowed-files` is not usable as a per-pipeline allowlist.** It takes a literal array and is *exclusive*: every file in a patch must match it, so anything unlisted is refused, including ordinary source files. It also accepts no expression. The per-pipeline path allowlist therefore stays with `factory/policy` and gh-aw's `protected-files`, and no role sets `allowed-files`.
-- **`engine.command` skips gh-aw's engine installer, not its sandbox**, so each adapter for these three ships setup steps that install the CLI itself. gh-aw's `engine.harness` can replace prompt delivery entirely, but a replacement owns its own retry, timeout and tool-policy behavior, so adapters stay on `command` + `args` and keep gh-aw's.
+- **Adapters are engine definitions, not `engine.command`** (changed during the build; see Build Plan §Spike). gh-aw accepts a complete engine definition whose `engine.behaviors` carries `installation`, `execution`, `capabilities`, `network.provider-domains` and a `log-parser`. gh-aw then installs the CLI, runs it, and parses its log into the unified session artifact, keeping its own retry, timeout and tool-policy behaviour. `engine.command` would run the binary but leave the factory owning install steps and log parsing; `engine.harness` would replace prompt delivery and its retry behaviour with ours. The definition is the middle option and the one gh-aw's own third-party samples use.
+- **"Adding a harness = one adapter entry" holds only for a well-behaved CLI.** gh-aw's own OpenCode sample needed a ~200-line `harness-script` on top of the definition, plus a custom log parser, and is labelled an unsupported repository sample. A CLI whose headless mode emits clean JSONL needs the definition alone; one that does not needs a harness script, which is a different size of job. Each adapter in `/adapters` records what it still needs, and no harness is shippable until a conformance run proves its step yields token data.
 - **Only the App's safe-output token is a write path.** Each role workflow sets `safe-outputs.github-app` to the factory App, so every safe output is applied with that token and its pushes start `factory-gates`.
 
 ```ts
 interface HarnessAdapter {
   id: "claude-code" | "cursor-cli" | "kilo-code" | "pi" | "hermes-agent";
-  ghawEngine: EngineSpec;   // built-in engine id, or a custom engine definition
-  setupSteps: Step[];       // installs the CLI; engine.command skips gh-aw's own installer
-  memexSource: string;      // memex source name for this harness's session log
-  localHook(): HookInstall; // config that captures local sessions
+  engineId: string;               // the `engine:` a role workflow sets
+  engineDefinition: string | null;// null for gh-aw's built-ins; else the file in /adapters
+  keySecret: string;              // one key covers four; Cursor needs its own
+  memex: {
+    engineLabel: string;          // the engine's name in memex's own table
+    store: string | null;         // the session store memex documents, where it does
+    tokenUsage: "yes" | "credits_only" | "no";
+  };
+  localHook: { path: string; kind: "hooks" | "none" };
+  status: { kind: "builtin" | "definition"; conformance: "passed" | "not_run"; needs: string[] };
 }
 ```
 
-- **Tokens and cost: memex, after every step.** A post-step in each role workflow reads the harness's own session log with **memex** (MIT), which reads token usage for all five harnesses, and prices it with a bundled **LiteLLM** price table only when the log has no cost. The result is the `StepReport`. Agents' own cost reporting is optional and uneven, so the session log is the source of truth.
-- **Past local sessions: memex.** Setup's correction mining and `bsf contribute-corrections` read past sessions for all five harnesses with memex, which already knows where each harness stores them (for example `~/.local/share/kilo/kilo.db`, Hermes's `state.db`).
+- **No adapter hardcodes a memex source name.** memex documents each engine's session store but not its full `--source` list, and a guessed name fails silently: the step reports no tokens and a cost of zero that the budget then believes. Setup asks the installed memex for its sources and matches on the engine label, falling back to the documented store path; when neither matches it refuses the harness and names the sources it did find.
+
+- **Tokens and cost: gh-aw's session evidence first, then memex** (changed during the build). gh-aw already normalizes per-step `totalCostUsd` and token `usage` into `agent-session.jsonl`, and its API proxy meters tokens independently of what the CLI claims, into `token-usage.jsonl` — both inside the agent job, which is where the role workflow's post-step runs. So the order is: gh-aw's normalized session, then its proxy metering, then the harness's own session log read with **memex** (MIT), then the bundled **LiteLLM** price table to price tokens that arrived without a cost. When none of them has it, the report says `cost_source: "unknown"`.
+- **An unknown cost is never written as zero.** The budget pauses pipelines on spend, so a fabricated zero quietly raises the ceiling on what the factory may spend. gh-aw's session specification states the same rule — absence is not zero — and the step report carries a `usage_source` so a missing cost is diagnosable rather than invisible.
+- **Past local sessions: memex.** This is the job gh-aw cannot do, and memex's real reason to be here. Setup's correction mining and `bsf contribute-corrections` read past sessions on the user's own machine for all five harnesses, which memex covers with token counters for each (`~/.local/share/kilo/kilo.db` or `$XDG_DATA_HOME/kilo/kilo.db` for Kilo Code, a local `state.db` for Hermes). One limit worth stating: memex reads Hermes's usage counters and metadata but not its message content, so Hermes sessions can be costed and cannot be mined for corrections.
 - **`StepReport` is mandatory and identical for every harness:** exit status, normalized transcript path, files changed, tokens in/out/cached, cost in USD, duration (format in Schemas & Contracts). A harness whose step yields no token data fails conformance and isn't shippable.
 - **One key for four harnesses.** Claude Code, Kilo Code, pi and Hermes Agent all accept an Anthropic API key directly; Cursor CLI needs a Cursor account and its own key.
 - **Dependencies are pinned.** gh-aw, memex and each harness CLI are pinned to exact versions in the runner release, and the adapter conformance suite runs a real step per harness on every release, so a change in any of them shows up as a failing test, not wrong numbers.

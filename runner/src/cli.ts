@@ -95,9 +95,10 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
       After a push to main: did anything reach main without passing the gates,
       and is every compiled role workflow current with its source?
 
-  bsf step-report --role R --out PATH [--usage PATH] [--exit ok|failed]
-      Write one role's step report. Says the cost is unknown rather than
-      estimating one the budget would then pause on.
+  bsf step-report --role R --out PATH [--usage PATH] [--session-dir PATH]
+      Write one role's step report. Reads gh-aw's own session evidence first,
+      then the harness's log, then the price table — and says the cost is
+      unknown rather than estimating one the budget would then pause on.
 
   bsf validate SCHEMA FILE
       Validate a file against one of the shared schemas.
@@ -787,6 +788,8 @@ function stepReportCommand(args: Args): number {
     filesChanged: changedFilesFromGit(process.cwd()),
     transcript: typeof args["transcript"] === "string" ? args["transcript"] : "",
     ...(typeof args["usage"] === "string" ? { usagePath: args["usage"] } : {}),
+    // gh-aw writes its session evidence under RUNNER_TEMP in the agent job.
+    sessionDirs: sessionDirs(args),
   });
   writeStepReport(out, report);
   process.stdout.write(
@@ -794,6 +797,15 @@ function stepReportCommand(args: Args): number {
       `$${report.cost_usd.toFixed(4)} (${report.cost_source})\n`,
   );
   return 0;
+}
+
+/** Where gh-aw's agent-session.jsonl and token-usage.jsonl may be. */
+function sessionDirs(args: Args): readonly string[] {
+  if (typeof args["session-dir"] === "string") return [args["session-dir"]];
+  const temp = process.env["RUNNER_TEMP"];
+  const dirs = ["/tmp/gh-aw"];
+  if (temp !== undefined && temp !== "") dirs.unshift(`${temp}/gh-aw`, `${temp}/gh-aw/agent`);
+  return dirs;
 }
 
 function parseYamlLazy(text: string): unknown {
