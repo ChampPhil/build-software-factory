@@ -272,3 +272,45 @@ binaries are unreachable, and building from source needs Go 1.27.4 (go.mod)
 against a local Go 1.24.7 with the module proxy unreachable and no vendored
 dependencies. The frontmatter is validated against gh-aw's own schema in the
 test suite instead, which is what caught the four bugs in the first addendum.
+
+## Third addendum — what was already written (Nov 19)
+
+The second addendum concluded that the three harnesses without a gh-aw
+built-in engine were "three integrations of unknown size." That was only
+two-thirds right, and the check that would have caught it is the obvious one:
+look for an existing implementation before writing one.
+
+**gh-aw ships maintained engine definitions for ten third-party CLIs**, in
+`.github/workflows/shared/`: aider, crush, **cursor**, deepseek-harness,
+factory, goose, kiro, langgraph, mini-swe-agent and opencode. Cursor CLI is
+one of the factory's five harnesses, so that adapter is not work to be done —
+it is a file to copy. gh-aw's version installs `cursor-agent` itself from an
+archive pinned to `2026.10.14-941492e`, verifies the binary and cleans up
+after; its `execution.args` are the real headless invocation
+(`-p --force --trust --approve-mcps --output-format stream-json`); it ships a
+log parser, so per-step tokens reach the session artifact the step report
+reads; its `auth` names `CURSOR_API_KEY`; and gh-aw runs
+`engine-conformance-cursor` and `smoke-cursor` against it. It is vendored in
+`/adapters` with its commit recorded, and not edited.
+
+**memex's source names are facts, not guesses.** Its README documents each
+engine's store path but not the `--source` values; its `SourceKind` enum does.
+Read from `src/types.rs`: `claude`, `codex`, `opencode`, `cursor`, `pi`,
+`openclaw`, `copilot`, `omp`, `grok`, `hermes`, `jcode`, `muse`,
+`antigravity`, `bob`, `zcode`, `kiro`, `kilocode`, `kimi`, `goose`. The
+adapters carry these, and setup still verifies them against the installed
+memex, because a rename upstream would otherwise appear only as a step that
+reports zero tokens.
+
+**What is actually left.** Kilo Code and Hermes Agent are the two of the five
+that nothing open-source covers for *running*. memex reads both of their
+session stores, so local correction mining would work; no project ships an
+engine that drives either headlessly. The asymmetry is the state of play: the
+session side is solved for all five, the execution side for three.
+
+**And the set can grow much more cheaply than the spec assumed.** Every engine
+gh-aw ships — thirteen beyond the five named here — is one it already
+installs, runs and parses, so adopting one is a registry entry and a
+conformance run. `GH_AW_ENGINES_NOT_YET_ADOPTED` in `adapters.ts` lists them
+with whether memex reads each one's sessions, so the cost of each is visible
+rather than guessed at.

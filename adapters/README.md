@@ -26,7 +26,39 @@ sample needed a ~200-line `harness-script` on top of the definition to
 reconcile sessions and enforce turn limits, and it is labelled an unsupported
 repository sample. So "add a harness = one adapter entry" holds for a CLI
 whose headless mode emits clean JSONL and nothing else; it does not hold in
-general. Each custom adapter below records what it actually needs.
+general. Each custom adapter records what it actually needs.
+
+**And the thing worth looking for first: someone may have already written it.**
+gh-aw ships maintained engine definitions for ten third-party CLIs in
+`.github/workflows/shared/`, and one of them is Cursor. So `cursor-cli.md`
+here is gh-aw's own file, copied verbatim — self-installing from a pinned
+archive, with the real headless flags, a log parser, `CURSOR_API_KEY` auth,
+and gh-aw's own conformance and smoke workflows run against it. That is
+better than anything this project could write without the CLI in hand. See
+`cursor-cli.NOTES.md`.
+
+## Where each harness stands
+
+| Harness | How it runs | What it still needs |
+| --- | --- | --- |
+| Claude Code | gh-aw built-in engine `claude` | A conformance run |
+| pi | gh-aw built-in engine `pi` | A conformance run |
+| Cursor CLI | gh-aw's own definition, vendored here | A conformance run |
+| Kilo Code | — | gh-aw ships no engine for it, so the definition has to be written, which needs the CLI installed and run |
+| Hermes Agent | — | The same. memex can read its sessions, so local correction mining would work; running it in CI is the gap |
+
+Kilo Code and Hermes Agent are the two of the five that nothing open-source
+covers for *running*: memex reads their session stores, and no project ships
+an engine that drives them headlessly. That asymmetry is the whole state of
+play — the session side is solved for every harness, the execution side is
+solved for three of five.
+
+**Thirteen more engines gh-aw can already run** are listed in
+`GH_AW_ENGINES_NOT_YET_ADOPTED` in `adapters.ts`, including Codex, Copilot,
+OpenCode, goose and Kiro. Each is an engine gh-aw installs, runs and parses
+already, so adopting one is a registry entry plus a conformance run — not an
+integration. Eight of them also have a memex source, so correction mining
+would work too. This is the cheap way the supported set grows.
 
 ## Where tokens and cost come from
 
@@ -50,4 +82,7 @@ So the order is:
 
 memex keeps its other job, which gh-aw cannot do: reading **past local
 sessions** on the user's own machine for correction mining at setup and for
-`bsf contribute-corrections`.
+`bsf contribute-corrections`. Its source names here were read from its own
+`SourceKind` enum rather than guessed — but setup still verifies them against
+the installed memex, because a rename upstream would otherwise show up only
+as a step that reports zero tokens.

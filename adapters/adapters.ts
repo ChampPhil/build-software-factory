@@ -34,6 +34,12 @@ export interface HarnessAdapter {
     /** The engine name memex uses in its own engine-support table. */
     readonly engineLabel: string;
     /**
+     * memex's own `--source` value, read from its `SourceKind` enum rather
+     * than guessed. Still checked against the installed memex at setup, since
+     * a rename there would otherwise fail silently.
+     */
+    readonly source: string;
+    /**
      * Where this harness keeps local sessions, as memex documents it. Used to
      * identify the right source when the name cannot be assumed, and to make a
      * failure diagnosable without reading memex's source. Null where memex
@@ -49,8 +55,13 @@ export interface HarnessAdapter {
 }
 
 export interface AdapterStatus {
-  /** `builtin`: gh-aw ships the engine. `definition`: this directory does. */
-  readonly kind: "builtin" | "definition";
+  /**
+   * - `builtin`: gh-aw ships the engine in its compiler.
+   * - `vendored`: gh-aw ships a maintained engine *definition*, copied here.
+   * - `definition`: this project would have to write the definition, and
+   *   cannot finish it without running the CLI.
+   */
+  readonly kind: "builtin" | "vendored" | "definition";
   /** Set once a real step has run on this harness and produced token data. */
   readonly conformance: "passed" | "not_run";
   /** What this adapter still needs, in plain words. Empty when ready. */
@@ -58,8 +69,9 @@ export interface AdapterStatus {
 }
 
 const NEEDS_CLI_FACTS = [
-  "the CLI's exact headless flags and JSON event shape, confirmed against the installed CLI",
-  "a log parser, because gh-aw ships none for this engine",
+  "gh-aw ships no engine for this CLI, built in or shared, so the definition would have to be written here",
+  "the CLI's exact headless flags and JSON event shape, which needs the CLI installed and run",
+  "a log parser, so per-step tokens reach gh-aw's session artifact",
   "a conformance run proving the step yields token data",
 ] as const;
 
@@ -69,7 +81,7 @@ export const ADAPTERS: Readonly<Record<HarnessId, HarnessAdapter>> = {
     engineId: "claude",
     engineDefinition: null,
     keySecret: "ANTHROPIC_API_KEY",
-    memex: { engineLabel: "Claude Code", store: null, tokenUsage: "yes" },
+    memex: { engineLabel: "Claude Code", source: "claude", store: null, tokenUsage: "yes" },
     localHook: { path: ".claude/settings.json", kind: "hooks" },
     status: {
       kind: "builtin",
@@ -83,7 +95,7 @@ export const ADAPTERS: Readonly<Record<HarnessId, HarnessAdapter>> = {
     engineId: "pi",
     engineDefinition: null,
     keySecret: "ANTHROPIC_API_KEY",
-    memex: { engineLabel: "Pi", store: null, tokenUsage: "yes" },
+    memex: { engineLabel: "Pi", source: "pi", store: null, tokenUsage: "yes" },
     localHook: { path: ".pi/config.json", kind: "none" },
     status: {
       kind: "builtin",
@@ -94,14 +106,18 @@ export const ADAPTERS: Readonly<Record<HarnessId, HarnessAdapter>> = {
 
   "cursor-cli": {
     id: "cursor-cli",
-    engineId: "cursor-cli",
+    // gh-aw's own definition declares the engine as `cursor`, and the id in
+    // the definition is what a role workflow must set.
+    engineId: "cursor",
     engineDefinition: "cursor-cli.md",
     keySecret: "CURSOR_API_KEY",
-    // memex's table: history from agent transcripts, usage from local
-    // databases; it documents no path for either.
-    memex: { engineLabel: "Cursor", store: null, tokenUsage: "yes" },
+    memex: { engineLabel: "Cursor", source: "cursor", store: null, tokenUsage: "yes" },
     localHook: { path: ".cursor/rules", kind: "none" },
-    status: { kind: "definition", conformance: "not_run", needs: [...NEEDS_CLI_FACTS] },
+    status: {
+      kind: "vendored",
+      conformance: "not_run",
+      needs: ["a conformance run proving the step yields token data"],
+    },
   },
 
   "kilo-code": {
@@ -111,6 +127,7 @@ export const ADAPTERS: Readonly<Record<HarnessId, HarnessAdapter>> = {
     keySecret: "ANTHROPIC_API_KEY",
     memex: {
       engineLabel: "KiloCode CLI",
+      source: "kilocode",
       store: "~/.local/share/kilo/kilo.db (or $XDG_DATA_HOME/kilo/kilo.db; KILO_DATA_DIR adds stores)",
       tokenUsage: "yes",
     },
@@ -125,7 +142,7 @@ export const ADAPTERS: Readonly<Record<HarnessId, HarnessAdapter>> = {
     keySecret: "ANTHROPIC_API_KEY",
     // memex reads Hermes's usage counters and metadata only, not message
     // content — enough for a step report, not enough for correction mining.
-    memex: { engineLabel: "Hermes", store: "a local state.db (path undocumented)", tokenUsage: "yes" },
+    memex: { engineLabel: "Hermes", source: "hermes", store: "a local state.db (path undocumented)", tokenUsage: "yes" },
     localHook: { path: ".hermes/config.toml", kind: "none" },
     status: {
       kind: "definition",
@@ -138,10 +155,54 @@ export const ADAPTERS: Readonly<Record<HarnessId, HarnessAdapter>> = {
   },
 };
 
-/** The harnesses whose engine gh-aw already ships, so they can run a role today. */
+/**
+ * The harnesses that can run a role today — those whose engine gh-aw ships,
+ * either built into its compiler or as a maintained definition this project
+ * vendors. Nothing here waits on anyone installing a CLI.
+ */
 export function readyHarnesses(): readonly HarnessId[] {
-  return (Object.keys(ADAPTERS) as HarnessId[]).filter((id) => ADAPTERS[id].status.kind === "builtin");
+  return (Object.keys(ADAPTERS) as HarnessId[]).filter((id) => ADAPTERS[id].status.kind !== "definition");
 }
+
+/**
+ * The harnesses that cannot be finished without the CLI in hand, with the
+ * reason. Kept as a function rather than a list so the answer comes from the
+ * registry and cannot drift from it.
+ */
+export function blockedHarnesses(): readonly { readonly id: HarnessId; readonly needs: readonly string[] }[] {
+  return (Object.keys(ADAPTERS) as HarnessId[])
+    .filter((id) => ADAPTERS[id].status.kind === "definition")
+    .map((id) => ({ id, needs: ADAPTERS[id].status.needs }));
+}
+
+/**
+ * Engines gh-aw can run that this factory does not list as a harness.
+ *
+ * Recorded because it is the cheapest way the supported set can grow: each of
+ * these is an engine gh-aw already installs, runs and parses, so adding one is
+ * a registry entry and a conformance run rather than an integration. The
+ * memex column says whether local correction mining would also work, which is
+ * the only thing gh-aw cannot supply.
+ */
+export const GH_AW_ENGINES_NOT_YET_ADOPTED: readonly {
+  readonly engineId: string;
+  readonly how: "builtin" | "shared definition";
+  readonly memexSource: string | null;
+}[] = [
+  { engineId: "codex", how: "builtin", memexSource: "codex" },
+  { engineId: "copilot", how: "builtin", memexSource: "copilot" },
+  { engineId: "gemini", how: "builtin", memexSource: null },
+  { engineId: "agy", how: "builtin", memexSource: "antigravity" },
+  { engineId: "opencode", how: "shared definition", memexSource: "opencode" },
+  { engineId: "goose", how: "shared definition", memexSource: "goose" },
+  { engineId: "kiro", how: "shared definition", memexSource: "kiro" },
+  { engineId: "aider", how: "shared definition", memexSource: null },
+  { engineId: "crush", how: "shared definition", memexSource: null },
+  { engineId: "factory", how: "shared definition", memexSource: null },
+  { engineId: "langgraph", how: "shared definition", memexSource: null },
+  { engineId: "mini-swe-agent", how: "shared definition", memexSource: null },
+  { engineId: "deepseek-harness", how: "shared definition", memexSource: null },
+];
 
 /** One key covers four of the five; Cursor needs its own account (doc 07). */
 export function keysNeeded(ids: readonly HarnessId[]): readonly string[] {
@@ -155,7 +216,7 @@ export interface MemexSource {
 }
 
 export type MemexResolution =
-  | { readonly ok: true; readonly source: string; readonly how: "engine_label" | "store_path" }
+  | { readonly ok: true; readonly source: string; readonly how: "recorded_name" | "engine_label" | "store_path" }
   | { readonly ok: false; readonly reason: string };
 
 /**
@@ -171,6 +232,10 @@ export function resolveMemexSource(
 ): MemexResolution {
   const adapter = ADAPTERS[id];
   const norm = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+  // memex's own name for this engine, as recorded from its SourceKind enum.
+  const byName = sources.find((s) => norm(s.name) === norm(adapter.memex.source));
+  if (byName !== undefined) return { ok: true, source: byName.name, how: "recorded_name" };
 
   const byLabel = sources.find(
     (s) => norm(s.name) === norm(adapter.memex.engineLabel) || norm(s.engine ?? "") === norm(adapter.memex.engineLabel),

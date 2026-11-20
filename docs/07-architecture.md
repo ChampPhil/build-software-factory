@@ -170,7 +170,8 @@ Every supported harness (Hermes Agent, Claude Code, Kilo Code, pi, Cursor CLI) r
 | Harness | How gh-aw runs it |
 | --- | --- |
 | Claude Code, pi | gh-aw's built-in engines (`claude`, `pi`) |
-| Kilo Code, Cursor CLI, Hermes Agent | A gh-aw **behaviour-defined engine definition** shipped in `/adapters`, imported by the role workflow and selected by id |
+| Cursor CLI | **gh-aw's own engine definition**, vendored in `/adapters` — self-installing from a pinned archive, with its log parser and `CURSOR_API_KEY` auth, and gh-aw's conformance workflows run against it |
+| Kilo Code, Hermes Agent | A behaviour-defined engine definition this project would have to write. gh-aw ships no engine for either, so these cannot be finished without the CLI installed and run; `/adapters` records that rather than shipping a guess |
 
 - **The sandbox posture is a compile-time decision.** gh-aw accepts no expression for `sandbox.agent.runtime` — it is a literal from a four-value enum — so the posture cannot come from a repo variable. Phase 2 of setup decides it and phase 6 writes the literal in before compiling; changing it afterwards needs a recompile, which is the recompiler App's job or the skill's repair mode.
 - **`allowed-files` is not usable as a per-pipeline allowlist.** It takes a literal array and is *exclusive*: every file in a patch must match it, so anything unlisted is refused, including ordinary source files. It also accepts no expression. The per-pipeline path allowlist therefore stays with `factory/policy` and gh-aw's `protected-files`, and no role sets `allowed-files`.
@@ -202,7 +203,7 @@ interface HarnessAdapter {
 - **`StepReport` is mandatory and identical for every harness:** exit status, normalized transcript path, files changed, tokens in/out/cached, cost in USD, duration (format in Schemas & Contracts). A harness whose step yields no token data fails conformance and isn't shippable.
 - **One key for four harnesses.** Claude Code, Kilo Code, pi and Hermes Agent all accept an Anthropic API key directly; Cursor CLI needs a Cursor account and its own key.
 - **Dependencies are pinned.** gh-aw, memex and each harness CLI are pinned to exact versions in the runner release, and the adapter conformance suite runs a real step per harness on every release, so a change in any of them shows up as a failing test, not wrong numbers.
-- **Adding a harness** = one adapter entry (its gh-aw engine and memex source) plus a fixture test.
+- **Adding a harness** = one adapter entry (its gh-aw engine and memex source) plus a conformance run — *when gh-aw already has an engine for it.* That covers more than the five this spec names: gh-aw has built-in engines for Codex, Copilot, Gemini and Antigravity, and maintained definitions for OpenCode, goose, Kiro, aider, crush, Factory, LangGraph, mini-swe-agent and DeepSeek. `adapters.ts` lists them, with whether memex also reads each one's local sessions. When gh-aw has no engine, adding a harness is an integration of unknown size instead, and the two in that position are recorded as such.
 
 ## Data flow
 
