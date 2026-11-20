@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync, existsSync, writeFileSync, mkdirSync } from "node:fs";
 import { readSessionUsage } from "../lib/session.js";
+import type { Harness } from "../lib/types.js";
 import { join, dirname } from "node:path";
 
 /**
@@ -24,7 +25,7 @@ import { join, dirname } from "node:path";
  */
 
 /** The harnesses the schemas name (schema/_common.json). */
-export type Harness = "claude-code" | "cursor-cli" | "kilo-code" | "pi" | "hermes-agent";
+export type { Harness } from "../lib/types.js";
 
 export interface StepReportInput {
   readonly harness: Harness;

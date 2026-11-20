@@ -23,7 +23,10 @@ import { loadFactory } from "./lib/config.js";
 import { fetchWorkItem, writeSpec, fetchArtifact, storeMedia } from "./commands/role-io.js";
 import { gardenScan, gardenFile, hardenContext, reviewCollect, reviewWrite } from "./commands/role-steps.js";
 import { runTestsGate } from "./commands/tests-gate.js";
-import { readFileSync, appendFileSync } from "node:fs";
+import { mineCorrections, listSessions, clusterCorrections, candidatesFrom } from "./commands/mine.js";
+import { mineRepo } from "./commands/mine-repo.js";
+import { readFileSync, appendFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { dirname } from "node:path";
 
 /**
  * `bsf` — the factory's deterministic runner.
@@ -134,6 +137,16 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
 
   bsf review-write --scores PATH [--plan]
       Group the scorer's failures into problems and file each one.
+
+  bsf mine-corrections --list [--repo-path PATH]
+      List the sessions that would be read — date, harness, opening line — and
+      read none of them. Phase 1 shows this to the user first, because these
+      are their private conversations.
+
+  bsf mine-corrections [--exclude ID,ID] [--out PATH] [--source NAME]
+      Read the sessions the user did not exclude and find the moments they
+      corrected an agent. Each one is a rule they already wanted. Writes
+      guardrail candidates; reports and continues if memex is not installed.
 
   bsf validate SCHEMA FILE
       Validate a file against one of the shared schemas.
@@ -276,6 +289,9 @@ async function main(argv: readonly string[]): Promise<number> {
 
     case "step-report":
       return stepReportCommand(args);
+
+    case "mine-corrections":
+      return mineCommand(args);
 
     case "fetch-work-item":
       return fetchWorkItemCommand(command[1], args);
@@ -1034,6 +1050,70 @@ async function gatesTests(args: Args): Promise<number> {
   );
   setOutput("tests_source", result.source);
   return result.conclusion === "failure" ? 1 : 0;
+}
+
+async function mineCommand(args: Args): Promise<number> {
+  const repoPath = typeof args["repo-path"] === "string" ? args["repo-path"] : process.cwd();
+  const sources =
+    typeof args["source"] === "string" ? args["source"].split(",").map((s) => s.trim()) : undefined;
+
+  if (args["list"] === true) {
+    const listing = await listSessions({ repoPath, ...(sources === undefined ? {} : { sources }) });
+    process.stdout.write(`${listing.note}\n`);
+    for (const s of listing.sessions) {
+      process.stdout.write(
+        `  ${(s.at ?? "unknown date").slice(0, 10)}  ${s.source.padEnd(10)} ${s.session}\n` +
+          `${s.opening === "" ? "" : `      ${s.opening}\n`}`,
+      );
+    }
+    setOutput("sessions", String(listing.sessions.length));
+    return 0;
+  }
+
+  const exclude =
+    typeof args["exclude"] === "string"
+      ? args["exclude"].split(",").map((s) => s.trim()).filter((s) => s !== "")
+      : undefined;
+
+  const report = await mineCorrections({
+    repoPath,
+    ...(sources === undefined ? {} : { sources }),
+    ...(exclude === undefined ? {} : { excludeSessions: exclude }),
+  });
+
+  process.stdout.write(`${report.note}\n`);
+
+  // The repository's own history needs no consent and no memex, so it is
+  // mined either way — and on a repo no agent has touched, it is the only
+  // mining that finds anything.
+  const fromRepo = await mineRepo(repoPath);
+  process.stdout.write(
+    `the repository itself: ${fromRepo.reverts.length} revert(s), ${fromRepo.fixes.length} quick fix(es), ` +
+      `${fromRepo.prose.length} written rule(s)\n`,
+  );
+
+  const all = [...report.corrections, ...fromRepo.asCorrections];
+  if (all.length === 0) {
+    setOutput("mined", "0");
+    // Not a failure: setup continues with the rule packs alone.
+    return 0;
+  }
+
+  const clusters = clusterCorrections(all);
+  const candidates = candidatesFrom(clusters, nowIso());
+  const doc = { schema: "candidates/1", candidates };
+  assertValid("candidates", doc);
+
+  for (const c of clusters.slice(0, 10)) {
+    process.stdout.write(`  ${c.occurrences}x  ${c.theme.slice(0, 90)}\n`);
+  }
+
+  const out = typeof args["out"] === "string" ? args["out"] : ".factory/guardrails/candidates.json";
+  mkdirSync(dirname(out), { recursive: true });
+  writeFileSync(out, `${JSON.stringify(doc, null, 2)}\n`);
+  process.stdout.write(`${candidates.length} candidate(s) -> ${out}\n`);
+  setOutput("mined", String(candidates.length));
+  return 0;
 }
 
 function parseYamlLazy(text: string): unknown {

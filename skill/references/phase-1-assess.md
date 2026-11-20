@@ -51,9 +51,20 @@ time.
 | Bug history | issues labelled bug with a linked fix | The bug and its fix |
 | Prose rules | `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`, style guides | Every rule-like sentence: always, never, use X instead of Y |
 
-**Consent comes first.** List the sessions you found — date, harness, first
-message — and let the user exclude any before you read a single one. Then
-redact secrets from every transcript before analysis.
+**Consent comes first.** `bsf mine-corrections --list` names every session it
+would read — date, harness, opening line — and reads nothing else. Show that
+list, let the user exclude any, then `bsf mine-corrections --exclude <ids>`
+reads only the rest. A turn whose session cannot be identified is dropped
+rather than kept, because it might be one they excluded.
+
+Secrets are redacted as each correction is kept, not on the way out: these
+candidates are committed and pushed, and people paste keys into agent chats.
+
+**The repository's own history needs no consent and no memex,** so it is mined
+either way: reverts, fixes that landed within fourteen days of the code they
+fixed, and the rule-shaped sentences in `AGENTS.md`, `CLAUDE.md`,
+`CONTRIBUTING.md` and the rest. On a repo no agent has touched, this is the
+only mining that will find anything.
 
 **Skip generated blocks when mining prose rules.** Tools write into these
 files: `next dev` maintains blocks in `AGENTS.md` marked with
