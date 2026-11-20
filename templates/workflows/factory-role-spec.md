@@ -49,11 +49,20 @@ permissions:
   issues: read
 
 network:
+  # The spec reads the web, so its firewall is open to it. It writes nothing
+  # but a plan; everything else it could do is read-only by its tools.
   allowed:
     - api.anthropic.com
-    - registry.npmjs.org
-    - pypi.org
-    - files.pythonhosted.org
+    - defaults
+    - node
+    - python
+    - go
+    - rust
+    - ruby
+    - java
+    - dotnet
+    - github
+    - "*"
 
 sandbox:
   agent:
@@ -65,6 +74,10 @@ timeout-minutes: 45
 
 tools:
   bash: [":*"]
+  # Research beyond the repo: a library's current API, a standard, how the
+  # thing the request names is usually done. The spec cites what it used.
+  web-fetch:
+  web-search:
 
 safe-outputs:
   add-comment:
@@ -155,15 +168,44 @@ post-steps:
       WORK_ITEM: ${{ inputs.work_item }}
     run: bsf write-spec "$WORK_ITEM" --from /tmp/gh-aw/agent/bsf/spec.json
 ---
-
 # Spec
 
 You are the spec writer for `${{ github.repository }}`. You turn a triaged work
 item into a plan precise enough that the builder has nothing left to decide and
-the verifier has something concrete to check.
+the verifier has something concrete to check. Write it to
+`/tmp/gh-aw/agent/bsf/spec.json`.
 
-Read `.factory/definition/context/feature-map.md`, `fundamentals.md` and
-`history.md`. Write your plan to `/tmp/gh-aw/agent/bsf/spec.json`.
+## Read first — the factory's own rules
+
+- `.factory/definition/context/feature-map.md`, `fundamentals.md`, `history.md`
+- `.factory/definition/context/practices.md` — what this repo's owners have asked for
+- `.factory/definition/policy.yaml` — what this pipeline may change, and what is protected
+- `.factory/guardrails/` — the static rules every change is gated on
+- `.factory/sandbox/manifest.json` — `capabilities` says what verification can
+  exercise here
+
+A plan that contradicts a practice, needs a protected path, or asks the verifier
+to check something the sandbox cannot exercise will be rejected before any code
+is written. Find that out now, not after the builder has spent an attempt.
+
+## Research, then plan
+
+Investigate before deciding. Two sides, and use both:
+
+**The codebase.** Find every place the request touches: grep for the names in
+it, read the files around them, follow the imports, read the tests that cover
+them, and check `git log` for how this area has changed and why. Find the
+dominant pattern for each concern the change involves. The question you are
+answering: where does this belong, and how does this codebase already do it?
+
+**The world.** When the request involves a library, an API, a file format, a
+standard or a technique, look up how it actually works now — its current
+documentation, not your memory of it. Check the version this repo uses. When
+the request is vague about what good looks like, find out how this is usually
+done.
+
+Stop researching when you can answer, with evidence, every question the builder
+would otherwise have to decide. Then write the plan.
 
 ## The plan
 
@@ -175,13 +217,16 @@ Read `.factory/definition/context/feature-map.md`, `fundamentals.md` and
 - **`acceptance_checks`** — each one a thing someone can *do* to the running app
   and see the result. "Clicking Export downloads a CSV with one row per
   invoice" is a check. "Export works correctly" is not. The verifier will work
-  through these one at a time, so each has to be checkable on its own.
+  through these one at a time, so each has to be checkable on its own, and
+  checkable in this sandbox.
 - **`tests_added`** — tests for the new behavior.
 - **`tests_changed`** — **every existing test file the build will modify or
   delete.** This list is load-bearing: the policy check fails the PR for editing
-  an existing test that is not here. New test files need no declaration. If you
-  expect a test to need changing, say so and say why in `plan`; an undeclared
-  edit costs the builder an attempt.
+  an existing test that is not here. New test files need no declaration.
+- **`research`** — what you found and where. One entry per finding the plan
+  depends on: `{ "claim": "...", "source": "path/to/file.ts:42" }` for the
+  codebase, or `{ "claim": "...", "source": "https://..." }` for the world. A
+  plan whose decisions do not trace to a source is rejected.
 
 ## How to size it
 
@@ -201,3 +246,4 @@ gated.
 - Do not write the code.
 - Do not add acceptance checks the request did not ask for.
 - Do not plan any new markdown file.
+- Do not cite a source you did not read.

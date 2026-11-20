@@ -9,6 +9,42 @@ import {
 
 /** Every doc-09 example, as a valid fixture per schema. */
 const valid: Record<SchemaName, unknown> = {
+  // The ts-webapp fixture's real manifest: no services, no variables, renders.
+  sandbox: {
+    "schema": "sandbox/1",
+    "tier": "renders",
+    "tier_reason": null,
+    "commands": {
+      "install": "npm ci --no-audit --no-fund",
+      "build": "npm run build",
+      "run": "npm run dev -- --port 3000",
+      "test": "npm test",
+      "seed": null
+    },
+    "app_url": "http://localhost:3000/invoices",
+    "env": [],
+    "services": [],
+    "egress": [],
+    "stubs": [],
+    "dropped": [],
+    "capabilities": {
+      "exercised": [
+        "the invoices page",
+        "the CSV export download",
+        "the unit tests in lib/ and components/"
+      ],
+      "not_exercised": []
+    },
+    "episode": [
+      {
+        "attempt": 1,
+        "tried": "npm ci, npm test, npm run build, then npm run dev and open /invoices",
+        "observed": "tests pass, the page lists five invoices and the button reads Export 3 invoices as CSV",
+        "changed": null
+      }
+    ],
+    "frozen_at": "2026-11-20T21:40:00Z"
+  },
   "work-item": {
     schema: "work-item/1",
     id: "wi_01JD8Z0000000000000000000A",

@@ -173,14 +173,23 @@ describe("role workflows", () => {
         }
       });
 
-      it("restricts the network to the model API and package registries", () => {
+      it("reaches the model API and every common package ecosystem", () => {
+        // npm and PyPI only meant a Go, Rust, Ruby, Java or .NET repo could
+        // not install its own dependencies inside the agent's sandbox.
         const net = fm["network"] as { allowed?: string[] } | undefined;
-        expect(net?.allowed).toBeDefined();
         expect(net?.allowed).toContain("api.anthropic.com");
+        for (const eco of ["node", "python", "go", "rust", "ruby", "java", "dotnet"]) {
+          expect(net?.allowed, eco).toContain(eco);
+        }
       });
 
-      it("stays within the step time budget, well under the 6-hour job limit", () => {
-        expect(fm["timeout-minutes"]).toBe(45);
+      it("stays within factory.yaml's step time budget, well under the 6-hour job limit", () => {
+        const factory = parseYaml(readFileSync(join(TEMPLATES, "definition/factory.yaml"), "utf8")) as {
+          limits: { step_time_budget_sec: number };
+        };
+        const minutes = fm["timeout-minutes"] as number;
+        expect(minutes * 60).toBeLessThanOrEqual(factory.limits.step_time_budget_sec);
+        expect(minutes).toBeLessThan(360);
       });
     });
   }
@@ -406,9 +415,9 @@ describe("definition templates", () => {
     for (const t of tags) expect(t).toMatch(/^[a-z][a-z0-9_]*$/);
   });
 
-  it("the four context templates exist, because every role reads all four", () => {
+  it("the context templates exist, practices included, because roles read them", () => {
     const files = readdirSync(join(DEF, "context")).sort();
-    expect(files).toEqual(["feature-map.md", "fundamentals.md", "history.md", "runbook.md"]);
+    expect(files).toEqual(["feature-map.md", "fundamentals.md", "history.md", "practices.md", "runbook.md"]);
   });
 
   it("the runbook template warns that the sandbox reads no .env file", () => {

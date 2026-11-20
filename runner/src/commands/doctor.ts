@@ -4,6 +4,7 @@ import { validate, type SchemaName } from "../lib/schema.js";
 import { parseYaml } from "../lib/yaml.js";
 import { staleLockFiles } from "./audit.js";
 import type { GitHub } from "../lib/github.js";
+import { loadManifest } from "./sandbox.js";
 
 /**
  * `bsf doctor` — what is wrong with an installed factory.
@@ -258,7 +259,15 @@ export async function runDoctor(opts: DoctorOptions): Promise<DoctorReport> {
   }
 
   const referenced = referencedInWorkflows(opts.root);
-  const REQUIRED_SECRETS = referenced.secrets.length > 0 ? referenced.secrets : FALLBACK_SECRETS;
+  // FACTORY_SANDBOX_ENV carries test-mode keys for sandboxes that need them.
+  // Every role that starts a sandbox references it, but it is required only
+  // when the manifest actually sources a variable from a secret.
+  const needsSandboxSecret = (() => {
+    const loaded = loadManifest(opts.root);
+    return loaded.kind === "ok" && loaded.manifest.env.some((v) => v.secret !== undefined);
+  })();
+  const fromWorkflows = referenced.secrets.filter((s) => s !== "FACTORY_SANDBOX_ENV" || needsSandboxSecret);
+  const REQUIRED_SECRETS = fromWorkflows.length > 0 ? fromWorkflows : FALLBACK_SECRETS;
   const REQUIRED_VARS = referenced.vars.length > 0 ? referenced.vars : FALLBACK_VARS;
 
   did("secrets");

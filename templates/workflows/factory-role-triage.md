@@ -32,6 +32,8 @@ on:
         required: true
       FACTORY_APP_PRIVATE_KEY:
         required: true
+      FACTORY_SANDBOX_ENV:
+        required: false
 
 github-app:
   client-id: ${{ vars.FACTORY_APP_CLIENT_ID }}
@@ -49,11 +51,19 @@ permissions:
   issues: read
 
 network:
+  # Every common package ecosystem, so the app's dependencies install in any
+  # repo. Extra hosts a sandbox manifest needs are added by a recompile at setup.
   allowed:
     - api.anthropic.com
-    - registry.npmjs.org
-    - pypi.org
-    - files.pythonhosted.org
+    - defaults
+    - node
+    - python
+    - go
+    - rust
+    - ruby
+    - java
+    - dotnet
+    - playwright
 
 sandbox:
   agent:
@@ -125,9 +135,15 @@ pre-agent-steps:
       # the installation covers.
       owner: ${{ github.repository_owner }}
       repositories: ${{ github.event.repository.name }}
-  - name: Start the devcontainer and any services the app needs
+  # The frozen sandbox, as the manifest on the default branch declares it:
+  # its services, its closed environment, its install. It used to be a script
+  # run from the workspace, which on a retry is the PR branch — code from the
+  # change under judgement, running before the agent did.
+  - name: Start the sandbox
     shell: bash
-    run: .factory/sandbox/start.sh
+    env:
+      FACTORY_SANDBOX_ENV: ${{ secrets.FACTORY_SANDBOX_ENV }}
+    run: bsf sandbox start
   - name: Fetch the work item and intake's duplicate shortlist
     shell: bash
     env:
@@ -169,6 +185,15 @@ post-steps:
 You are triage for `${{ github.repository }}`. You decide whether this work
 item is real, understood and worth starting — before anyone spends a model
 budget on building it.
+
+## The factory's own rules
+
+Read these before anything else, and keep to them:
+
+- `.factory/definition/context/practices.md` — what this repo's owners have asked for, in their words
+- `.factory/definition/policy.yaml` — what this pipeline may change, and what is protected
+- `.factory/guardrails/` — the static rules every change is gated on
+
 
 The work item is in `/tmp/gh-aw/agent/bsf/work-item.json`. Read
 `.factory/definition/context/feature-map.md` and `runbook.md` first.

@@ -72,8 +72,9 @@ describe("every call into a reusable workflow grants what that workflow's jobs r
 describe("every runner step that may call GitHub has a token", () => {
   // Found on the first executed run: gate and role steps called GitHub with
   // no token in their environment, so every role would have failed at its
-  // first step. `bsf models` and `--version` read only local files.
-  const LOCAL_ONLY = /\bbsf (models|--version)\b/;
+  // first step. `bsf models`, `--version` and `sandbox start` read only
+  // local files (the trusted copy fetched beside the runner).
+  const LOCAL_ONLY = /\bbsf (models|--version|sandbox start)\b/;
   const files = readdirSync(WORKFLOWS).filter((f) => /^factory-.*\.(yml|md)$/.test(f));
   for (const file of files) {
     it(file, () => {

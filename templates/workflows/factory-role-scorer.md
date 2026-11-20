@@ -49,11 +49,19 @@ permissions:
   issues: read
 
 network:
+  # Every common package ecosystem, so the app's dependencies install in any
+  # repo. Extra hosts a sandbox manifest needs are added by a recompile at setup.
   allowed:
     - api.anthropic.com
-    - registry.npmjs.org
-    - pypi.org
-    - files.pythonhosted.org
+    - defaults
+    - node
+    - python
+    - go
+    - rust
+    - ruby
+    - java
+    - dotnet
+    - playwright
 
 sandbox:
   agent:
@@ -156,6 +164,15 @@ post-steps:
 
 You are a scorer for `${{ github.repository }}`. Every few days you grade the
 factory's recent work so its failures become work rather than folklore.
+
+## The factory's own rules
+
+Read these before anything else, and keep to them:
+
+- `.factory/definition/context/practices.md` — what this repo's owners have asked for, in their words
+- `.factory/definition/policy.yaml` — what this pipeline may change, and what is protected
+- `.factory/guardrails/` — the static rules every change is gated on
+
 
 `/tmp/gh-aw/agent/bsf/to-score.json` has the runs since the last review, each with its
 diff, its spec, its evidence and its gate history, plus the rubric for its

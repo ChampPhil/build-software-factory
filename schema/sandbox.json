@@ -1,0 +1,362 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://build-software-factory.dev/schema/sandbox.json",
+  "title": "Frozen sandbox manifest",
+  "description": "What the sandbox episode found it takes to run this app, written once at the end of setup's phase 2 and changed only by an amendment episode. Gates and roles read it from the default branch. The episode is an agent's work; this file is what makes its result reviewable and reproducible.",
+  "type": "object",
+  "required": [
+    "schema",
+    "tier",
+    "commands",
+    "env",
+    "services",
+    "egress",
+    "stubs",
+    "capabilities",
+    "episode",
+    "frozen_at"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "const": "sandbox/1"
+    },
+    "tier": {
+      "description": "How far verification can go here. renders: the app starts and a browser sees it working. build_and_test: it builds and its tests run, but it cannot be started. static: neither, so only static checks apply. Gates may claim no more than the tier allows.",
+      "type": "string",
+      "enum": [
+        "renders",
+        "build_and_test",
+        "static"
+      ]
+    },
+    "tier_reason": {
+      "description": "Why this tier and not the one above it. Required in practice below renders, because the user should know what stopped it.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "commands": {
+      "description": "Each command the episode ran successfully, or null when this repo has none (no tests, say). Null is a fact about the repo; a missing manifest means the factory does not know.",
+      "type": "object",
+      "required": [
+        "install",
+        "build",
+        "run",
+        "test"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "install": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "build": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "run": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "test": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "seed": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "app_url": {
+      "description": "Where the running app answers inside the sandbox, when the tier is renders.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "env": {
+      "description": "Every variable the sandbox is given, and nothing else is: the environment is closed, so a variable missing here is absent in the sandbox rather than inherited from the runner, and the app fails loudly instead of reaching something real.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "kind",
+          "why"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+          },
+          "kind": {
+            "description": "self: the app's own configuration, set to its correct value (its origin, a domain allowlist). service: points at a throwaway service in the sandbox. stub: points at a local fake that behaves like a third party. test_mode: a provider's own test credential. inert: present so the app starts; any path needing it cannot work here.",
+            "type": "string",
+            "enum": [
+              "self",
+              "service",
+              "stub",
+              "test_mode",
+              "inert"
+            ]
+          },
+          "value": {
+            "description": "The literal value, for anything that is not a secret.",
+            "type": "string"
+          },
+          "secret": {
+            "description": "The name of the repository secret that supplies the value. Never the value.",
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9_]*$"
+          },
+          "why": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "oneOf": [
+          {
+            "properties": {
+              "value": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "value"
+            ]
+          },
+          {
+            "properties": {
+              "secret": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "secret"
+            ]
+          }
+        ],
+        "description": "A literal value or the name of a secret, never both: oneOf fails when both branches match."
+      }
+    },
+    "services": {
+      "description": "Throwaway services the sandbox starts.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "image",
+          "port",
+          "why"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "image": {
+            "type": "string",
+            "minLength": 1
+          },
+          "port": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65535
+          },
+          "why": {
+            "type": "string",
+            "minLength": 1
+          },
+          "env": {
+            "description": "The service's own configuration, e.g. a throwaway database password. Never a real credential.",
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "ready": {
+            "description": "How to tell the service is up: a TCP port check by default.",
+            "type": "string",
+            "enum": [
+              "port"
+            ]
+          }
+        }
+      }
+    },
+    "egress": {
+      "description": "Hosts the sandbox may reach beyond the package registries. Safe to list because no credential of the user's is present.",
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9.*-]+$"
+      }
+    },
+    "stubs": {
+      "description": "Local fakes for third parties the sandbox cannot reach. A fixture captured from a real API goes stale, so where it came from and when is recorded, and staleness is visible rather than discovered.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "replaces",
+          "path",
+          "captured_from",
+          "captured_at"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "replaces": {
+            "type": "string",
+            "minLength": 1
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "captured_from": {
+            "type": "string",
+            "minLength": 1
+          },
+          "captured_at": {
+            "$ref": "_common.json#/$defs/timestamp"
+          }
+        }
+      }
+    },
+    "dropped": {
+      "description": "Instructions from the repo's own container or deploy config that were deliberately not carried into the sandbox, with why. They describe what production does, not what the app needs installed.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "from",
+          "what",
+          "why"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "from": {
+            "type": "string"
+          },
+          "what": {
+            "type": "string"
+          },
+          "why": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "capabilities": {
+      "description": "What verification here can and cannot exercise. The verifier compares a change's paths against this, and a change touching something listed under not_exercised is the signal that opens an amendment episode.",
+      "type": "object",
+      "required": [
+        "exercised",
+        "not_exercised"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "exercised": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "not_exercised": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "what",
+              "why"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "what": {
+                "type": "string",
+                "minLength": 1
+              },
+              "paths": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "why": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      }
+    },
+    "episode": {
+      "description": "Each attempt the agent made: what it tried, what it saw, what it changed. Short, because it is read by people deciding whether to trust the result.",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "attempt",
+          "tried",
+          "observed"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "attempt": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "tried": {
+            "type": "string",
+            "minLength": 1
+          },
+          "observed": {
+            "type": "string",
+            "minLength": 1
+          },
+          "changed": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      }
+    },
+    "amended_by": {
+      "description": "The inadequacy reports that opened amendment episodes, newest last.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "frozen_at": {
+      "$ref": "_common.json#/$defs/timestamp"
+    }
+  }
+}

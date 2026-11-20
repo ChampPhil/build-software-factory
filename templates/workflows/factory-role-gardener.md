@@ -54,11 +54,19 @@ permissions:
   issues: read
 
 network:
+  # Every common package ecosystem, so the app's dependencies install in any
+  # repo. Extra hosts a sandbox manifest needs are added by a recompile at setup.
   allowed:
     - api.anthropic.com
-    - registry.npmjs.org
-    - pypi.org
-    - files.pythonhosted.org
+    - defaults
+    - node
+    - python
+    - go
+    - rust
+    - ruby
+    - java
+    - dotnet
+    - playwright
 
 sandbox:
   agent:
@@ -173,6 +181,15 @@ post-steps:
 You are the gardener for `${{ github.repository }}`. Once a night you look for
 drift and pick what to clean. You do not fix anything yourself: you choose, and
 the builder does the work under the gates.
+
+## The factory's own rules
+
+Read these before anything else, and keep to them:
+
+- `.factory/definition/context/practices.md` — what this repo's owners have asked for, in their words
+- `.factory/definition/policy.yaml` — what this pipeline may change, and what is protected
+- `.factory/guardrails/` — the static rules every change is gated on
+
 
 `/tmp/gh-aw/agent/bsf/drift.json` has the raw material: baseline counts per rule per file,
 the ledger's open PRs and what each is fixing, and what merged in the last 14

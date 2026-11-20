@@ -2088,8 +2088,12 @@
         "enum": [
           "\"feature-map\"",
           "\"fundamentals\"",
+          "\"guardrails\"",
           "\"history\"",
-          "\"runbook\""
+          "\"policy\"",
+          "\"practices\"",
+          "\"runbook\"",
+          "\"sandbox\""
         ]
       },
       "/properties/tools": {
@@ -2103,7 +2107,8 @@
           "\"edit\"",
           "\"git\"",
           "\"read\"",
-          "\"shell\""
+          "\"shell\"",
+          "\"web\""
         ]
       },
       "/properties/prompt": {
@@ -2722,6 +2727,371 @@
       "/properties/human_interactions/properties/total": {
         "type": "integer",
         "minimum": 0
+      }
+    },
+    "sandbox.json": {
+      "/": {
+        "type": "object",
+        "properties": [
+          "amended_by",
+          "app_url",
+          "capabilities",
+          "commands",
+          "dropped",
+          "egress",
+          "env",
+          "episode",
+          "frozen_at",
+          "schema",
+          "services",
+          "stubs",
+          "tier",
+          "tier_reason"
+        ],
+        "required": [
+          "capabilities",
+          "commands",
+          "egress",
+          "env",
+          "episode",
+          "frozen_at",
+          "schema",
+          "services",
+          "stubs",
+          "tier"
+        ],
+        "additionalProperties": false
+      },
+      "/properties/schema": {
+        "const": "\"sandbox/1\""
+      },
+      "/properties/tier": {
+        "type": "string",
+        "enum": [
+          "\"build_and_test\"",
+          "\"renders\"",
+          "\"static\""
+        ]
+      },
+      "/properties/tier_reason": {
+        "type": "null|string"
+      },
+      "/properties/commands": {
+        "type": "object",
+        "properties": [
+          "build",
+          "install",
+          "run",
+          "seed",
+          "test"
+        ],
+        "required": [
+          "build",
+          "install",
+          "run",
+          "test"
+        ],
+        "additionalProperties": false
+      },
+      "/properties/commands/properties/install": {
+        "type": "null|string"
+      },
+      "/properties/commands/properties/build": {
+        "type": "null|string"
+      },
+      "/properties/commands/properties/run": {
+        "type": "null|string"
+      },
+      "/properties/commands/properties/test": {
+        "type": "null|string"
+      },
+      "/properties/commands/properties/seed": {
+        "type": "null|string"
+      },
+      "/properties/app_url": {
+        "type": "null|string"
+      },
+      "/properties/env": {
+        "type": "array"
+      },
+      "/properties/env/items": {
+        "type": "object",
+        "properties": [
+          "kind",
+          "name",
+          "secret",
+          "value",
+          "why"
+        ],
+        "required": [
+          "kind",
+          "name",
+          "why"
+        ],
+        "additionalProperties": false
+      },
+      "/properties/env/items/properties/name": {
+        "type": "string",
+        "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+      },
+      "/properties/env/items/properties/kind": {
+        "type": "string",
+        "enum": [
+          "\"inert\"",
+          "\"self\"",
+          "\"service\"",
+          "\"stub\"",
+          "\"test_mode\""
+        ]
+      },
+      "/properties/env/items/properties/value": {
+        "type": "string"
+      },
+      "/properties/env/items/properties/secret": {
+        "type": "string",
+        "pattern": "^[A-Z][A-Z0-9_]*$"
+      },
+      "/properties/env/items/properties/why": {
+        "type": "string",
+        "minLength": 1
+      },
+      "/properties/env/items/oneOf/0": {
+        "properties": [
+          "value"
+        ],
+        "required": [
+          "value"
+        ]
+      },
+      "/properties/env/items/oneOf/0/properties/value": {
+        "type": "string"
+      },
+      "/properties/env/items/oneOf/1": {
+        "properties": [
+          "secret"
+        ],
+        "required": [
+          "secret"
+        ]
+      },
+      "/properties/env/items/oneOf/1/properties/secret": {
+        "type": "string"
+      },
+      "/properties/services": {
+        "type": "array"
+      },
+      "/properties/services/items": {
+        "type": "object",
+        "properties": [
+          "env",
+          "image",
+          "name",
+          "port",
+          "ready",
+          "why"
+        ],
+        "required": [
+          "image",
+          "name",
+          "port",
+          "why"
+        ],
+        "additionalProperties": false
+      },
+      "/properties/services/items/properties/name": {
+        "type": "string",
+        "minLength": 1
+      },
+      "/properties/services/items/properties/image": {
+        "type": "string",
+        "minLength": 1
+      },
+      "/properties/services/items/properties/port": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 65535
+      },
+      "/properties/services/items/properties/why": {
+        "type": "string",
+        "minLength": 1
+      },
+      "/properties/services/items/properties/env": {
+        "type": "object"
+      },
+      "/properties/services/items/properties/env/additionalProperties": {
+        "type": "string"
+      },
+      "/properties/services/items/properties/ready": {
+        "type": "string",
+        "enum": [
+          "\"port\""
+        ]
+      },
+      "/properties/egress": {
+        "type": "array"
+      },
+      "/properties/egress/items": {
+        "type": "string",
+        "pattern": "^[a-z0-9.*-]+$"
+      },
+      "/properties/stubs": {
+        "type": "array"
+      },
+      "/properties/stubs/items": {
+        "type": "object",
+        "properties": [
+          "captured_at",
+          "captured_from",
+          "name",
+          "path",
+          "replaces"
+        ],
+        "required": [
+          "captured_at",
+          "captured_from",
+          "name",
+          "path",
+          "replaces"
+        ],
+        "additionalProperties": false
+      },
+      "/properties/stubs/items/properties/name": {
+        "type": "string",
+        "minLength": 1
+      },
+      "/properties/stubs/items/properties/replaces": {
+        "type": "string",
+        "minLength": 1
+      },
+      "/properties/stubs/items/properties/path": {
+        "type": "string",
+        "minLength": 1
+      },
+      "/properties/stubs/items/properties/captured_from": {
+        "type": "string",
+        "minLength": 1
+      },
+      "/properties/stubs/items/properties/captured_at": {
+        "ref": "_common.json#/$defs/timestamp"
+      },
+      "/properties/dropped": {
+        "type": "array"
+      },
+      "/properties/dropped/items": {
+        "type": "object",
+        "properties": [
+          "from",
+          "what",
+          "why"
+        ],
+        "required": [
+          "from",
+          "what",
+          "why"
+        ],
+        "additionalProperties": false
+      },
+      "/properties/dropped/items/properties/from": {
+        "type": "string"
+      },
+      "/properties/dropped/items/properties/what": {
+        "type": "string"
+      },
+      "/properties/dropped/items/properties/why": {
+        "type": "string",
+        "minLength": 1
+      },
+      "/properties/capabilities": {
+        "type": "object",
+        "properties": [
+          "exercised",
+          "not_exercised"
+        ],
+        "required": [
+          "exercised",
+          "not_exercised"
+        ],
+        "additionalProperties": false
+      },
+      "/properties/capabilities/properties/exercised": {
+        "type": "array"
+      },
+      "/properties/capabilities/properties/exercised/items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "/properties/capabilities/properties/not_exercised": {
+        "type": "array"
+      },
+      "/properties/capabilities/properties/not_exercised/items": {
+        "type": "object",
+        "properties": [
+          "paths",
+          "what",
+          "why"
+        ],
+        "required": [
+          "what",
+          "why"
+        ],
+        "additionalProperties": false
+      },
+      "/properties/capabilities/properties/not_exercised/items/properties/what": {
+        "type": "string",
+        "minLength": 1
+      },
+      "/properties/capabilities/properties/not_exercised/items/properties/paths": {
+        "type": "array"
+      },
+      "/properties/capabilities/properties/not_exercised/items/properties/paths/items": {
+        "type": "string"
+      },
+      "/properties/capabilities/properties/not_exercised/items/properties/why": {
+        "type": "string",
+        "minLength": 1
+      },
+      "/properties/episode": {
+        "type": "array",
+        "minItems": 1
+      },
+      "/properties/episode/items": {
+        "type": "object",
+        "properties": [
+          "attempt",
+          "changed",
+          "observed",
+          "tried"
+        ],
+        "required": [
+          "attempt",
+          "observed",
+          "tried"
+        ],
+        "additionalProperties": false
+      },
+      "/properties/episode/items/properties/attempt": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "/properties/episode/items/properties/tried": {
+        "type": "string",
+        "minLength": 1
+      },
+      "/properties/episode/items/properties/observed": {
+        "type": "string",
+        "minLength": 1
+      },
+      "/properties/episode/items/properties/changed": {
+        "type": "null|string"
+      },
+      "/properties/amended_by": {
+        "type": "array"
+      },
+      "/properties/amended_by/items": {
+        "type": "string"
+      },
+      "/properties/frozen_at": {
+        "ref": "_common.json#/$defs/timestamp"
       }
     },
     "step-report.json": {

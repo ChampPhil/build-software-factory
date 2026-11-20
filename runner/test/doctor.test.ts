@@ -240,6 +240,9 @@ describe("what only the API can tell us", () => {
   it("catches a missing variable", async () => {
     const r = await runDoctor({ root, gh: fakeGh({ variables: { variables: [] } }) as never });
     expect(broken(r).map((f) => f.detail).join(" ")).toContain("FACTORY_APP_CLIENT_ID");
+    // The sandbox secret is referenced by every role that starts a sandbox,
+    // but needed only when the manifest sources a variable from it.
+    expect(broken(r).map((f) => f.detail).join(" ")).not.toContain("FACTORY_SANDBOX_ENV");
     // Models are inputs read from factory.yaml now, not variables, so a repo
     // with no FACTORY_MODEL_* variables is not broken.
     expect(broken(r).map((f) => f.detail).join(" ")).not.toContain("FACTORY_MODEL");
@@ -306,7 +309,7 @@ describe("requirements are read from the installed workflows", () => {
     // with them.
     // beforeEach has installed the templates into root.
     const r = referencedInWorkflows(root);
-    expect(r.secrets).toEqual(["ANTHROPIC_API_KEY", "FACTORY_APP_PRIVATE_KEY"]);
+    expect(r.secrets).toEqual(["ANTHROPIC_API_KEY", "FACTORY_APP_PRIVATE_KEY", "FACTORY_SANDBOX_ENV"]);
     expect(r.vars).toEqual(["FACTORY_APP_CLIENT_ID"]);
     expect(r.optionalVars).toEqual([]);
   });

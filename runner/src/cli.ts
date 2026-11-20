@@ -44,7 +44,8 @@ import { runReviewDue, runReviewRoute, type ScoredFailure } from "./commands/rev
 import { planRun, afterGates } from "./commands/run-plan.js";
 import { buildStepReport, writeStepReport, changedFilesFromGit, type Harness } from "./commands/step-report.js";
 import { pausedPipelines, type BudgetState } from "./commands/rollup.js";
-import { loadFactory, resolveRead } from "./lib/config.js";
+import { loadFactory } from "./lib/config.js";
+import { startSandbox, loadManifest, loadManifestAt } from "./commands/sandbox.js";
 import { fetchWorkItem, writeSpec, fetchArtifact, storeMedia } from "./commands/role-io.js";
 import { gardenScan, gardenFile, hardenContext, reviewCollect, reviewWrite } from "./commands/role-steps.js";
 import { runTestsGate } from "./commands/tests-gate.js";
@@ -197,6 +198,10 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
       problems are added — what the skill's update mode needs, since one the
       user already rejected must not be offered again.
 
+  bsf sandbox start
+      Bring up the frozen sandbox: its services, its closed environment, its install.
+  bsf sandbox check [--file PATH]
+      Validate a sandbox manifest.
   bsf models
       Emit each role's model and the gardening budget from factory.yaml as step outputs.
   bsf consistency [--root PATH] [--json]
@@ -404,6 +409,8 @@ async function main(argv: readonly string[]): Promise<number> {
       return consistencyCommand(args);
     case "models":
       return modelsCommand();
+    case "sandbox":
+      return sandboxCommandCli(second, args);
 
     case "dashboard":
       return dashboardCommand(args);
@@ -712,18 +719,16 @@ function runnerVersion(): string {
  */
 type SandboxCommand =
   | { readonly kind: "no_manifest" }
+  | { readonly kind: "invalid"; readonly errors: readonly string[] }
   | { readonly kind: "none" }
   | { readonly kind: "command"; readonly command: string };
 
 function sandboxCommand(name: "test" | "build", root = process.cwd()): SandboxCommand {
-  let m: { commands?: Record<string, unknown> };
-  try {
-    m = JSON.parse(readFileSync(resolveRead(root, ".factory/sandbox/manifest.json"), "utf8")) as typeof m;
-  } catch {
-    return { kind: "no_manifest" };
-  }
-  const c = m.commands?.[name];
-  return typeof c === "string" && c.trim() !== "" ? { kind: "command", command: c } : { kind: "none" };
+  const loaded = loadManifest(root);
+  if (loaded.kind === "missing") return { kind: "no_manifest" };
+  if (loaded.kind === "invalid") return { kind: "invalid", errors: loaded.errors };
+  const c = loaded.manifest.commands[name];
+  return c === null || c.trim() === "" ? { kind: "none" } : { kind: "command", command: c };
 }
 
 /** Just the command, for callers that treat "none" and "unknown" alike. */
@@ -1123,6 +1128,33 @@ async function auditCommand(args: Args): Promise<number> {
  * every role would have started with an empty model. factory.yaml is the one
  * place a model is chosen; there is no second copy to keep in step.
  */
+async function sandboxCommandCli(second: string | undefined, args: Args): Promise<number> {
+  if (second === "start") {
+    const r = await startSandbox({
+      root: process.cwd(),
+      workspace: process.env["GITHUB_WORKSPACE"] ?? process.cwd(),
+      ...(process.env["FACTORY_SANDBOX_ENV"] === undefined ? {} : { secretBlob: process.env["FACTORY_SANDBOX_ENV"] }),
+    });
+    process.stdout.write(
+      `sandbox up: tier ${r.tier}; services ${r.services.join(", ") || "none"}; ` +
+        `${r.envNames.length} variable(s) in ${r.envFile}\n`,
+    );
+    setOutput("tier", r.tier);
+    return 0;
+  }
+  if (second === "check") {
+    const file = typeof args["file"] === "string" ? args["file"] : undefined;
+    const loaded = file === undefined ? loadManifest(process.cwd()) : loadManifestAt(file);
+    if (loaded.kind === "ok") {
+      process.stdout.write(`valid sandbox manifest, tier ${loaded.manifest.tier}\n`);
+      return 0;
+    }
+    process.stderr.write(loaded.kind === "missing" ? "no sandbox manifest\n" : `invalid:\n  ${loaded.errors.join("\n  ")}\n`);
+    return 1;
+  }
+  die("usage: bsf sandbox start | check [--file PATH]");
+}
+
 async function modelsCommand(): Promise<number> {
   const cfg = await factoryConfig();
   const models = cfg.models ?? {};
@@ -1589,6 +1621,13 @@ async function gatesTests(args: Args): Promise<number> {
   // tests. Reported neutral, it read as "nothing to run" on a repo with a
   // perfectly good `npm test`, and the aggregate gate would have passed a
   // change no test had seen.
+  if (test.kind === "invalid") {
+    const summary = `The sandbox manifest on the default branch is invalid, so the tests cannot be run:\n${test.errors.join("\n")}`;
+    process.stdout.write(`${summary}\n`);
+    await maybeReportCheck(args, "failure", "Sandbox manifest invalid", summary, "factory/gate-tests");
+    setOutput("tests_source", "invalid_manifest");
+    return 1;
+  }
   if (test.kind === "no_manifest" && existingCheck === null) {
     const summary =
       "The factory does not know how to run this repo's tests: there is no .factory/sandbox/manifest.json, " +
