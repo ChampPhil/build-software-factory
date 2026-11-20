@@ -1,0 +1,26 @@
+# The sign-in Worker. Optional: without it the dashboard asks for a
+# fine-grained token instead (doc 08).
+#
+# Deploy:
+#   cd worker
+#   npx wrangler secret put GITHUB_CLIENT_SECRET
+#   npx wrangler deploy
+#
+# GITHUB_CLIENT_SECRET is a secret and is never in this file. The client id is
+# not a secret but is still set per deployment, because it differs per OAuth app.
+
+name = "bsf-signin"
+main = "src/index.ts"
+compatibility_date = "2026-01-01"
+
+[vars]
+# Set these for your own deployment.
+GITHUB_CLIENT_ID = ""
+# Exact origins, comma-separated. Not a wildcard, and not a suffix match: a
+# token-minting endpoint any page could call is an open credential redirect.
+ALLOWED_ORIGINS = ""
+
+[observability]
+enabled = true
+# Request bodies are not logged. The exchange's body carries the OAuth code
+# and its response carries an access token.
