@@ -16,7 +16,7 @@ import { GATE_CHECKS, GATES_CHECK } from "./gates-run.js";
 
 export const gateFailuresPath = (workItem: string): string => `gate-failures/${workItem}.json`;
 
-type Status = "queued" | "running" | "in_review" | "escalated";
+type Status = "queued" | "running" | "in_review" | "escalated" | "needs_info" | "rejected" | "duplicate";
 
 interface WorkItemDoc {
   readonly id: string;
@@ -174,7 +174,7 @@ async function gateChecks(gh: GitHub, sha: string): Promise<readonly GateCheck[]
 }
 
 export interface AfterGatesReport {
-  readonly next: AfterGates["next"] | "no_pr" | "timed_out";
+  readonly next: AfterGates["next"] | "no_pr" | "timed_out" | "stood_down";
   readonly reason: string;
   readonly pr: number | null;
   readonly attempt: number;
@@ -206,6 +206,14 @@ export async function finishRun(opts: FinishRunOptions): Promise<AfterGatesRepor
   const item = await store.get<WorkItemDoc>(workItemPath(opts.workItem), "work-item");
   if (item === null) throw new Error(`${opts.workItem} is not on the data ref`);
   const pr = opts.pr !== null && opts.pr > 0 ? opts.pr : null;
+
+  // Triage (or a person) already decided what became of the item: needs
+  // info, out of scope, a duplicate. There is nothing to gate and nothing to
+  // retry; the run only ends its live record.
+  if (item.status !== "running") {
+    await store.put([{ path: livePath(opts.runId), content: null }], `run ${opts.runId}: ${item.id} stood down (${item.status})`);
+    return { next: "stood_down", reason: `${item.id} is ${item.status}`, pr, attempt: opts.attempt };
+  }
 
   let report: AfterGatesReport;
   let failures: unknown = null;
@@ -291,4 +299,62 @@ export async function finishRun(opts: FinishRunOptions): Promise<AfterGatesRepor
 function issueNumber(ref: string | null | undefined): number | null {
   const m = /^#(\d+)$/.exec(ref ?? "");
   return m === null ? null : Number(m[1]);
+}
+
+/* ------------------------------------------------------------------ triage */
+
+export const TRIAGE_OUTCOMES = ["proceed", "needs_info", "out_of_scope", "duplicate"] as const;
+export type TriageOutcome = (typeof TRIAGE_OUTCOMES)[number];
+
+export interface TriageResult {
+  readonly outcome: TriageOutcome;
+  readonly reason: string;
+  readonly duplicate_of?: string;
+}
+
+/** Problems with a triage result, or none. */
+export function triageProblems(r: unknown): readonly string[] {
+  if (typeof r !== "object" || r === null) return ["the triage result is not an object"];
+  const o = r as Record<string, unknown>;
+  const out: string[] = [];
+  if (!TRIAGE_OUTCOMES.includes(o["outcome"] as TriageOutcome)) out.push(`outcome must be one of ${TRIAGE_OUTCOMES.join(", ")}`);
+  if (typeof o["reason"] !== "string" || o["reason"].trim() === "") out.push("reason is required");
+  if (o["outcome"] === "duplicate" && (typeof o["duplicate_of"] !== "string" || !/^wi_[0-9A-HJKMNP-TV-Z]{26}$/.test(o["duplicate_of"]))) {
+    out.push("a duplicate names the work item it duplicates in duplicate_of (wi_…)");
+  }
+  return out;
+}
+
+const TRIAGE_STATUS: Record<TriageOutcome, Status> = {
+  proceed: "running",
+  needs_info: "needs_info",
+  out_of_scope: "rejected",
+  duplicate: "duplicate",
+};
+
+/** Apply triage's outcome to the item, which is what tells the rest of the run whether to go on. */
+export async function writeTriage(gh: GitHub, workItem: string, result: TriageResult, now: string): Promise<Status> {
+  const store = new FactoryStore(gh);
+  const item = await store.get<WorkItemDoc & { related?: readonly string[] }>(workItemPath(workItem), "work-item");
+  if (item === null) throw new Error(`${workItem} is not on the data ref`);
+  const status = TRIAGE_STATUS[result.outcome];
+  if (status === item.status) return status;
+  const related =
+    result.duplicate_of === undefined ? item.related ?? [] : [...new Set([...(item.related ?? []), result.duplicate_of])];
+  const ledger = await store.ledger(now);
+  await store.put(
+    [
+      { path: workItemPath(item.id), content: json({ ...item, status, related }) },
+      { path: LEDGER, content: json(withStatus(ledger, item, status, null, now)) },
+    ],
+    `triage: ${item.id} ${result.outcome}`,
+  );
+  return status;
+}
+
+/** Whether the run should go on past triage: the item is still the run's. */
+export async function itemStatus(gh: GitHub, workItem: string): Promise<string> {
+  const item = await new FactoryStore(gh).get<WorkItemDoc>(workItemPath(workItem), "work-item");
+  if (item === null) throw new Error(`${workItem} is not on the data ref`);
+  return item.status;
 }

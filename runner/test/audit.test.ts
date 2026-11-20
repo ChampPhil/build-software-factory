@@ -132,7 +132,7 @@ describe("the App-rename check", () => {
       configuredAppLogins: [],
     });
     expect(r.findings.find((x) => x.kind === "app_login_stale")?.detail).toContain(
-      "FACTORY_APP_LOGINS is not set",
+      "FACTORY_APP_LOGINS was not passed to this step",
     );
   });
 

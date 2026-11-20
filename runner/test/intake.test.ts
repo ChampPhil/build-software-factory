@@ -276,3 +276,39 @@ describe("a /practice from a maintainer becomes definition work", () => {
     expect(res.decisions[0]?.workItem).toBeNull();
   });
 });
+
+describe("events on an issue that already has an open item", () => {
+  const open = (status: string) => ctx({ openItems: [{ work_item: "wi_open", status, pipeline: "product_work", source_ref: "#142" }] });
+
+  it("a comment is conversation on that item, not a second item for the same request", () => {
+    const d = runIntake([ev({ kind: "issue_comment", body: "any update?" })], open("running")).decisions[0];
+    expect(d?.outcome).toBe("context_for_open_item");
+    expect(d?.workItem).toBeNull();
+  });
+
+  it("a trusted reply to a needs-info item answers it and puts it back in the queue", () => {
+    const d = runIntake([ev({ kind: "issue_comment", body: "it is the CSV export" })], open("needs_info")).decisions[0];
+    expect(d).toMatchObject({ outcome: "answers_open_item", openItem: "wi_open" });
+  });
+
+  it("an untrusted reply does not re-queue it", () => {
+    const d = runIntake([ev({ kind: "issue_comment", actor: "stranger", actor_association: "NONE" })], open("needs_info")).decisions[0];
+    expect(d?.outcome).toBe("context_for_open_item");
+  });
+
+  it("the accept label admits an item that was waiting for trust", () => {
+    const d = runIntake([ev({ kind: "issue_labeled", labels: ["factory:accept"] })], open("waiting_trust")).decisions[0];
+    expect(d).toMatchObject({ outcome: "admits_open_item", openItem: "wi_open" });
+  });
+
+  it("an issue with no open item still becomes one", () => {
+    expect(runIntake([ev({ kind: "issue_comment", ref: "#999" })], open("running")).decisions[0]?.outcome).toBe("queued");
+  });
+});
+
+describe("bots", () => {
+  it("a bot's comment never becomes a work item, so the factory's own comments do not come back in", () => {
+    const d = runIntake([ev({ kind: "issue_comment", actor: "factory-app[bot]", actor_is_bot: true, ref: "#7" })], ctx()).decisions[0];
+    expect(d?.outcome).toBe("ignored_bot");
+  });
+});

@@ -236,6 +236,7 @@ export async function runIntakeCommand(opts: IntakeRunOptions): Promise<IntakeRu
     status: o.status,
     pipeline: o.pipeline as LedgerOpenItem["pipeline"],
     ...(o.fingerprint === undefined ? {} : { fingerprint: o.fingerprint }),
+    ...(o.source_ref === undefined ? {} : { source_ref: o.source_ref }),
   }));
 
   const result = runIntake(queued, {
@@ -257,7 +258,21 @@ export async function runIntakeCommand(opts: IntakeRunOptions): Promise<IntakeRu
   });
 
   const changes: Change[] = [];
-  const newItems: { id: string; priority: "high" | "normal"; pipeline: string; created_at: string; fingerprint: string; status: string }[] = [];
+  const newItems: { id: string; priority: "high" | "normal"; pipeline: string; created_at: string; fingerprint: string; status: string; source_ref: string | null }[] = [];
+
+  // Answers and admissions put an existing item back in the queue.
+  const requeued = new Map<string, string>();
+  for (const d of result.decisions) {
+    if ((d.outcome !== "answers_open_item" && d.outcome !== "admits_open_item") || d.openItem === undefined) continue;
+    const doc = await store.get<{ status: string; body: string } & Record<string, unknown>>(workItemPath(d.openItem), "work-item");
+    if (doc === null) continue;
+    const body =
+      d.outcome === "answers_open_item" && (d.event.body ?? "").trim() !== ""
+        ? `${doc.body}\n\nAnswer from @${d.event.actor}:\n${d.event.body ?? ""}`
+        : doc.body;
+    changes.push({ path: workItemPath(d.openItem), content: json({ ...doc, status: "queued", body }) });
+    requeued.set(d.openItem, "queued");
+  }
 
   for (const d of result.decisions) {
     if (d.workItem === null) continue;
@@ -269,15 +284,16 @@ export async function runIntakeCommand(opts: IntakeRunOptions): Promise<IntakeRu
       created_at: d.workItem.created_at,
       fingerprint: d.workItem.fingerprint,
       status: d.workItem.status,
+      source_ref: d.workItem.source.ref,
     });
   }
 
-  if (newItems.length > 0 || result.cursor !== cursor) {
+  if (newItems.length > 0 || requeued.size > 0 || result.cursor !== cursor) {
     const nextLedger = {
       ...ledger,
       updated_at: opts.now,
       open: [
-        ...ledger.open,
+        ...ledger.open.map((o) => (requeued.has(o.work_item) ? { ...o, status: "queued" } : o)),
         ...newItems
           .filter((i) => !ledger.open.some((o) => o.work_item === i.id))
           .map((i) => ({
@@ -287,6 +303,7 @@ export async function runIntakeCommand(opts: IntakeRunOptions): Promise<IntakeRu
             fingerprint: i.fingerprint,
             priority: i.priority,
             created_at: i.created_at,
+            source_ref: i.source_ref,
           })),
       ],
     };
@@ -311,7 +328,7 @@ export async function runIntakeCommand(opts: IntakeRunOptions): Promise<IntakeRu
   const queuedItems = [
     ...newItems.filter((i) => i.status === "queued"),
     ...ledger.open
-      .filter((o) => o.status === "queued" && !newItems.some((i) => i.id === o.work_item))
+      .filter((o) => (o.status === "queued" || requeued.has(o.work_item)) && !newItems.some((i) => i.id === o.work_item))
       .map((o) => ({
         id: o.work_item,
         pipeline: o.pipeline,

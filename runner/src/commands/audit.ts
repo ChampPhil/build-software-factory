@@ -126,8 +126,9 @@ async function appLoginDrift(opts: AuditOptions): Promise<readonly AuditFinding[
       {
         kind: "app_login_stale",
         detail:
-          "FACTORY_APP_LOGINS is not set, so an App's request for changes is not recognised " +
-          "as a gate signal. Setup stores it; set it to <app-slug>[bot] if setup predates that.",
+          "FACTORY_APP_LOGINS was not passed to this step, so an App's request for changes is not " +
+          "recognised as a gate signal. The factory workflows pass the token step's app-slug; " +
+          "a workflow that does not was edited or predates that, and re-running the installer restores it.",
       },
     ];
   }

@@ -40,6 +40,7 @@ export interface WorkItemSummary {
   readonly fingerprint?: string;
   readonly pr?: number | null;
   readonly fixes?: readonly string[];
+  readonly source_ref?: string | null;
 }
 
 export interface RollupInput {

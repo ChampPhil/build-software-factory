@@ -69,8 +69,8 @@ export async function readAll(store: FactoryStore): Promise<{
   }
   const workItems: WorkItemSummary[] = [];
   for (const p of itemPaths) {
-    const doc = await store.get<WorkItemSummary>(p, "work-item");
-    if (doc !== null) workItems.push(doc);
+    const doc = await store.get<WorkItemSummary & { source?: { ref?: string | null } }>(p, "work-item");
+    if (doc !== null) workItems.push({ ...doc, source_ref: doc.source?.ref ?? null });
   }
   return { runs, workItems };
 }
@@ -127,6 +127,7 @@ export async function runRollupCommand(opts: RollupOptions): Promise<RollupRepor
       ...(i.fingerprint === undefined ? {} : { fingerprint: i.fingerprint }),
       ...(i.pr == null ? {} : { pr: i.pr }),
       ...(i.fixes === undefined ? {} : { fixes: [...i.fixes] }),
+      ...(i.source_ref == null ? {} : { source_ref: i.source_ref }),
     })),
     recent: result.recentItems.map((i) => ({
       work_item: i.id,

@@ -437,7 +437,6 @@ function storedNames(kind) {
     : [
         "variable  FACTORY_APP_CLIENT_ID",
         "variable  FACTORY_APP_ID",
-        "variable  FACTORY_APP_LOGINS",
         "secret    FACTORY_APP_PRIVATE_KEY",
       ];
 }
@@ -452,15 +451,6 @@ function storeCredentials({ repo, kind, app }) {
   gh(["variable", "set", `${prefix}_CLIENT_ID`, "--repo", repo, "--body", String(app.client_id)]);
   if (kind !== "recompiler") {
     gh(["variable", "set", `${prefix}_ID`, "--repo", repo, "--body", String(app.id)]);
-  }
-
-  // The App's login, which is its slug with [bot] appended. The policy check
-  // needs it to know which approvals are the App's own and therefore never
-  // count as a human's. Taken from GitHub's response rather than derived from
-  // the name, because GitHub does the slugging — and because renaming the App
-  // later changes the slug, which `bsf audit` is what notices.
-  if (typeof app.slug === "string" && app.slug !== "") {
-    gh(["variable", "set", `${prefix}_LOGINS`, "--repo", repo, "--body", `${app.slug}[bot]`]);
   }
 }
 

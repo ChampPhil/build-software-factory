@@ -166,6 +166,8 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
 
   bsf write-spec ID --from PATH [--pipeline P]
   bsf fetch-gate-failures WORK_ITEM --out PATH
+  bsf write-triage WORK_ITEM --from PATH
+  bsf run status WORK_ITEM
   bsf spec check --file PATH [--pipeline P]
       Store the spec role's plan and acceptance checks on the work item.
 
@@ -471,6 +473,9 @@ async function main(argv: readonly string[]): Promise<number> {
     case "spec":
       if (second !== "check") die("usage: bsf spec check --file PATH [--pipeline P]");
       return specCheckCommand(args);
+
+    case "write-triage":
+      return writeTriageCommand(command[1], args);
 
     case "fetch-gate-failures":
       return fetchGateFailuresCommand(command[1], args);
@@ -900,6 +905,17 @@ async function runCommand(second: string | undefined, args: Args, third?: string
     setOutput("first_step", plan.roles[0] === "verifier" ? "verifier" : (plan.roles[0] ?? "builder"));
     // Escalation is an outcome, not a crash: the jobs downstream read
     // `proceed`, and failing this job would bury the reason under red.
+    return 0;
+  }
+
+  if (second === "status") {
+    // `bsf run status WORK_ITEM`: proceed=true while the item is still the run's.
+    if (third === undefined) die("usage: bsf run status WORK_ITEM");
+    const { itemStatus } = await import("./commands/run-lifecycle.js");
+    const status = await itemStatus(new GitHub({ repo: requireRepo() }), third);
+    process.stdout.write(`${third} is ${status}\n`);
+    setOutput("status", status);
+    setOutput("proceed", String(status === "running"));
     return 0;
   }
 
@@ -1707,6 +1723,23 @@ async function specCheckCommand(args: Args): Promise<number> {
   }
   process.stderr.write(`the spec would be rejected:\n  - ${problems.join("\n  - ")}\n`);
   return 1;
+}
+
+async function writeTriageCommand(id: string | undefined, args: Args): Promise<number> {
+  const from = args["from"];
+  if (id === undefined || typeof from !== "string") die("usage: bsf write-triage WORK_ITEM --from PATH");
+  const { writeTriage, triageProblems } = await import("./commands/run-lifecycle.js");
+  let result: unknown;
+  try {
+    result = JSON.parse(readFileSync(from, "utf8"));
+  } catch (e) {
+    die(`${from}: ${(e as Error).message}`);
+  }
+  const problems = triageProblems(result);
+  if (problems.length > 0) die(`the triage result was rejected:\n  - ${problems.join("\n  - ")}`);
+  const status = await writeTriage(new GitHub({ repo: requireRepo() }), id, result as never, nowIso());
+  process.stdout.write(`${id} is ${status}\n`);
+  return 0;
 }
 
 /** The previous attempt's gate failures, which after-gates stored on the data ref. Writes nothing when there are none. */

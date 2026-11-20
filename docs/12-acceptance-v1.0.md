@@ -161,9 +161,9 @@ Everything below is Philip's; none of it can be done from here.
    `probe/write-test` on `build-software-factory`. Plus
    `factory/corrections-champphil-2026-11-20-8fc06a`, left behind when a
    contribution's branch pushed and its pull request then failed.
-4. **Check `FACTORY_APP_LOGINS` matches the App's slug.** Renaming the App
-   changed it; `bsf audit` reports the drift rather than silently accepting
-   reviews from a login nobody recognises.
+4. **The App's login is no longer a variable.** The workflows that need it
+   pass the token step's own `app-slug`, so renaming the App cannot leave a
+   stale login behind.
 
 Once the App is installed and setup has run once, criteria 1, 2, 5, 6, 7 and 9
 become measurable rather than blocked, and this report can be finished with

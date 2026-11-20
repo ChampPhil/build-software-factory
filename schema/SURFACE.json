@@ -1334,6 +1334,7 @@
           "pipeline",
           "pr",
           "priority",
+          "source_ref",
           "status",
           "work_item"
         ],
@@ -1368,6 +1369,9 @@
       },
       "/properties/open/items/properties/created_at": {
         "ref": "_common.json#/$defs/timestamp"
+      },
+      "/properties/open/items/properties/source_ref": {
+        "type": "null|string"
       },
       "/properties/open/items/properties/fixes": {
         "type": "array"

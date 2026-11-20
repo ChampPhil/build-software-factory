@@ -37,6 +37,7 @@ export interface Ledger {
     priority?: "high" | "normal";
     created_at?: string;
     fixes?: string[];
+    source_ref?: string | null;
   }[];
   recent: {
     work_item: string;

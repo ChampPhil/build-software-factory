@@ -72,8 +72,14 @@ export interface IntakeDecision {
     | "revision_of_existing_run"
     | "ignored_fork"
     | "ignored_trigger_disabled"
-    | "ignored_untrusted_practice";
+    | "ignored_untrusted_practice"
+    | "ignored_bot"
+    | "context_for_open_item"
+    | "answers_open_item"
+    | "admits_open_item";
   readonly reason: string;
+  /** The open item an answer or an admission applies to. */
+  readonly openItem?: string;
   /** Open items whose fingerprint is close enough to be worth triage's attention. */
   readonly duplicateShortlist: readonly string[];
 }
@@ -88,6 +94,8 @@ export interface IntakeResult {
 export interface LedgerOpenItem {
   readonly work_item: string;
   readonly fingerprint?: string;
+  /** The issue or PR the item came from (`#N`), so a later comment there finds it. */
+  readonly source_ref?: string | null;
   readonly status: string;
   readonly pipeline: Pipeline;
 }
@@ -223,6 +231,15 @@ function decide(event: IncomingEvent, ctx: IntakeContext): IntakeDecision {
 
   const machineOrigin = event.kind === "schedule_gardening" || event.kind === "review_routed" || event.kind === "conflict_detected";
 
+  // A bot's event is never a request, unless the bot is an integration the
+  // policy names as relaying people's requests (Linear, Sentry). Without this
+  // every comment the factory itself posts — a triage question, an
+  // escalation — came back in as a work item waiting for trust.
+  const relay = (ctx.policy.trust.integration_bots ?? []).includes(event.actor);
+  if (!machineOrigin && !relay && event.kind !== "dashboard_dispatch" && (event.actor_is_bot === true || /\[bot\]$/.test(event.actor))) {
+    return { event, workItem: null, outcome: "ignored_bot", reason: `${event.actor} is a bot`, duplicateShortlist: [] };
+  }
+
   const trusted =
     machineOrigin ||
     isTrustedActor(ctx.policy, event.actor, event.actor_association, { isBot: event.actor_is_bot === true });
@@ -240,6 +257,35 @@ function decide(event: IncomingEvent, ctx: IntakeContext): IntakeDecision {
   }
 
   const accepted = (event.labels ?? []).includes(ctx.policy.trust.accept_label);
+
+  // A comment or label on an issue that already has an open item belongs to
+  // that item. It answers a question triage asked, admits an item that was
+  // waiting for trust, or is conversation — never a second item for the
+  // same request.
+  if ((event.kind === "issue_comment" || event.kind === "issue_labeled" || event.kind === "issue_opened") && event.ref != null) {
+    const open = ctx.openItems.find((o) => o.source_ref === event.ref);
+    if (open !== undefined) {
+      if (event.kind === "issue_comment" && open.status === "needs_info" && trusted) {
+        return {
+          event, workItem: null, outcome: "answers_open_item", openItem: open.work_item,
+          reason: `${event.actor} answered the question on ${open.work_item}, so it goes back in the queue`,
+          duplicateShortlist: [],
+        };
+      }
+      if (event.kind === "issue_labeled" && open.status === "waiting_trust" && accepted) {
+        return {
+          event, workItem: null, outcome: "admits_open_item", openItem: open.work_item,
+          reason: `${ctx.policy.trust.accept_label} admits ${open.work_item}`,
+          duplicateShortlist: [],
+        };
+      }
+      return {
+        event, workItem: null, outcome: "context_for_open_item", openItem: open.work_item,
+        reason: `${event.ref} already has ${open.work_item} (${open.status})`,
+        duplicateShortlist: [],
+      };
+    }
+  }
 
   const fp = fingerprint({ title: event.title, body: event.body, area: event.touched_area });
   const shortlist = shortlistDuplicates(fp, ctx);
