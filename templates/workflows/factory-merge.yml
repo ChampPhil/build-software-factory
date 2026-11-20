@@ -1,0 +1,52 @@
+# factory-merge — the fallback merge queue.
+#
+# For repos GitHub's native merge queue does not cover: personal-account
+# repos, and private repos without Enterprise Cloud. Started by events rather
+# than a timer, so an idle factory costs nothing here.
+#
+# On a repo with the native queue, setup does not install this.
+name: factory-merge
+
+on:
+  pull_request_target:
+    types: [labeled, synchronize]
+  pull_request_review:
+    types: [submitted]
+  check_suite:
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  # One at a time is the whole point: two PRs that each pass alone can break
+  # the build together, and the queue is what catches that.
+  group: factory-merge
+  cancel-in-progress: false
+
+jobs:
+  queue:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Mint a token
+        id: token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.FACTORY_APP_CLIENT_ID }}
+          private-key: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-checks: read
+      # Works through the whole queue, then exits. Each PR is updated from the
+      # default branch and re-checked before it merges, which is where two
+      # independently-passing PRs are caught.
+      - name: Work the queue
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+        run: bsf merge-queue

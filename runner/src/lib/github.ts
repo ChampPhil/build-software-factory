@@ -31,6 +31,11 @@ export class GitHubError extends Error {
 export class GitHub {
   constructor(private readonly opts: GitHubOptions) {}
 
+  /** The `owner/repo` this client acts on. */
+  get repo(): string {
+    return this.opts.repo;
+  }
+
   private env(): NodeJS.ProcessEnv {
     const env = { ...process.env };
     if (this.opts.token !== undefined) env["GH_TOKEN"] = this.opts.token;
@@ -164,7 +169,14 @@ export interface PullResponse {
   readonly user: { readonly login: string; readonly type: string };
   readonly author_association: string;
   readonly labels: readonly { readonly name: string }[];
+  /**
+   * These four are only populated when a single PR is fetched, not in a list
+   * response, and `mergeable` is null while GitHub is still computing it.
+   */
   readonly mergeable_state?: string;
+  readonly mergeable?: boolean | null;
+  readonly updated_at?: string;
+  readonly auto_merge?: unknown;
 }
 
 export interface PullFile {

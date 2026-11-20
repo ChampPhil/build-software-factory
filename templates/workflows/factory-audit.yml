@@ -1,0 +1,48 @@
+# factory-audit — the fallback where branch protection is unavailable.
+#
+# A private repo on GitHub Free cannot have required checks, so nothing stops
+# a merge that skipped the gates. This watches the default branch instead: it
+# runs the gates on what actually landed, and if a commit went in without
+# passing them it says so loudly, and opens a revert PR where that is turned
+# on.
+#
+# This is detection, not prevention. Setup says so plainly rather than
+# implying the factory is enforcing something it cannot.
+name: factory-audit
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: factory-audit-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Mint a token
+        id: token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.FACTORY_APP_CLIENT_ID }}
+          private-key: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-issues: write
+          permission-pull-requests: write
+          permission-checks: write
+      # Checks whether this commit's PR passed the gates before it merged. If
+      # it did not, that is recorded, an issue is opened, and — only where
+      # enforcement.audit_revert_pr is on — a revert PR follows.
+      - name: Audit what landed
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+        run: bsf audit --commit "${{ github.sha }}"

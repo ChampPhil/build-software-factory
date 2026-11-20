@@ -1,0 +1,43 @@
+# factory-sync — keeps the repo's settings matching the factory definition.
+#
+# Runs on merge to the default branch, so a definition change takes effect
+# without anyone touching repo settings by hand.
+name: factory-sync
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - '.factory/definition/**'
+      - '.github/workflows/factory-*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: factory-sync
+  cancel-in-progress: true
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Mint a token
+        id: token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.FACTORY_APP_CLIENT_ID }}
+          private-key: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
+          permission-contents: read
+          permission-administration: write
+          permission-actions: write
+      # Adds the factory's required checks where the plan allows it, and keeps
+      # every protection rule the repo already had. On a plan without branch
+      # protection it records that the audit fallback applies instead, rather
+      # than failing.
+      - name: Sync required checks and protection
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+        run: bsf sync-settings

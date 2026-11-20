@@ -1,0 +1,53 @@
+# factory-garden — the nightly cleanup pass.
+#
+# One of only three scheduled workflows in the factory; everything else is
+# event-driven, which is what keeps an idle factory nearly free.
+name: factory-garden
+
+on:
+  schedule:
+    # Overridden by factory.yaml's gardening.schedule at setup.
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: factory-garden
+  cancel-in-progress: false
+
+jobs:
+  garden:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Mint a token
+        id: token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.FACTORY_APP_CLIENT_ID }}
+          private-key: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-issues: write
+          permission-actions: write
+      # Stops before spending anything if gardening's budget share is used.
+      - name: Check the budget share
+        id: budget
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+        run: bsf budget check --pipeline gardening
+      - name: Pick tonight's cleanup and file it as work items
+        if: steps.budget.outputs.paused != 'true'
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+        run: bsf garden
+
+  gardener:
+    needs: garden
+    if: needs.garden.result == 'success'
+    uses: ./.github/workflows/factory-role-gardener.lock.yml
+    with:
+      work_item: ${{ needs.garden.outputs.work_item }}
+      pipeline: gardening
+    secrets: inherit

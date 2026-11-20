@@ -311,12 +311,111 @@ describe("trigger workflows", () => {
     expect(on).toHaveProperty("push");
   });
 
-  it("no trigger workflow runs on a polling timer", () => {
-    // An idle factory should cost almost nothing: only gardening, the review
-    // check and the rollup sweep are scheduled, and none of those is here.
+  it("only three workflows run on a timer, and they are the three doc 07 names", () => {
+    // An idle factory should cost almost nothing. Nightly gardening, the
+    // daily review check and the daily rollup sweep are the only schedules;
+    // anything else on a timer would burn minutes doing nothing.
+    const scheduled = readdirSync(WORKFLOWS)
+      .filter((x) => x.endsWith(".yml"))
+      .filter((f) => Object.prototype.hasOwnProperty.call(load(f)["on"] as object, "schedule"))
+      .sort();
+    expect(scheduled).toEqual(["factory-garden.yml", "factory-review.yml", "factory-rollup.yml"]);
+  });
+
+  it("there is one trigger workflow per row of doc 07's table", () => {
+    const expected = [
+      "factory-audit.yml", "factory-conflicts.yml", "factory-garden.yml", "factory-gates.yml",
+      "factory-intake.yml", "factory-merge.yml", "factory-policy.yml", "factory-review.yml",
+      "factory-rollup.yml", "factory-run.yml", "factory-sync.yml",
+    ];
+    expect(readdirSync(WORKFLOWS).filter((f) => f.endsWith(".yml")).sort()).toEqual(expected);
+  });
+
+  it("every trigger workflow calls exactly one bsf command", () => {
+    // The thin-trigger shape from doc 07: a workflow that did its own logic in
+    // YAML would be logic nothing can test.
     for (const f of readdirSync(WORKFLOWS).filter((x) => x.endsWith(".yml"))) {
-      const on = load(f)["on"] as Record<string, unknown>;
-      expect(on, `${f} runs on a schedule`).not.toHaveProperty("schedule");
+      const text = readFileSync(join(WORKFLOWS, f), "utf8");
+      expect(/\bbsf [a-z-]+/.test(text), `${f} calls no bsf command`).toBe(true);
     }
+  });
+
+  it("each scheduled workflow can also be started by hand, so nobody waits a day to test it", () => {
+    for (const f of ["factory-garden.yml", "factory-review.yml", "factory-rollup.yml"]) {
+      expect(load(f)["on"]).toHaveProperty("workflow_dispatch");
+    }
+  });
+
+  it("the single-concurrency workflows declare a concurrency group", () => {
+    // intake, merge, rollup and sync must never run twice at once (doc 07).
+    for (const f of ["factory-intake.yml", "factory-merge.yml", "factory-rollup.yml", "factory-sync.yml"]) {
+      const doc = load(f) as { concurrency?: unknown; jobs?: Record<string, { concurrency?: unknown }> };
+      const atJob = Object.values(doc.jobs ?? {}).some((j) => j.concurrency !== undefined);
+      expect(doc.concurrency !== undefined || atJob, `${f} has no concurrency group`).toBe(true);
+    }
+  });
+
+  it("intake queues pending runs rather than cancelling them, so no request is lost", () => {
+    const text = readFileSync(join(WORKFLOWS, "factory-intake.yml"), "utf8");
+    expect(text).toContain("cancel-in-progress: false");
+  });
+});
+
+describe("definition templates", () => {
+  const DEF = join(TEMPLATES, "definition");
+
+  it("there is one role file per role, and each validates", () => {
+    const files = readdirSync(join(DEF, "roles")).filter((f) => f.endsWith(".yaml")).sort();
+    expect(files).toEqual([...ROLES].sort().map((r) => `${r}.yaml`));
+    for (const f of files) {
+      const doc = parseYaml(readFileSync(join(DEF, "roles", f), "utf8")) as unknown;
+      const res = validate("role", doc);
+      if (!res.ok) throw new Error(`${f}: ${JSON.stringify(res.errors, null, 2)}`);
+    }
+  });
+
+  it("no role file is told it may read the builder's transcript", () => {
+    // The verifier grading its own work is the failure this prevents, and it
+    // is structural: separate jobs, separate filesystems (doc 06).
+    for (const f of readdirSync(join(DEF, "roles")).filter((x) => x.endsWith(".yaml"))) {
+      const doc = parseYaml(readFileSync(join(DEF, "roles", f), "utf8")) as { sees_builder_transcript?: boolean };
+      expect(doc.sees_builder_transcript, `${f}`).toBe(false);
+    }
+  });
+
+  it("there is a rubric per pipeline plus the shared one, and each validates", () => {
+    const files = readdirSync(join(DEF, "rubrics")).filter((f) => f.endsWith(".yaml")).sort();
+    expect(files).toEqual(["definition.yaml", "gardening.yaml", "hardening.yaml", "product_work.yaml", "shared.yaml"]);
+    for (const f of files) {
+      const doc = parseYaml(readFileSync(join(DEF, "rubrics", f), "utf8")) as unknown;
+      const res = validate("rubric", doc);
+      if (!res.ok) throw new Error(`${f}: ${JSON.stringify(res.errors, null, 2)}`);
+    }
+  });
+
+  it("every rubric's failure tags are the vocabulary the review routes on", () => {
+    // review.ts routes a problem by its tag, so a tag no rubric emits is a
+    // route nothing can reach, and a tag the router has never heard of
+    // silently defaults to hardening.
+    const tags = new Set<string>();
+    for (const f of readdirSync(join(DEF, "rubrics")).filter((x) => x.endsWith(".yaml"))) {
+      const doc = parseYaml(readFileSync(join(DEF, "rubrics", f), "utf8")) as { failure_tags?: string[] };
+      for (const t of doc.failure_tags ?? []) tags.add(t);
+    }
+    expect(tags.size).toBeGreaterThan(5);
+    for (const t of tags) expect(t).toMatch(/^[a-z][a-z0-9_]*$/);
+  });
+
+  it("the four context templates exist, because every role reads all four", () => {
+    const files = readdirSync(join(DEF, "context")).sort();
+    expect(files).toEqual(["feature-map.md", "fundamentals.md", "history.md", "runbook.md"]);
+  });
+
+  it("the runbook template warns that the sandbox reads no .env file", () => {
+    // This is the trinsports hazard generalized: a documented build command
+    // that migrates a real database if a developer's .env is present.
+    const text = readFileSync(join(DEF, "context/runbook.md"), "utf8");
+    expect(text).toMatch(/\.env/);
+    expect(text.toLowerCase()).toContain("persistent state");
   });
 });
