@@ -21,9 +21,12 @@ export interface AuditOptions {
   readonly gatesCheck?: string;
   readonly policyCheck?: string;
   readonly workflowsDir?: string;
+  /** FACTORY_APP_LOGINS as configured, for the rename check below. */
+  readonly configuredAppLogins?: readonly string[];
 }
 
 export type AuditFinding =
+  | { readonly kind: "app_login_stale"; readonly detail: string }
   | { readonly kind: "direct_push"; readonly detail: string }
   | { readonly kind: "gate_not_run"; readonly detail: string }
   | { readonly kind: "gate_failed_but_merged"; readonly detail: string }
@@ -93,11 +96,65 @@ export async function runAuditCommand(opts: AuditOptions): Promise<AuditReport> 
     }
   }
 
-  // 3. Is every compiled role workflow current with its source?
+  // 3. Does the configured App login still match the App?
+  checked.push("the configured App login matches the App's current slug");
+  findings.push(...(await appLoginDrift(opts)));
+
+  // 4. Is every compiled role workflow current with its source?
   checked.push("every .lock.yml matches the .md it was compiled from");
   findings.push(...(await staleLockFiles(opts.root, opts.workflowsDir ?? ".github/workflows")));
 
   return { commit: opts.commit, findings, checked };
+}
+
+
+/**
+ * An App's login is its slug with `[bot]` appended, and renaming the App in
+ * GitHub's settings changes the slug. The policy check uses that login to know
+ * which approvals are the App's own; `appRequestedChanges` uses it to tell
+ * gh-aw's protected-file objection from a human's.
+ *
+ * Nothing breaks loudly when it goes stale — the `[bot]` suffix check still
+ * stops an App approval counting as a human's — but the gate signal from an
+ * App's REQUEST_CHANGES would be missed. So a rename is reported here rather
+ * than left to be discovered by a PR that merged when it should not have.
+ */
+async function appLoginDrift(opts: AuditOptions): Promise<readonly AuditFinding[]> {
+  const configured = opts.configuredAppLogins ?? [];
+  if (configured.length === 0) {
+    return [
+      {
+        kind: "app_login_stale",
+        detail:
+          "FACTORY_APP_LOGINS is not set, so an App's request for changes is not recognised " +
+          "as a gate signal. Setup stores it; set it to <app-slug>[bot] if setup predates that.",
+      },
+    ];
+  }
+
+  let slug: string;
+  try {
+    // Only answers when the caller is the App itself, which is the case in
+    // every factory workflow.
+    const app = await opts.gh.get<{ readonly slug?: string }>("app");
+    if (typeof app.slug !== "string" || app.slug === "") return [];
+    slug = app.slug;
+  } catch {
+    // Running as a user rather than as the App: nothing to compare against,
+    // and saying nothing beats inventing a finding.
+    return [];
+  }
+
+  const expected = `${slug}[bot]`;
+  if (configured.includes(expected)) return [];
+  return [
+    {
+      kind: "app_login_stale",
+      detail:
+        `the App's login is now ${expected}, but FACTORY_APP_LOGINS says ` +
+        `${configured.join(", ")}. Renaming a GitHub App changes its slug; update the variable.`,
+    },
+  ];
 }
 
 /**

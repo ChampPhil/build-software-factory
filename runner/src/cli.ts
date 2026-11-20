@@ -826,7 +826,12 @@ async function syncCommand(args: Args): Promise<number> {
 async function auditCommand(args: Args): Promise<number> {
   const gh = new GitHub({ repo: requireRepo() });
   const commit = typeof args["commit"] === "string" ? args["commit"] : headSha();
-  const report = await runAuditCommand({ gh, commit, root: process.cwd() });
+  const report = await runAuditCommand({
+    gh,
+    commit,
+    root: process.cwd(),
+    configuredAppLogins: appLogins(),
+  });
   for (const c of report.checked) process.stdout.write(`checked: ${c}\n`);
   if (report.findings.length === 0) {
     process.stdout.write(`${commit.slice(0, 8)} passed every gate it should have\n`);

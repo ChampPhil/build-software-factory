@@ -4,7 +4,8 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { staleLockFiles } from "../src/commands/audit.js";
+import { staleLockFiles, runAuditCommand } from "../src/commands/audit.js";
+import type { GitHub as GitHubLike } from "../src/lib/github.js";
 
 /**
  * The staleness check is only worth anything if it agrees with gh-aw's own
@@ -78,5 +79,70 @@ describe("staleLockFiles", () => {
     // preserve mtimes, so an mtime check would cry stale on every checkout.
     writeFileSync(md, original);
     expect(await staleLockFiles(root, ".github/workflows")).toHaveLength(0);
+  });
+});
+
+describe("the App-rename check", () => {
+  const gh = (slug: string | null): GitHubLike =>
+    ({
+      repo: "owner/repo",
+      get: async (path: string) => {
+        if (path === "app") {
+          if (slug === null) throw new Error("not the App");
+          return { slug };
+        }
+        if (path.includes("/check-runs")) return { check_runs: [] };
+        if (path.includes("/commits/")) return { parents: [], commit: { message: "x" } };
+        if (path.startsWith("search/issues")) return { total_count: 1, items: [{ number: 1 }] };
+        throw new Error(`unexpected ${path}`);
+      },
+    }) as unknown as GitHubLike;
+
+  it("says nothing when the configured login matches the App", async () => {
+    const r = await runAuditCommand({
+      gh: gh("factory-bsf"),
+      commit: "abc1234",
+      root: "/nonexistent",
+      configuredAppLogins: ["factory-bsf[bot]"],
+    });
+    expect(r.findings.filter((f) => f.kind === "app_login_stale")).toHaveLength(0);
+  });
+
+  it("reports a rename, because the slug changes with the name", async () => {
+    // Renaming the App in GitHub's settings changes its slug and therefore
+    // its login. Nothing breaks loudly — the [bot] suffix check still stops
+    // an App approval counting as a human's — but an App's request for
+    // changes stops being read as a gate signal.
+    const r = await runAuditCommand({
+      gh: gh("build-software-factory-bsf-fixtures"),
+      commit: "abc1234",
+      root: "/nonexistent",
+      configuredAppLogins: ["factory-bsf[bot]"],
+    });
+    const f = r.findings.find((x) => x.kind === "app_login_stale");
+    expect(f?.detail).toContain("build-software-factory-bsf-fixtures[bot]");
+    expect(f?.detail).toContain("Renaming a GitHub App changes its slug");
+  });
+
+  it("reports an unset variable rather than assuming it is fine", async () => {
+    const r = await runAuditCommand({
+      gh: gh("factory-bsf"),
+      commit: "abc1234",
+      root: "/nonexistent",
+      configuredAppLogins: [],
+    });
+    expect(r.findings.find((x) => x.kind === "app_login_stale")?.detail).toContain(
+      "FACTORY_APP_LOGINS is not set",
+    );
+  });
+
+  it("says nothing when running as a user, where there is no App to ask about", async () => {
+    const r = await runAuditCommand({
+      gh: gh(null),
+      commit: "abc1234",
+      root: "/nonexistent",
+      configuredAppLogins: ["factory-bsf[bot]"],
+    });
+    expect(r.findings.filter((f) => f.kind === "app_login_stale")).toHaveLength(0);
   });
 });
