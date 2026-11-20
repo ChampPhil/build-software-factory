@@ -28,6 +28,10 @@ rmSync(out, { recursive: true, force: true });
 mkdirSync(out, { recursive: true });
 
 await build({
+  // Pinned so the output does not depend on where this is run from: esbuild
+  // writes module paths relative to the working directory into the bundle,
+  // and a build from the repo root differed from one inside runner/.
+  absWorkingDir: runner,
   entryPoints: [join(runner, "src/cli.ts")],
   bundle: true,
   platform: "node",
