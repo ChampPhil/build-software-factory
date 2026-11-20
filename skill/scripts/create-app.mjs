@@ -82,11 +82,29 @@ function gh(args, { input, allowFail = false } = {}) {
 }
 
 function openBrowser(url) {
-  const cmd =
-    process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
+  // On Windows `start` is a cmd builtin, not an executable, so spawning it
+  // directly fails — and fails *asynchronously*, which would leave the script
+  // saying "opening your browser" while nothing opened. The empty string is
+  // the window title `start` expects before the URL; without it, a URL
+  // containing `&` is read as the title and nothing loads.
+  const [cmd, args] =
+    process.platform === "darwin"
+      ? ["open", [url]]
+      : process.platform === "win32"
+        ? ["cmd", ["/c", "start", "", url]]
+        : ["xdg-open", [url]];
+
   try {
-    spawn(cmd, [url], { detached: true, stdio: "ignore" }).unref();
-    return true;
+    const child = spawn(cmd, args, { detached: true, stdio: "ignore", windowsHide: true });
+    // spawn reports a missing binary on the error event, not by throwing, so
+    // without this a headless machine looks like a successful launch.
+    let failed = false;
+    child.on("error", () => {
+      failed = true;
+      log(`  Could not open a browser. Open this yourself:\n    ${url}`);
+    });
+    child.unref();
+    return !failed;
   } catch {
     return false;
   }

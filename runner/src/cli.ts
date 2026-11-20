@@ -20,6 +20,9 @@ import { planRun, afterGates } from "./commands/run-plan.js";
 import { buildStepReport, writeStepReport, changedFilesFromGit, type Harness } from "./commands/step-report.js";
 import { pausedPipelines, type BudgetState } from "./commands/rollup.js";
 import { loadFactory } from "./lib/config.js";
+import { fetchWorkItem, writeSpec, fetchArtifact, storeMedia } from "./commands/role-io.js";
+import { gardenScan, gardenFile, hardenContext, reviewCollect, reviewWrite } from "./commands/role-steps.js";
+import { runTestsGate } from "./commands/tests-gate.js";
 import { readFileSync, appendFileSync } from "node:fs";
 
 /**
@@ -50,6 +53,10 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
   bsf gates coverage [--base REF] [--report-check NAME]
       Gate 2's coverage half. Diff coverage of the changed files is the main
       check; total coverage must stay above the floor.
+
+  bsf gates tests [--report-check NAME]
+      Gate 2's test half. Reads the repo's own test check for this commit when
+      it has one; runs the tests itself if that check does not report in time.
 
   bsf gates record --gate static|verification --result pass|fail|skipped
       Record a gate's result against the head commit, so the same commit is
@@ -99,6 +106,34 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
       Write one role's step report. Reads gh-aw's own session evidence first,
       then the harness's log, then the price table — and says the cost is
       unknown rather than estimating one the budget would then pause on.
+
+  bsf fetch-work-item ID --out PATH [--spec-only] [--with-triage]
+      Write what a role may see into a file. Untrusted text is stripped here,
+      not in the prompt.
+
+  bsf write-spec ID --from PATH
+      Store the spec role's plan and acceptance checks on the work item.
+
+  bsf fetch-artifact NAME --out PATH [--run-id N]
+      Read one of this run's artifacts, which is how role results travel.
+
+  bsf store-media --run-dir DIR [--run-id ID]
+      Put the verifier's screenshots and clips on the media ref.
+
+  bsf garden-scan --out PATH
+      The two measurable kinds of drift, for the gardener.
+
+  bsf garden-file --from PATH [--max N] [--plan]
+      Turn the gardener's picks into work items, re-checking the ledger.
+
+  bsf harden-context ID --out PATH
+      The existing rules, candidates and open work the hardener must check.
+
+  bsf review-collect --out PATH
+      The runs to grade since the last review, for the scorer.
+
+  bsf review-write --scores PATH [--plan]
+      Group the scorer's failures into problems and file each one.
 
   bsf validate SCHEMA FILE
       Validate a file against one of the shared schemas.
@@ -242,6 +277,33 @@ async function main(argv: readonly string[]): Promise<number> {
     case "step-report":
       return stepReportCommand(args);
 
+    case "fetch-work-item":
+      return fetchWorkItemCommand(command[1], args);
+
+    case "write-spec":
+      return writeSpecCommand(command[1], args);
+
+    case "fetch-artifact":
+      return fetchArtifactCommand(command[1], args);
+
+    case "store-media":
+      return storeMediaCommand(args);
+
+    case "garden-scan":
+      return gardenScanCommand(args);
+
+    case "garden-file":
+      return gardenFileCommand(args);
+
+    case "harden-context":
+      return hardenContextCommand(command[1], args);
+
+    case "review-collect":
+      return reviewCollectCommand(args);
+
+    case "review-write":
+      return reviewWriteCommand(args);
+
     case "policy": {
       const prRaw = args["pr"];
       if (typeof prRaw !== "string") die("usage: bsf policy --pr N");
@@ -276,7 +338,8 @@ async function main(argv: readonly string[]): Promise<number> {
       if (second === "static") return await gatesStatic(args);
       if (second === "coverage") return await gatesCoverage(args);
       if (second === "record") return gatesRecord(args);
-      if (second !== "plan") die("usage: bsf gates plan|static|coverage|record");
+      if (second === "tests") return await gatesTests(args);
+      if (second !== "plan") die("usage: bsf gates plan|static|coverage|tests|record");
       const commit = typeof args["commit"] === "string" ? args["commit"] : process.env["GITHUB_SHA"] ?? "";
       if (commit === "") die("no commit: pass --commit SHA or run inside Actions");
       const actor = args["actor"] === "human" ? "human" : "agent";
@@ -439,6 +502,8 @@ interface FactoryConfig {
   sandbox?: { agent_runtime?: string };
   checks?: { required?: string[] };
   branch?: string;
+  existing_ci?: { test_check?: string | null };
+  tests?: { command?: string | null };
 }
 
 async function factoryConfig(): Promise<FactoryConfig> {
@@ -806,6 +871,164 @@ function sessionDirs(args: Args): readonly string[] {
   const dirs = ["/tmp/gh-aw"];
   if (temp !== undefined && temp !== "") dirs.unshift(`${temp}/gh-aw`, `${temp}/gh-aw/agent`);
   return dirs;
+}
+
+/* ----------------------------------------------------- role steps and gate 2 */
+
+function requireOut(args: Args, usage: string): string {
+  const out = args["out"];
+  if (typeof out !== "string") die(usage);
+  return out;
+}
+
+async function fetchWorkItemCommand(id: string | undefined, args: Args): Promise<number> {
+  if (id === undefined) die("usage: bsf fetch-work-item ID --out PATH [--spec-only] [--with-triage]");
+  const out = requireOut(args, "usage: bsf fetch-work-item ID --out PATH");
+  const r = await fetchWorkItem({
+    gh: new GitHub({ repo: requireRepo() }),
+    id,
+    out,
+    ...(args["spec-only"] === true ? { specOnly: true } : {}),
+    ...(args["with-triage"] === true ? { withTriage: true } : {}),
+  });
+  process.stdout.write(
+    `${r.id} -> ${r.wrote}${r.specOnly ? " (spec only)" : ""}` +
+      `${r.strippedBody && !r.specOnly ? "; the author is not trusted, so their text was withheld" : ""}` +
+      `${r.includedTriage ? "; with triage's notes" : ""}\n`,
+  );
+  return 0;
+}
+
+async function writeSpecCommand(id: string | undefined, args: Args): Promise<number> {
+  const from = args["from"];
+  if (id === undefined || typeof from !== "string") die("usage: bsf write-spec ID --from PATH");
+  const r = await writeSpec(new GitHub({ repo: requireRepo() }), id, from, nowIso());
+  process.stdout.write(
+    `spec stored on ${r.id}` +
+      `${r.declaredTestEdits.length > 0 ? `; declares ${r.declaredTestEdits.length} test edit(s)` : ""}\n`,
+  );
+  setOutput("declared_test_edits", r.declaredTestEdits.join(","));
+  return 0;
+}
+
+async function fetchArtifactCommand(name: string | undefined, args: Args): Promise<number> {
+  if (name === undefined) die("usage: bsf fetch-artifact NAME --out PATH [--run-id N]");
+  const out = requireOut(args, "usage: bsf fetch-artifact NAME --out PATH");
+  const runId = typeof args["run-id"] === "string" ? args["run-id"] : process.env["GITHUB_RUN_ID"];
+  const r = await fetchArtifact(new GitHub({ repo: requireRepo() }), name, out, runId);
+  process.stdout.write(r.found ? `${r.name} -> ${r.wrote}\n` : `${r.name} is not in this run; wrote an empty result\n`);
+  return 0;
+}
+
+async function storeMediaCommand(args: Args): Promise<number> {
+  const dir = args["run-dir"];
+  if (typeof dir !== "string") die("usage: bsf store-media --run-dir DIR [--run-id ID]");
+  const runId =
+    typeof args["run-id"] === "string" ? args["run-id"] : process.env["GITHUB_RUN_ID"] ?? "unknown";
+  const r = await storeMedia(new GitHub({ repo: requireRepo() }), dir, runId, nowIso());
+  process.stdout.write(
+    r.files.length === 0
+      ? "no media to store\n"
+      : `stored ${r.files.length} file(s), ${Math.round(r.bytes / 1024)} KB\n`,
+  );
+  for (const s of r.skipped) process.stdout.write(`  skipped ${s.file}: ${s.why}\n`);
+  return 0;
+}
+
+async function gardenScanCommand(args: Args): Promise<number> {
+  const out = requireOut(args, "usage: bsf garden-scan --out PATH");
+  const r = await gardenScan({
+    gh: new GitHub({ repo: requireRepo() }),
+    now: nowIso(),
+    root: process.cwd(),
+    baselines: await loadBaselines(new DiskLoader(process.cwd())),
+    out,
+  });
+  process.stdout.write(`${r.measured.length} measured drift item(s) -> ${r.wrote}\n`);
+  if (r.alreadyFixing.length > 0) {
+    process.stdout.write(`  ${r.alreadyFixing.length} class(es) left out: an open PR already fixes them\n`);
+  }
+  return 0;
+}
+
+async function gardenFileCommand(args: Args): Promise<number> {
+  const from = args["from"];
+  if (typeof from !== "string") die("usage: bsf garden-file --from PATH [--max N] [--plan]");
+  const cfg = await factoryConfig();
+  const gh = new GitHub({ repo: requireRepo() });
+  const max = typeof args["max"] === "string" ? Number(args["max"]) : cfg.gardening?.max_prs_per_night ?? 5;
+  const running = await runningRuns(gh);
+  const r = await gardenFile({
+    gh,
+    now: nowIso(),
+    root: process.cwd(),
+    from,
+    maxPrs: Number.isInteger(max) && max > 0 ? max : 5,
+    freeSlots: Math.max(0, (cfg.concurrency?.max_runs ?? 5) - running),
+    ...(args["plan"] === true ? { plan: true } : {}),
+  });
+  process.stdout.write(`filed ${r.filed.length}, dispatched ${r.dispatched.length}, handed to hardening ${r.handedOff.length}\n`);
+  for (const x of r.rejected) process.stdout.write(`  rejected ${x.problem_class}: ${x.why}\n`);
+  return 0;
+}
+
+async function hardenContextCommand(id: string | undefined, args: Args): Promise<number> {
+  if (id === undefined) die("usage: bsf harden-context ID --out PATH");
+  const out = requireOut(args, "usage: bsf harden-context ID --out PATH");
+  const r = await hardenContext({
+    gh: new GitHub({ repo: requireRepo() }),
+    now: nowIso(),
+    id,
+    out,
+    baselines: await loadBaselines(new DiskLoader(process.cwd())),
+    candidatesPath: ".factory/guardrails/candidates.json",
+  });
+  process.stdout.write(`${r.openRules} existing rule(s), ${r.candidates} candidate(s) -> ${r.wrote}\n`);
+  return 0;
+}
+
+async function reviewCollectCommand(args: Args): Promise<number> {
+  const out = requireOut(args, "usage: bsf review-collect --out PATH");
+  const r = await reviewCollect({ gh: new GitHub({ repo: requireRepo() }), now: nowIso(), out });
+  process.stdout.write(`${r.runs} run(s) to grade${r.since === null ? "" : ` since ${r.since}`} -> ${r.wrote}\n`);
+  return 0;
+}
+
+async function reviewWriteCommand(args: Args): Promise<number> {
+  const scores = args["scores"];
+  if (typeof scores !== "string") die("usage: bsf review-write --scores PATH [--plan]");
+  const r = await reviewWrite({
+    gh: new GitHub({ repo: requireRepo() }),
+    now: nowIso(),
+    scores,
+    ...(args["plan"] === true ? { plan: true } : {}),
+  });
+  process.stdout.write(
+    `${r.scored} scored, ${r.problems} problem(s), filed ${r.filed.length}, dispatched ${r.dispatched.length}\n`,
+  );
+  return 0;
+}
+
+async function gatesTests(args: Args): Promise<number> {
+  const cfg = await factoryConfig();
+  const gh = new GitHub({ repo: requireRepo() });
+  const result = await runTestsGate({
+    gh,
+    commit: headSha(),
+    existingCheck: cfg.existing_ci?.test_check ?? null,
+    command: cfg.tests?.command ?? null,
+    root: process.cwd(),
+  });
+  process.stdout.write(`${result.summary}\n`);
+  await maybeReportCheck(
+    args,
+    result.conclusion,
+    result.conclusion === "success" ? "Tests passed" : result.conclusion === "neutral" ? "No tests" : "Tests failed",
+    `${result.summary}\n\n${result.detail ?? ""}`,
+    "factory/gate-tests",
+  );
+  setOutput("tests_source", result.source);
+  return result.conclusion === "failure" ? 1 : 0;
 }
 
 function parseYamlLazy(text: string): unknown {
