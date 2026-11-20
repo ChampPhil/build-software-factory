@@ -159,6 +159,19 @@ export class GitHub {
 
   /* ------------------------------------------------------------- pull requests */
 
+  /**
+   * Mark a draft PR ready for review. REST has no endpoint for it, so this is
+   * the one GraphQL call the runner makes.
+   */
+  async markReady(number: number): Promise<void> {
+    const pr = await this.pull(number);
+    if (!pr.draft || pr.node_id === undefined) return;
+    await this.send("POST", "graphql", {
+      query: "mutation($id: ID!) { markPullRequestReadyForReview(input: { pullRequestId: $id }) { pullRequest { isDraft } } }",
+      variables: { id: pr.node_id },
+    });
+  }
+
   async pull(number: number): Promise<PullResponse> {
     return this.get<PullResponse>(`${this.base}/pulls/${number}`);
   }
@@ -272,6 +285,7 @@ function errText(err: unknown): string {
 
 export interface PullResponse {
   readonly number: number;
+  readonly node_id?: string;
   readonly draft: boolean;
   readonly head: { readonly sha: string; readonly repo: { readonly full_name: string } | null };
   readonly base: { readonly ref: string; readonly repo: { readonly full_name: string } };

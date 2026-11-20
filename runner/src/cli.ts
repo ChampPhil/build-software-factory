@@ -109,6 +109,8 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
   bsf run plan WORK_ITEM [--attempt N] [--revision] | --pipeline P
       Which roles run for this attempt, and why. factory-run reads this.
 
+  bsf run start WORK_ITEM [--attempt N] [--escalate true] [--first-step ROLE]
+  bsf run after-gates WORK_ITEM --run-id R [--attempt N] [--pr N] [--build-result R] [--wait-min M]
   bsf run after-gates --static S --verification V [--attempt N]
       What happens after the gates: verify, retry, escalate or clear.
 
@@ -163,6 +165,7 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
       not in the prompt.
 
   bsf write-spec ID --from PATH [--pipeline P]
+  bsf fetch-gate-failures WORK_ITEM --out PATH
   bsf spec check --file PATH [--pipeline P]
       Store the spec role's plan and acceptance checks on the work item.
 
@@ -468,6 +471,9 @@ async function main(argv: readonly string[]): Promise<number> {
     case "spec":
       if (second !== "check") die("usage: bsf spec check --file PATH [--pipeline P]");
       return specCheckCommand(args);
+
+    case "fetch-gate-failures":
+      return fetchGateFailuresCommand(command[1], args);
 
     case "fetch-artifact":
       return fetchArtifactCommand(command[1], args);
@@ -863,9 +869,11 @@ async function runCommand(second: string | undefined, args: Args, third?: string
     }
     if (pipeline === undefined) die("usage: bsf run plan WORK_ITEM [--attempt N] | --pipeline P");
     const attempt = typeof args["attempt"] === "string" ? Number(args["attempt"]) : 1;
+    const cfg = await factoryConfig().catch(() => ({}));
     const plan = planRun({
       pipeline: pipeline as Parameters<typeof planRun>[0]["pipeline"],
       attempt: Number.isInteger(attempt) && attempt > 0 ? attempt : 1,
+      maxAttempts: cfg.limits?.retry_cap ?? 3,
       ...(args["revision"] === true ? { revision: true } : {}),
     });
 
@@ -889,8 +897,54 @@ async function runCommand(second: string | undefined, args: Args, third?: string
     setOutput("proceed", String(!plan.escalate));
     setOutput("escalate", String(plan.escalate));
     setOutput("attempt", String(plan.attempt));
+    setOutput("first_step", plan.roles[0] === "verifier" ? "verifier" : (plan.roles[0] ?? "builder"));
     // Escalation is an outcome, not a crash: the jobs downstream read
     // `proceed`, and failing this job would bury the reason under red.
+    return 0;
+  }
+
+  if (second === "start") {
+    // `bsf run start WORK_ITEM --attempt N [--escalate true] [--first-step ROLE]`
+    if (third === undefined) die("usage: bsf run start WORK_ITEM [--attempt N] [--escalate true]");
+    const { startRun } = await import("./commands/run-lifecycle.js");
+    const attempt = typeof args["attempt"] === "string" ? Number(args["attempt"]) : 1;
+    const r = await startRun({
+      gh: new GitHub({ repo: requireRepo() }),
+      workItem: third,
+      attempt: Number.isInteger(attempt) && attempt > 0 ? attempt : 1,
+      escalate: args["escalate"] === "true" || args["escalate"] === true,
+      firstStep: typeof args["first-step"] === "string" ? args["first-step"] : "builder",
+      now: nowIso(),
+    });
+    process.stdout.write(r.runId === "" ? `${r.reason}\n` : `${third} is ${r.status}; run ${r.runId}\n`);
+    setOutput("run_id", r.runId);
+    return 0;
+  }
+
+  if (second === "after-gates" && third !== undefined && args["static"] === undefined) {
+    // `bsf run after-gates WORK_ITEM --run-id R --attempt N [--pr N] [--build-result R] [--wait-min M]`
+    const { finishRun } = await import("./commands/run-lifecycle.js");
+    const runIdArg = args["run-id"];
+    if (typeof runIdArg !== "string" || runIdArg === "") die("usage: bsf run after-gates WORK_ITEM --run-id R ...");
+    const cfg = await factoryConfig().catch(() => ({}));
+    const attempt = typeof args["attempt"] === "string" ? Number(args["attempt"]) : 1;
+    const pr = typeof args["pr"] === "string" ? Number(args["pr"]) : 0;
+    const waitMin = typeof args["wait-min"] === "string" ? Number(args["wait-min"]) : 90;
+    const r = await finishRun({
+      gh: new GitHub({ repo: requireRepo() }),
+      workItem: third,
+      runId: runIdArg,
+      attempt: Number.isInteger(attempt) && attempt > 0 ? attempt : 1,
+      maxAttempts: cfg.limits?.retry_cap ?? 3,
+      pr: Number.isInteger(pr) && pr > 0 ? pr : null,
+      buildResult: typeof args["build-result"] === "string" ? args["build-result"] : "",
+      now: nowIso,
+      waitMs: waitMin * 60_000,
+      pollMs: 30_000,
+    });
+    process.stdout.write(`${r.next}: ${r.reason}${r.pr === null ? "" : ` (PR #${r.pr})`}\n`);
+    setOutput("next", r.next);
+    setOutput("attempt", String(r.attempt));
     return 0;
   }
 
@@ -913,7 +967,7 @@ async function runCommand(second: string | undefined, args: Args, third?: string
     return 0;
   }
 
-  die("usage: bsf run plan|after-gates");
+  die("usage: bsf run plan|start|after-gates");
 }
 
 async function rollupCommand(args: Args): Promise<number> {
@@ -1653,6 +1707,23 @@ async function specCheckCommand(args: Args): Promise<number> {
   }
   process.stderr.write(`the spec would be rejected:\n  - ${problems.join("\n  - ")}\n`);
   return 1;
+}
+
+/** The previous attempt's gate failures, which after-gates stored on the data ref. Writes nothing when there are none. */
+async function fetchGateFailuresCommand(id: string | undefined, args: Args): Promise<number> {
+  if (id === undefined) die("usage: bsf fetch-gate-failures WORK_ITEM --out PATH");
+  const out = requireOut(args, "usage: bsf fetch-gate-failures WORK_ITEM --out PATH");
+  const { FactoryStore } = await import("./lib/store.js");
+  const { gateFailuresPath } = await import("./commands/run-lifecycle.js");
+  const text = await new FactoryStore(new GitHub({ repo: requireRepo() })).data.read(gateFailuresPath(id));
+  if (text === null) {
+    process.stdout.write(`no gate failures recorded for ${id}\n`);
+    return 0;
+  }
+  mkdirSync(dirname(out), { recursive: true });
+  writeFileSync(out, text);
+  process.stdout.write(`${id}'s gate failures -> ${out}\n`);
+  return 0;
 }
 
 async function fetchArtifactCommand(name: string | undefined, args: Args): Promise<number> {
