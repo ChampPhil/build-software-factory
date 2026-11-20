@@ -24315,8 +24315,8 @@ ${delim}
 async function main(argv) {
   const { command, args } = parse2(argv);
   const [first, second] = command;
-  if (args["version"] === true || first === "version") {
-    process.stdout.write(`bsf ${VERSION}
+  if (args["version"] === true) {
+    process.stdout.write(`${VERSION}
 `);
     return 0;
   }

@@ -327,8 +327,8 @@ async function main(argv: readonly string[]): Promise<number> {
   // Workflows call this right after putting the vendored runner on PATH, so a
   // missing or broken bundle fails at that step with a clear line, not three
   // steps later inside whatever command needed it.
-  if (args["version"] === true || first === "version") {
-    process.stdout.write(`bsf ${VERSION}\n`);
+  if (args["version"] === true) {
+    process.stdout.write(`${VERSION}\n`);
     return 0;
   }
 
