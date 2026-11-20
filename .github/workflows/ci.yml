@@ -73,16 +73,16 @@ jobs:
           npm ci --prefix fixtures/ts-webapp
 
       # The rule packs are checked by running each linter and confirming the
-      # rule fires. ruff is the one a runner image does not ship; go, javac and
-      # cargo come with ubuntu-latest, and if an image ever drops one the skip
-      # check below says so rather than passing quietly.
+      # rule fires. ruff and semgrep are the ones a runner image does not ship;
+      # go, javac and cargo come with ubuntu-latest, and if an image ever drops
+      # one the skip check below says so rather than passing quietly.
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install ruff
+      - run: pip install ruff semgrep
       - name: the toolchains the rule packs need
         run: |
-          for t in ruff go javac cargo; do
+          for t in ruff semgrep go javac cargo; do
             printf '%s: ' "$t"
             command -v "$t" || echo "MISSING"
           done
@@ -102,10 +102,14 @@ jobs:
             const j = require("/tmp/gates.json");
             console.log(`${j.numPassedTests} passed, ${j.numPendingTests} skipped`);
             if (j.numPendingTests > 0) {
-              const names = j.testResults
-                .flatMap((f) => f.assertionResults)
-                .filter((t) => t.status === "pending")
-                .map((t) => t.fullName);
+              // A skipped describe block reports its tests with an empty
+              // fullName, so the file is named too — "skipped:" followed by
+              // four blank lines said nothing when this first fired.
+              const names = j.testResults.flatMap((f) =>
+                f.assertionResults
+                  .filter((t) => t.status === "pending")
+                  .map((t) => `${f.name.split("/").pop()}: ${t.fullName || t.title || "(unnamed)"}`),
+              );
               console.error("skipped:\n  " + names.join("\n  "));
               process.exit(1);
             }
