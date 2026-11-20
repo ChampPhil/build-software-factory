@@ -102,6 +102,10 @@ jobs:
           private-key: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
           permission-contents: read
           permission-issues: read
+          # Scoped to this repository: an App token otherwise reaches every repo
+          # the installation covers.
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
       # Reads the work item and policy.yaml, and resolves this pipeline's
       # gh-aw protected-files policy and path allowlist.
       - name: Plan this run
@@ -278,6 +282,10 @@ jobs:
           permission-checks: read
           permission-actions: write
           permission-pull-requests: write
+          # Scoped to this repository: an App token otherwise reaches every repo
+          # the installation covers.
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
       # On a gate failure under the retry cap, this re-dispatches factory-run
       # with attempt+1 and the failures artifact. At the cap it escalates. On a
       # pass it labels the PR factory:cleared and fills in the evidence. Either

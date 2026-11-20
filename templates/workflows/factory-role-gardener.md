@@ -118,6 +118,10 @@ pre-agent-steps:
       private-key: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
       permission-contents: read
       permission-actions: read
+      # Scoped to this repository: an App token otherwise reaches every repo
+      # the installation covers.
+      owner: ${{ github.repository_owner }}
+      repositories: ${{ github.event.repository.name }}
   # gh-aw allows only a fixed set of expressions in a prompt, so the budget
   # reaches the agent as a file. Validated as a number because it lands in
   # JSON the agent parses.
@@ -146,6 +150,10 @@ post-steps:
       private-key: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
       permission-contents: write
       permission-actions: read
+      # Scoped to this repository: an App token otherwise reaches every repo
+      # the installation covers.
+      owner: ${{ github.repository_owner }}
+      repositories: ${{ github.event.repository.name }}
   - name: Write the StepReport with memex
     shell: bash
     env:

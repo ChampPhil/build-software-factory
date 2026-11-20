@@ -64,6 +64,10 @@ jobs:
           permission-contents: write
           permission-pull-requests: read
           permission-actions: write
+          # Scoped to this repository: an App token otherwise reaches every repo
+          # the installation covers.
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
       - name: Rebuild the rollups and dispatch what there are slots for
         env:
           GH_TOKEN: ${{ steps.token.outputs.token }}

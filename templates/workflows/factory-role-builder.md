@@ -159,6 +159,10 @@ pre-agent-steps:
       private-key: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
       permission-contents: read
       permission-actions: read
+      # Scoped to this repository: an App token otherwise reaches every repo
+      # the installation covers.
+      owner: ${{ github.repository_owner }}
+      repositories: ${{ github.event.repository.name }}
   # Build and start the app's own environment. The agent stays in AWF's
   # container and reaches the app from there (spike §4b).
   - name: Start the devcontainer and any services the app needs
@@ -189,6 +193,10 @@ post-steps:
       private-key: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
       permission-contents: write
       permission-actions: read
+      # Scoped to this repository: an App token otherwise reaches every repo
+      # the installation covers.
+      owner: ${{ github.repository_owner }}
+      repositories: ${{ github.event.repository.name }}
   # memex reads the harness's own session log for tokens and cost. The log is
   # the source of truth; agents' own cost reporting is uneven (doc 07).
   - name: Write the StepReport with memex

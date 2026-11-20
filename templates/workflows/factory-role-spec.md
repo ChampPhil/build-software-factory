@@ -115,6 +115,10 @@ pre-agent-steps:
       private-key: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
       permission-contents: read
       permission-actions: read
+      # Scoped to this repository: an App token otherwise reaches every repo
+      # the installation covers.
+      owner: ${{ github.repository_owner }}
+      repositories: ${{ github.event.repository.name }}
   - name: Fetch the work item and triage's finding
     shell: bash
     env:
@@ -133,6 +137,10 @@ post-steps:
       private-key: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
       permission-contents: write
       permission-actions: read
+      # Scoped to this repository: an App token otherwise reaches every repo
+      # the installation covers.
+      owner: ${{ github.repository_owner }}
+      repositories: ${{ github.event.repository.name }}
   - name: Write the StepReport with memex
     shell: bash
     env:

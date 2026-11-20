@@ -69,6 +69,10 @@ jobs:
           permission-issues: write
           permission-pull-requests: write
           permission-checks: write
+          # Scoped to this repository: an App token otherwise reaches every repo
+          # the installation covers.
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
       # Checks whether this commit's PR passed the gates before it merged. If
       # it did not, that is recorded, an issue is opened, and — only where
       # enforcement.audit_revert_pr is on — a revert PR follows.

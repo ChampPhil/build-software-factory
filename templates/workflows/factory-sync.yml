@@ -63,6 +63,10 @@ jobs:
           permission-contents: read
           permission-administration: write
           permission-actions: write
+          # Scoped to this repository: an App token otherwise reaches every repo
+          # the installation covers.
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
       # Adds the factory's required checks where the plan allows it, and keeps
       # every protection rule the repo already had. On a plan without branch
       # protection it records that the audit fallback applies instead, rather

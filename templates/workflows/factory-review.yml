@@ -75,6 +75,10 @@ jobs:
           private-key: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
           permission-contents: read
           permission-actions: read
+          # Scoped to this repository: an App token otherwise reaches every repo
+          # the installation covers.
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
       # Skips below the minimum run count, so a quiet week does not spend a
       # review's budget grading four runs.
       - name: Is a review due?
@@ -149,6 +153,10 @@ jobs:
           permission-issues: write
           permission-pull-requests: write
           permission-actions: write
+          # Scoped to this repository: an App token otherwise reaches every repo
+          # the installation covers.
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
       # Writes the review report, then files hardening work items and opens
       # definition PRs. A definition PR carries its benchmark comparison, and
       # says "no clear winner" where the difference sits inside the spread.
