@@ -102,7 +102,7 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
       Appends the incoming event to the data ref before deciding anything, so
       a dropped run costs a delay rather than a request.
 
-  bsf run plan --pipeline P [--attempt N] [--revision]
+  bsf run plan WORK_ITEM [--attempt N] [--revision] | --pipeline P
       Which roles run for this attempt, and why. factory-run reads this.
 
   bsf run after-gates --static S --verification V [--attempt N]
@@ -196,6 +196,8 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
       problems are added — what the skill's update mode needs, since one the
       user already rejected must not be offered again.
 
+  bsf models
+      Emit each role's model and the gardening budget from factory.yaml as step outputs.
   bsf consistency [--root PATH] [--json]
       Compare the artifacts that are supposed to agree: environment variables
       the code reads against the example file, commands the README tells
@@ -369,7 +371,7 @@ async function main(argv: readonly string[]): Promise<number> {
       return intakeCommand(args);
 
     case "run":
-      return runCommand(second, args);
+      return runCommand(second, args, command[2]);
 
     case "rollup":
       return rollupCommand(args);
@@ -399,6 +401,8 @@ async function main(argv: readonly string[]): Promise<number> {
 
     case "consistency":
       return consistencyCommand(args);
+    case "models":
+      return modelsCommand();
 
     case "dashboard":
       return dashboardCommand(args);
@@ -635,28 +639,68 @@ function gatesRecord(args: Args): number {
 
 /* ------------------------------------------------------------- new commands */
 
-/** factory.yaml, read from the checkout, with the defaults the commands need. */
+/**
+ * factory.yaml, read from the checkout.
+ *
+ * Every path here must exist in schema/factory.json, which forbids unknown
+ * keys. This interface was once written by hand and drifted: thirteen of the
+ * paths it read could never be set by a user, so each silently fell back to a
+ * hardcoded default — the concurrency limit, the merge-queue mode, the review
+ * cadence and the budget's hard stop among them. A test now resolves every
+ * `cfg.` path read in this file against the schema.
+ */
 interface FactoryConfig {
-  concurrency?: { max_runs?: number };
+  harness?: string;
+  models?: Record<string, string>;
   budget?: {
     monthly_usd?: number;
     monthly_actions_minutes?: number | null;
     shares?: Record<string, number>;
-    product_hard_stop_pct?: number;
+    product_work_hard_stop_pct?: number;
   };
-  data?: { window_days?: number; media_retention_months?: number };
-  gardening?: { max_prs_per_night?: number };
-  review?: { every_days?: number; early_at_runs?: number; min_runs?: number };
-  pipelines?: Record<string, { auto_merge?: boolean }>;
-  merge?: { native_queue?: boolean; method?: "merge" | "squash" | "rebase" };
+  data?: { media_retention_months?: number };
+  limits?: { retry_cap?: number; step_time_budget_sec?: number; concurrency?: { max_runs?: number } };
+  review?: { every_days?: number; run_early_at_runs?: number; skip_below_runs?: number };
+  pipelines?: Record<string, { auto_merge?: boolean; max_prs_per_run?: number }>;
+  enforcement?: { merge_queue?: "auto" | "native" | "fallback" };
   triggers?: Record<string, boolean>;
-  runner?: { pin?: string };
-  harness?: string;
   sandbox?: { agent_runtime?: string };
-  checks?: { required?: string[] };
-  branch?: string;
   existing_ci?: { test_check?: string | null };
-  tests?: { command?: string | null };
+}
+
+/** Days of history the rollup summarizes. Not configurable; the schema has no field for it. */
+const ROLLUP_WINDOW_DAYS = 30;
+
+/** The required checks sync-settings adds. These are the factory's own check names. */
+const FACTORY_REQUIRED_CHECKS = ["factory/policy", "factory/gates"];
+
+/**
+ * The runner's own version: the VERSION file the bundle ships beside itself,
+ * or the package version with "source" when running unbundled.
+ */
+function runnerVersion(): string {
+  try {
+    const here = dirname(fileURLToPath(import.meta.url));
+    return readFileSync(join(here, "VERSION"), "utf8").trim();
+  } catch {
+    return `${VERSION} source`;
+  }
+}
+
+/**
+ * The test command the sandbox episode verified, from the frozen manifest.
+ * Null until a manifest exists; the tests gate then relies on existing CI.
+ */
+function sandboxCommand(name: "test" | "build"): string | null {
+  try {
+    const m = JSON.parse(readFileSync(join(process.cwd(), ".factory/sandbox/manifest.json"), "utf8")) as {
+      commands?: Record<string, unknown>;
+    };
+    const c = m.commands?.[name];
+    return typeof c === "string" && c.trim() !== "" ? c : null;
+  } catch {
+    return null;
+  }
 }
 
 async function factoryConfig(): Promise<FactoryConfig> {
@@ -698,7 +742,7 @@ async function budgetState(cfg: FactoryConfig, gh: GitHub): Promise<BudgetState>
     },
     spentUsd: spent?.spentUsd ?? {},
     spentMinutes: spent?.spentMinutes ?? {},
-    productHardStopPct: cfg.budget?.product_hard_stop_pct ?? 110,
+    productHardStopPct: cfg.budget?.product_work_hard_stop_pct ?? 110,
   };
 }
 
@@ -726,7 +770,7 @@ async function intakeCommand(args: Args): Promise<number> {
       ci_failure_on_main: triggers["ci_failure_on_main"] !== false,
       dashboard_dispatch: triggers["dashboard_dispatch"] !== false,
     },
-    maxRuns: cfg.concurrency?.max_runs ?? 5,
+    maxRuns: cfg.limits?.concurrency?.max_runs ?? 5,
     runningRuns: await runningRuns(gh),
     pausedPipelines: pausedPipelines(await budgetState(cfg, gh)),
     ...(args["plan"] === true ? { plan: true } : {}),
@@ -742,21 +786,56 @@ async function intakeCommand(args: Args): Promise<number> {
   return 0;
 }
 
-async function runCommand(second: string | undefined, args: Args): Promise<number> {
+async function runCommand(second: string | undefined, args: Args, third?: string): Promise<number> {
   if (second === "plan") {
-    const pipeline = args["pipeline"];
-    if (typeof pipeline !== "string") die("usage: bsf run plan --pipeline P [--attempt N]");
+    // `bsf run plan WORK_ITEM --attempt N`, which is how factory-run calls it:
+    // the pipeline comes from the work item, because the item is what knows
+    // whether it is product work, gardening or hardening. `--pipeline` alone
+    // still works for planning without one, as the tests and the dashboard do.
+    //
+    // This and the workflow were written separately and never run together:
+    // the workflow passed a work item and read four outputs the command did
+    // not set, and the command required a flag the workflow did not pass, so
+    // factory-run's first step would have died on a usage error.
+    const workItemId = third;
+    let pipeline = typeof args["pipeline"] === "string" ? args["pipeline"] : undefined;
+    if (pipeline === undefined && typeof workItemId === "string") {
+      const { FactoryStore, workItemPath } = await import("./lib/store.js");
+      const store = new FactoryStore(new GitHub({ repo: requireRepo() }));
+      const item = await store.get<{ pipeline: string }>(workItemPath(workItemId), "work-item");
+      if (item === null) die(`${workItemId} is not on the data ref`);
+      pipeline = item.pipeline;
+    }
+    if (pipeline === undefined) die("usage: bsf run plan WORK_ITEM [--attempt N] | --pipeline P");
     const attempt = typeof args["attempt"] === "string" ? Number(args["attempt"]) : 1;
     const plan = planRun({
       pipeline: pipeline as Parameters<typeof planRun>[0]["pipeline"],
       attempt: Number.isInteger(attempt) && attempt > 0 ? attempt : 1,
       ...(args["revision"] === true ? { revision: true } : {}),
     });
+
+    // gh-aw's protected-file policy for this pipeline's safe outputs.
+    let protectedFilesPolicy = "request-review";
+    try {
+      const policy = await loadPolicy(new DiskLoader(process.cwd()));
+      protectedFilesPolicy = policy.protected_files?.policy ?? protectedFilesPolicy;
+    } catch {
+      /* no policy in this checkout: keep the safe default */
+    }
+
     process.stdout.write(`${plan.reason}\nroles: ${plan.roles.join(" -> ") || "(none)"}\n`);
+    setOutput("pipeline", pipeline);
     setOutput("roles", plan.roles.join(","));
+    setOutput("needs_triage", String(plan.roles.includes("triage")));
+    setOutput("needs_hardener", String(plan.roles.includes("hardener")));
+    setOutput("needs_spec", String(plan.roles.includes("spec")));
+    setOutput("protected_files_policy", protectedFilesPolicy);
+    setOutput("proceed", String(!plan.escalate));
     setOutput("escalate", String(plan.escalate));
     setOutput("attempt", String(plan.attempt));
-    return plan.escalate ? 1 : 0;
+    // Escalation is an outcome, not a crash: the jobs downstream read
+    // `proceed`, and failing this job would bury the reason under red.
+    return 0;
   }
 
   if (second === "after-gates") {
@@ -802,9 +881,9 @@ async function rollupCommand(args: Args): Promise<number> {
   const report = await runRollupCommand({
     gh,
     now,
-    windowDays: cfg.data?.window_days ?? 30,
-    maxRuns: cfg.concurrency?.max_runs ?? 5,
-    runnerPin: cfg.runner?.pin ?? "unpinned",
+    windowDays: ROLLUP_WINDOW_DAYS,
+    maxRuns: cfg.limits?.concurrency?.max_runs ?? 5,
+    runnerPin: runnerVersion(),
     harness: cfg.harness ?? "claude-code",
     budget: await budgetState(cfg, gh),
     guardrails: {
@@ -865,10 +944,10 @@ async function mergeCommand(args: Args): Promise<number> {
     gh,
     now: nowIso(),
     policy: await loadPolicy(new DiskLoader(process.cwd())),
-    nativeQueue: cfg.merge?.native_queue === true,
+    // "auto" falls back until native-queue detection exists; say "native" to use it.
+    nativeQueue: cfg.enforcement?.merge_queue === "native",
     autoMerge,
     appLogins: appLogins(),
-    ...(cfg.merge?.method === undefined ? {} : { mergeMethod: cfg.merge.method }),
     ...(args["apply"] === true ? { apply: true } : {}),
   });
   process.stdout.write(`${report.considered} factory PR(s); next: ${report.action.kind} #${report.action.pr} — ${report.action.reason}\n`);
@@ -881,7 +960,7 @@ async function mergeCommand(args: Args): Promise<number> {
 async function gardenCommand(args: Args): Promise<number> {
   const cfg = await factoryConfig();
   const gh = new GitHub({ repo: requireRepo() });
-  const max = typeof args["max"] === "string" ? Number(args["max"]) : cfg.gardening?.max_prs_per_night ?? 5;
+  const max = typeof args["max"] === "string" ? Number(args["max"]) : cfg.pipelines?.["gardening"]?.max_prs_per_run ?? 5;
   const state = await budgetState(cfg, gh);
   if (pausedPipelines(state).includes("gardening")) {
     process.stdout.write("gardening is over its budget share; nothing filed tonight\n");
@@ -894,7 +973,7 @@ async function gardenCommand(args: Args): Promise<number> {
     root: process.cwd(),
     baselines: await loadBaselines(new DiskLoader(process.cwd())),
     maxPrs: Number.isInteger(max) && max > 0 ? max : 5,
-    freeSlots: Math.max(0, (cfg.concurrency?.max_runs ?? 5) - running),
+    freeSlots: Math.max(0, (cfg.limits?.concurrency?.max_runs ?? 5) - running),
     ...(args["plan"] === true ? { plan: true } : {}),
   });
   process.stdout.write(
@@ -930,8 +1009,8 @@ async function reviewCommand(second: string | undefined, args: Args): Promise<nu
       gh,
       now: nowIso(),
       ...(cfg.review?.every_days === undefined ? {} : { everyDays: cfg.review.every_days }),
-      ...(cfg.review?.early_at_runs === undefined ? {} : { earlyAtRuns: cfg.review.early_at_runs }),
-      ...(cfg.review?.min_runs === undefined ? {} : { minRuns: cfg.review.min_runs }),
+      ...(cfg.review?.run_early_at_runs === undefined ? {} : { earlyAtRuns: cfg.review.run_early_at_runs }),
+      ...(cfg.review?.skip_below_runs === undefined ? {} : { minRuns: cfg.review.skip_below_runs }),
     });
     process.stdout.write(`${r.due ? "due" : "not due"}: ${r.reason}\n`);
     setOutput("due", String(r.due));
@@ -960,13 +1039,12 @@ async function reviewCommand(second: string | undefined, args: Args): Promise<nu
 }
 
 async function syncCommand(args: Args): Promise<number> {
-  const cfg = await factoryConfig();
   const gh = new GitHub({ repo: requireRepo() });
-  const branch = typeof args["branch"] === "string" ? args["branch"] : cfg.branch ?? (await gh.defaultBranch());
+  const branch = typeof args["branch"] === "string" ? args["branch"] : (await gh.defaultBranch());
   const report = await runSyncCommand({
     gh,
     branch,
-    requiredChecks: cfg.checks?.required ?? ["factory/policy", "factory/gates"],
+    requiredChecks: FACTORY_REQUIRED_CHECKS,
     requireReview: false,
     ...(args["apply"] === true ? { apply: true } : {}),
   });
@@ -996,6 +1074,29 @@ async function auditCommand(args: Args): Promise<number> {
   for (const f of report.findings) process.stderr.write(`${f.kind}: ${f.detail}\n`);
   setOutput("findings", String(report.findings.length));
   return 1;
+}
+
+/**
+ * `bsf models` — each role's model, from factory.yaml, as step outputs.
+ *
+ * The callers pass these into the role workflows as inputs. This replaced a
+ * set of repository variables that the roles read and nothing ever set, so
+ * every role would have started with an empty model. factory.yaml is the one
+ * place a model is chosen; there is no second copy to keep in step.
+ */
+async function modelsCommand(): Promise<number> {
+  const cfg = await factoryConfig();
+  const models = cfg.models ?? {};
+  const roles = ["triage", "spec", "builder", "verifier", "gardener", "hardener", "scorer"];
+  const missing = roles.filter((r) => typeof models[r] !== "string" || models[r] === "");
+  if (missing.length > 0) {
+    process.stderr.write(`bsf: factory.yaml has no model for: ${missing.join(", ")}\n`);
+    return 1;
+  }
+  for (const r of roles) setOutput(`model_${r}`, models[r] ?? "");
+  setOutput("garden_max_prs", String(cfg.pipelines?.["gardening"]?.max_prs_per_run ?? 5));
+  for (const r of roles) process.stdout.write(`${r}: ${models[r] ?? ""}\n`);
+  return 0;
 }
 
 async function consistencyCommand(args: Args): Promise<number> {
@@ -1385,7 +1486,7 @@ async function gardenFileCommand(args: Args): Promise<number> {
   if (typeof from !== "string") die("usage: bsf garden-file --from PATH [--max N] [--plan]");
   const cfg = await factoryConfig();
   const gh = new GitHub({ repo: requireRepo() });
-  const max = typeof args["max"] === "string" ? Number(args["max"]) : cfg.gardening?.max_prs_per_night ?? 5;
+  const max = typeof args["max"] === "string" ? Number(args["max"]) : cfg.pipelines?.["gardening"]?.max_prs_per_run ?? 5;
   const running = await runningRuns(gh);
   const r = await gardenFile({
     gh,
@@ -1393,7 +1494,7 @@ async function gardenFileCommand(args: Args): Promise<number> {
     root: process.cwd(),
     from,
     maxPrs: Number.isInteger(max) && max > 0 ? max : 5,
-    freeSlots: Math.max(0, (cfg.concurrency?.max_runs ?? 5) - running),
+    freeSlots: Math.max(0, (cfg.limits?.concurrency?.max_runs ?? 5) - running),
     ...(args["plan"] === true ? { plan: true } : {}),
   });
   process.stdout.write(`filed ${r.filed.length}, dispatched ${r.dispatched.length}, handed to hardening ${r.handedOff.length}\n`);
@@ -1445,7 +1546,7 @@ async function gatesTests(args: Args): Promise<number> {
     gh,
     commit: headSha(),
     existingCheck: cfg.existing_ci?.test_check ?? null,
-    command: cfg.tests?.command ?? null,
+    command: sandboxCommand("test"),
     root: process.cwd(),
   });
   process.stdout.write(`${result.summary}\n`);
@@ -1721,14 +1822,11 @@ async function benchmarkRunCommand(args: Args): Promise<number> {
   if (typeof taskJson !== "string" || typeof definition !== "string") {
     die("usage: bsf benchmark-run --task JSON --definition PATH");
   }
-  // Annotated rather than cast: the catch branch has to widen to the config
-  // type, and `eslint --fix` removes a cast in this position as redundant.
-  const cfg: FactoryConfig = await factoryConfig().catch(() => ({}));
   const report = await runBenchmarkTask({
     task: JSON.parse(taskJson) as BenchmarkTaskInput,
     definitionPath: definition,
     worktree: process.cwd(),
-    testCommand: cfg.tests?.command ?? null,
+    testCommand: sandboxCommand("test"),
   });
   // One line of JSON on stdout: the provider reads the last JSON object, so
   // progress may be printed to stderr without confusing it.

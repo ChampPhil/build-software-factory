@@ -53,8 +53,57 @@ const TRIGGERS = [
 ] as const;
 
 /** Secrets and variables the workflows read. Names only; values are never read. */
-const REQUIRED_SECRETS = ["FACTORY_APP_PRIVATE_KEY", "ANTHROPIC_API_KEY"] as const;
-const REQUIRED_VARS = ["FACTORY_APP_CLIENT_ID"] as const;
+/**
+ * Used only when no factory workflow is installed yet to read the real list
+ * from. Once one is, the requirement is whatever the workflows reference.
+ */
+const FALLBACK_SECRETS = ["FACTORY_APP_PRIVATE_KEY"] as const;
+const FALLBACK_VARS = ["FACTORY_APP_CLIENT_ID"] as const;
+
+/**
+ * The secrets and variables the installed factory workflows actually use.
+ *
+ * Derived rather than listed. A hardcoded list said ANTHROPIC_API_KEY while
+ * every role workflow asked for MODEL_API_KEY, which nothing created — so a
+ * repo could pass this check and then fail every role job at startup. Reading
+ * the workflows means the requirement follows whichever engine each role uses,
+ * with no map of engines to key names to keep in step.
+ */
+export function referencedInWorkflows(root: string): {
+  secrets: string[];
+  vars: string[];
+  optionalVars: string[];
+} {
+  const dir = join(root, ".github", "workflows");
+  const secrets = new Set<string>();
+  const required = new Set<string>();
+  const seen = new Set<string>();
+  if (!existsSync(dir)) return { secrets: [], vars: [], optionalVars: [] };
+  for (const f of readdirSync(dir)) {
+    if (!/^factory-.*\.(md|ya?ml)$/.test(f) || f.endsWith(".lock.yml")) continue;
+    for (const line of readFileSync(join(dir, f), "utf8").split("\n")) {
+      for (const m of line.matchAll(/\$\{\{[^}]*?\bsecrets\.([A-Za-z_][A-Za-z0-9_]*)/g)) {
+        if (m[1] !== undefined && m[1] !== "GITHUB_TOKEN") secrets.add(m[1]);
+      }
+      for (const m of line.matchAll(/\$\{\{[^}]*?\bvars\.([A-Za-z_][A-Za-z0-9_]*)/g)) {
+        const name = m[1];
+        if (name === undefined) continue;
+        seen.add(name);
+        // A variable bound only to an uppercase env name reaches a step that
+        // can supply its own default, so its absence is the step's business.
+        // Anywhere else — an engine's model, an App's client id, an action's
+        // input — an empty string is configuration that is simply wrong.
+        const key = /^\s*([A-Za-z0-9_-]+)\s*:/.exec(line)?.[1] ?? "";
+        if (!/^[A-Z][A-Z0-9_]*$/.test(key)) required.add(name);
+      }
+    }
+  }
+  return {
+    secrets: [...secrets].sort(),
+    vars: [...required].sort(),
+    optionalVars: [...seen].filter((v) => !required.has(v)).sort(),
+  };
+}
 
 export interface DoctorOptions {
   readonly root: string;
@@ -207,6 +256,10 @@ export async function runDoctor(opts: DoctorOptions): Promise<DoctorReport> {
     );
     return { installed: true, findings, checked };
   }
+
+  const referenced = referencedInWorkflows(opts.root);
+  const REQUIRED_SECRETS = referenced.secrets.length > 0 ? referenced.secrets : FALLBACK_SECRETS;
+  const REQUIRED_VARS = referenced.vars.length > 0 ? referenced.vars : FALLBACK_VARS;
 
   did("secrets");
   const secretNames = await names(opts.gh, "actions/secrets", (r) => r.secrets);

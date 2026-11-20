@@ -29,6 +29,7 @@ jobs:
   due:
     runs-on: ubuntu-latest
     outputs:
+      model_scorer: ${{ steps.models.outputs.model_scorer }}
       due: ${{ steps.check.outputs.due }}
       reason: ${{ steps.check.outputs.reason }}
     steps:
@@ -53,6 +54,9 @@ jobs:
           rm -rf .factory-trusted
           echo "$RUNNER_TEMP/bsf" >> "$GITHUB_PATH"
           "$RUNNER_TEMP/bsf/bsf" --version
+      - name: Read each role's model from factory.yaml
+        id: models
+        run: bsf models
       - name: Mint a token
         id: token
         uses: actions/create-github-app-token@v1
@@ -75,6 +79,7 @@ jobs:
     if: needs.due.outputs.due == 'true'
     uses: ./.github/workflows/factory-role-scorer.lock.yml
     with:
+      model: ${{ needs.due.outputs.model_scorer }}
       work_item: review
       pipeline: definition
     secrets: inherit

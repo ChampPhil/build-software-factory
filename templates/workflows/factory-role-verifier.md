@@ -8,6 +8,10 @@
 on:
   workflow_call:
     inputs:
+      model:
+        description: This role's model, from factory.yaml, read by the caller with `bsf models`
+        required: true
+        type: string
       work_item:
         required: true
         type: string
@@ -31,7 +35,7 @@ on:
         default: false
         type: boolean
     secrets:
-      MODEL_API_KEY:
+      ANTHROPIC_API_KEY:
         required: true
       FACTORY_APP_PRIVATE_KEY:
         required: true
@@ -42,9 +46,9 @@ github-app:
 
 engine:
   id: claude
-  model: ${{ vars.FACTORY_MODEL_VERIFIER }}
+  model: ${{ inputs.model }}
   env:
-    ANTHROPIC_API_KEY: ${{ secrets.MODEL_API_KEY }}
+    ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 
 permissions:
   contents: read

@@ -46,6 +46,12 @@ jobs:
   plan:
     runs-on: ubuntu-latest
     outputs:
+      model_triage: ${{ steps.models.outputs.model_triage }}
+      model_spec: ${{ steps.models.outputs.model_spec }}
+      model_builder: ${{ steps.models.outputs.model_builder }}
+      model_hardener: ${{ steps.models.outputs.model_hardener }}
+      needs_hardener: ${{ steps.plan.outputs.needs_hardener }}
+      needs_spec: ${{ steps.plan.outputs.needs_spec }}
       pipeline: ${{ steps.plan.outputs.pipeline }}
       protected_files_policy: ${{ steps.plan.outputs.protected_files_policy }}
       needs_triage: ${{ steps.plan.outputs.needs_triage }}
@@ -72,6 +78,9 @@ jobs:
           rm -rf .factory-trusted
           echo "$RUNNER_TEMP/bsf" >> "$GITHUB_PATH"
           "$RUNNER_TEMP/bsf/bsf" --version
+      - name: Read each role's model from factory.yaml
+        id: models
+        run: bsf models
       - name: Mint a down-scoped token for this job
         id: token
         uses: actions/create-github-app-token@v1
@@ -95,25 +104,51 @@ jobs:
     if: needs.plan.outputs.needs_triage == 'true' && needs.plan.outputs.proceed == 'true'
     uses: ./.github/workflows/factory-role-triage.lock.yml
     with:
+      model: ${{ needs.plan.outputs.model_triage }}
       work_item: ${{ inputs.work_item }}
       pipeline: ${{ needs.plan.outputs.pipeline }}
       attempt: ${{ fromJSON(inputs.attempt) }}
+    secrets: inherit
+
+  # Hardening starts here instead of at triage: its intent comes from a found
+  # weakness, not a request. Nothing called this role before, so the hardening
+  # pipeline that run-plan describes could not run.
+  hardener:
+    needs: plan
+    if: needs.plan.outputs.needs_hardener == 'true' && needs.plan.outputs.proceed == 'true'
+    uses: ./.github/workflows/factory-role-hardener.lock.yml
+    with:
+      model: ${{ needs.plan.outputs.model_hardener }}
+      work_item: ${{ inputs.work_item }}
+      pipeline: ${{ needs.plan.outputs.pipeline }}
+      attempt: ${{ fromJSON(inputs.attempt) }}
+      protected_files_policy: ${{ needs.plan.outputs.protected_files_policy }}
     secrets: inherit
 
   spec:
-    needs: [plan, triage]
-    if: always() && needs.plan.outputs.proceed == 'true' && (needs.triage.result == 'success' || needs.triage.result == 'skipped')
+    needs: [plan, triage, hardener]
+    if: >-
+      always() && needs.plan.outputs.proceed == 'true' && needs.plan.outputs.needs_spec == 'true' &&
+      (needs.triage.result == 'success' || needs.triage.result == 'skipped') &&
+      (needs.hardener.result == 'success' || needs.hardener.result == 'skipped')
     uses: ./.github/workflows/factory-role-spec.lock.yml
     with:
+      model: ${{ needs.plan.outputs.model_spec }}
       work_item: ${{ inputs.work_item }}
       pipeline: ${{ needs.plan.outputs.pipeline }}
       attempt: ${{ fromJSON(inputs.attempt) }}
     secrets: inherit
 
+  # Runs when spec ran, and also when the pipeline has no spec step at all
+  # (conflict, gardening). A failed spec still stops it.
   build:
     needs: [plan, spec]
+    if: >-
+      always() && needs.plan.outputs.proceed == 'true' &&
+      (needs.spec.result == 'success' || needs.spec.result == 'skipped')
     uses: ./.github/workflows/factory-role-builder.lock.yml
     with:
+      model: ${{ needs.plan.outputs.model_builder }}
       work_item: ${{ inputs.work_item }}
       pipeline: ${{ needs.plan.outputs.pipeline }}
       attempt: ${{ fromJSON(inputs.attempt) }}

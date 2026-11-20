@@ -3,7 +3,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync, read
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { runDoctor, formatReport, rolesOf, rubricsOf } from "../src/commands/doctor.js";
+import { runDoctor, formatReport, rolesOf, rubricsOf, referencedInWorkflows } from "../src/commands/doctor.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = join(HERE, "../..");
@@ -208,7 +208,18 @@ describe("what only the API can tell us", () => {
           return over["secrets"] ?? { secrets: [{ name: "FACTORY_APP_PRIVATE_KEY" }, { name: "ANTHROPIC_API_KEY" }] };
         }
         if (path.includes("actions/variables")) {
-          return over["variables"] ?? { variables: [{ name: "FACTORY_APP_CLIENT_ID" }] };
+          return (
+            over["variables"] ?? {
+              // Everything the installed templates bind to configuration. The
+              // gardener's PR budget is absent on purpose: its step defaults it.
+              variables: [
+                "FACTORY_APP_CLIENT_ID",
+                ...["BUILDER", "GARDENER", "HARDENER", "SCORER", "SPEC", "TRIAGE", "VERIFIER"].map(
+                  (r) => `FACTORY_MODEL_${r}`,
+                ),
+              ].map((name) => ({ name })),
+            }
+          );
         }
         if (path.includes("git/refs/factory/data")) {
           if (over["ref"] === "missing") throw new Error("Not Found");
@@ -236,6 +247,10 @@ describe("what only the API can tell us", () => {
   it("catches a missing variable", async () => {
     const r = await runDoctor({ root, gh: fakeGh({ variables: { variables: [] } }) as never });
     expect(broken(r).map((f) => f.detail).join(" ")).toContain("FACTORY_APP_CLIENT_ID");
+    // A role's model is configuration: empty is wrong, not defaulted.
+    expect(broken(r).map((f) => f.detail).join(" ")).toContain("FACTORY_MODEL_BUILDER");
+    // Read only into a step's env, which supplies its own default.
+    expect(broken(r).map((f) => f.detail).join(" ")).not.toContain("FACTORY_GARDEN_MAX_PRS");
   });
 
   it("calls an absent data ref degraded, since the first run creates it", async () => {
@@ -289,5 +304,26 @@ describe("formatReport", () => {
     const text = formatReport({ installed: true, findings: [], checked: ["definition", "workflows"] });
     expect(text).toContain("nothing wrong");
     expect(text).toContain("definition, workflows");
+  });
+});
+
+describe("requirements are read from the installed workflows", () => {
+  it("requires the key each role's engine actually names", () => {
+    // A hardcoded list once said ANTHROPIC_API_KEY while every role asked for
+    // a MODEL_API_KEY nothing created. Reading the workflows cannot disagree
+    // with them.
+    // beforeEach has installed the templates into root.
+    const r = referencedInWorkflows(root);
+    expect(r.secrets).toEqual(["ANTHROPIC_API_KEY", "FACTORY_APP_PRIVATE_KEY"]);
+    expect(r.vars).toContain("FACTORY_APP_CLIENT_ID");
+    expect(r.vars).toContain("FACTORY_MODEL_SPEC");
+    expect(r.optionalVars).toEqual(["FACTORY_GARDEN_MAX_PRS"]);
+  });
+
+  it("follows an engine swap without a map of engines to key names", () => {
+    // beforeEach has installed the templates into root.
+    const md = join(root, ".github/workflows/factory-role-spec.md");
+    writeFileSync(md, readFileSync(md, "utf8").replace(/ANTHROPIC_API_KEY/g, "CURSOR_API_KEY"));
+    expect(referencedInWorkflows(root).secrets).toContain("CURSOR_API_KEY");
   });
 });

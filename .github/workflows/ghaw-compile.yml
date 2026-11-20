@@ -10,9 +10,9 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ["templates/workflows/**", ".github/workflows/ghaw-compile.yml"]
+    paths: ["templates/workflows/**", ".github/workflows/ghaw-compile.yml", "runner/src/cli.ts"]
   pull_request:
-    paths: ["templates/workflows/**", ".github/workflows/ghaw-compile.yml"]
+    paths: ["templates/workflows/**", ".github/workflows/ghaw-compile.yml", "runner/src/cli.ts"]
 
 permissions:
   contents: read
@@ -51,6 +51,19 @@ jobs:
           # user's repo that check stays on: a recompile that introduces a
           # secret the last one did not have is exactly what it should flag.
           gh aw compile --strict --approve --verbose 2>&1 | tee /tmp/compile.log
+
+      # The pipeline workflows are plain Actions YAML, which gh-aw does not
+      # check. actionlint does: expressions, `needs` and job-output references,
+      # and every call into a reusable workflow against that workflow's declared
+      # inputs and secrets — which is why it runs here, after the role lock
+      # files it validates those calls against exist.
+      - name: Lint the pipeline workflows against the compiled roles
+        run: |
+          cp templates/workflows/*.yml /tmp/scratch/.github/workflows/
+          bash <(curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash) latest /tmp
+          cd /tmp/scratch
+          # Lint only what the templates authored; the lock files are gh-aw's.
+          /tmp/actionlint -color $(ls .github/workflows/factory-*.yml | grep -v '\.lock\.yml$')
 
       - name: Keep the compiled output and the log
         if: always()

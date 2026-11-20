@@ -4,6 +4,15 @@
 on:
   workflow_call:
     inputs:
+      model:
+        description: This role's model, from factory.yaml, read by the caller with `bsf models`
+        required: true
+        type: string
+      max_prs:
+        description: PRs this run may open, from factory.yaml's pipelines.gardening.max_prs_per_run
+        required: false
+        default: 5
+        type: number
       work_item:
         required: true
         type: string
@@ -24,7 +33,7 @@ on:
         default: false
         type: boolean
     secrets:
-      MODEL_API_KEY:
+      ANTHROPIC_API_KEY:
         required: true
       FACTORY_APP_PRIVATE_KEY:
         required: true
@@ -35,9 +44,9 @@ github-app:
 
 engine:
   id: claude
-  model: ${{ vars.FACTORY_MODEL_GARDENER }}
+  model: ${{ inputs.model }}
   env:
-    ANTHROPIC_API_KEY: ${{ secrets.MODEL_API_KEY }}
+    ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 
 permissions:
   contents: read
@@ -88,13 +97,13 @@ pre-agent-steps:
       rm -rf .factory-trusted
       echo "$RUNNER_TEMP/bsf" >> "$GITHUB_PATH"
       "$RUNNER_TEMP/bsf/bsf" --version
-  # gh-aw allows only a fixed set of expressions in a prompt, and repository
-  # variables are not among them, so the budget reaches the agent as a file.
-  # Validated as a number because it lands in JSON the agent parses.
+  # gh-aw allows only a fixed set of expressions in a prompt, so the budget
+  # reaches the agent as a file. Validated as a number because it lands in
+  # JSON the agent parses.
   - name: Record this run's PR budget
     shell: bash
     env:
-      MAX_PRS: ${{ vars.FACTORY_GARDEN_MAX_PRS }}
+      MAX_PRS: ${{ inputs.max_prs }}
     run: |
       mkdir -p /tmp/gh-aw/agent/bsf
       [[ "$MAX_PRS" =~ ^[0-9]+$ ]] || MAX_PRS=3
