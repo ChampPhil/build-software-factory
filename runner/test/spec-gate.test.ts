@@ -37,7 +37,7 @@ describe("a spec must show what it rests on", () => {
       ...base,
       spec: { research: [{ claim: "x", source: "lib/missing.ts" }, { claim: "y", source: "lib/invoices.ts:99" }] },
     });
-    expect(p.join("\n")).toContain("does not exist");
+    expect(p.join("\n")).toContain("not a file in the repo");
     expect(p.join("\n")).toContain("line 99");
   });
 
@@ -51,5 +51,29 @@ describe("a spec must show what it rests on", () => {
     const spec = { files: [".factory/bin/bsf"], research: [{ claim: "x", source: "lib/invoices.ts" }] };
     expect(specProblems({ ...base, spec }).join()).toContain("protected path");
     expect(specProblems({ ...base, spec, pipelineExclusions: [".factory/bin/"] })).toEqual([]);
+  });
+
+  it("accepts a reference followed by a note, and an experiment that names its command", () => {
+    const p = specProblems({
+      ...base,
+      spec: {
+        research: [
+          { claim: "x", source: "lib/invoices.ts (the status union)" },
+          { claim: "y", source: "lib/invoices.ts:2, where sent is defined" },
+          { claim: "z", source: "https://vitest.dev/api/ (expect.toBe)" },
+          { claim: "w", source: "ran: npx vitest run lib/ (12 passed)" },
+        ],
+      },
+    });
+    expect(p).toEqual([]);
+  });
+
+  it("rejects prose that is not a reference, and says what a source looks like", () => {
+    const p = specProblems({
+      ...base,
+      spec: { research: [{ claim: "x", source: "npx vitest run in this sandbox" }, { claim: "y", source: "ran:" }] },
+    });
+    expect(p[0]).toContain('"ran: <command>"');
+    expect(p[1]).toContain("without its command");
   });
 });

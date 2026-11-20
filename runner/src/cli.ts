@@ -59,6 +59,7 @@ import {
 } from "./commands/benchmark.js";
 import { runBenchmarkTask, type BenchmarkTaskInput } from "./commands/benchmark-run.js";
 import { readFileSync, appendFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, statSync } from "node:fs";
+import { specProblems, type SpecGateInput, type SpecLike } from "./commands/spec-gate.js";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -162,6 +163,7 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
       not in the prompt.
 
   bsf write-spec ID --from PATH [--pipeline P]
+  bsf spec check --file PATH [--pipeline P]
       Store the spec role's plan and acceptance checks on the work item.
 
   bsf fetch-artifact NAME --out PATH [--run-id N]
@@ -462,6 +464,10 @@ async function main(argv: readonly string[]): Promise<number> {
 
     case "write-spec":
       return writeSpecCommand(command[1], args);
+
+    case "spec":
+      if (second !== "check") die("usage: bsf spec check --file PATH [--pipeline P]");
+      return specCheckCommand(args);
 
     case "fetch-artifact":
       return fetchArtifactCommand(command[1], args);
@@ -1606,24 +1612,47 @@ async function fetchWorkItemCommand(id: string | undefined, args: Args): Promise
   return 0;
 }
 
-async function writeSpecCommand(id: string | undefined, args: Args): Promise<number> {
-  const from = args["from"];
-  if (id === undefined || typeof from !== "string") die("usage: bsf write-spec ID --from PATH");
-  // The gate reads the policy from the default branch's copy, and checks
-  // cited files against the checkout the spec was researched in.
+/** What the spec gate checks against: the default branch's policy, and the checkout the spec was researched in. */
+async function specGate(args: Args): Promise<Omit<SpecGateInput, "spec">> {
   const policy = await loadPolicy(new DiskLoader(process.cwd())).catch(() => null);
   const pipeline = typeof args["pipeline"] === "string" ? args["pipeline"] : "product_work";
-  const r = await writeSpec(new GitHub({ repo: requireRepo() }), id, from, nowIso(), {
+  return {
     root: process.env["GITHUB_WORKSPACE"] ?? process.cwd(),
     protectedPaths: policy?.paths.protected ?? [".github/workflows/**"],
     pipelineExclusions: policy?.protected_files?.exclude[pipeline] ?? [],
-  });
+  };
+}
+
+async function writeSpecCommand(id: string | undefined, args: Args): Promise<number> {
+  const from = args["from"];
+  if (id === undefined || typeof from !== "string") die("usage: bsf write-spec ID --from PATH");
+  const r = await writeSpec(new GitHub({ repo: requireRepo() }), id, from, nowIso(), await specGate(args));
   process.stdout.write(
     `spec stored on ${r.id}` +
       `${r.declaredTestEdits.length > 0 ? `; declares ${r.declaredTestEdits.length} test edit(s)` : ""}\n`,
   );
   setOutput("declared_test_edits", r.declaredTestEdits.join(","));
   return 0;
+}
+
+/** The same gate write-spec applies, run by the spec agent on its own draft so it can fix what fails. */
+async function specCheckCommand(args: Args): Promise<number> {
+  const file = args["file"];
+  if (typeof file !== "string") die("usage: bsf spec check --file PATH [--pipeline P]");
+  let spec: SpecLike;
+  try {
+    spec = JSON.parse(readFileSync(file, "utf8")) as SpecLike;
+  } catch (e) {
+    process.stderr.write(`${file} is not JSON: ${(e as Error).message}\n`);
+    return 1;
+  }
+  const problems = specProblems({ ...(await specGate(args)), spec });
+  if (problems.length === 0) {
+    process.stdout.write("the spec passes the gate\n");
+    return 0;
+  }
+  process.stderr.write(`the spec would be rejected:\n  - ${problems.join("\n  - ")}\n`);
+  return 1;
 }
 
 async function fetchArtifactCommand(name: string | undefined, args: Args): Promise<number> {

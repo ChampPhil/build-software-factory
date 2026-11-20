@@ -74,7 +74,7 @@ describe("every runner step that may call GitHub has a token", () => {
   // no token in their environment, so every role would have failed at its
   // first step. `bsf models`, `--version` and `sandbox start` read only
   // local files (the trusted copy fetched beside the runner).
-  const LOCAL_ONLY = /\bbsf (models|--version|recompile-prepare|sandbox (start|trial|freeze|check))\b/;
+  const LOCAL_ONLY = /\bbsf (models|--version|recompile-prepare|sandbox (start|trial|freeze|check)|spec check)\b/;
   const files = readdirSync(WORKFLOWS).filter((f) => /^factory-.*\.(yml|md)$/.test(f));
   for (const file of files) {
     it(file, () => {

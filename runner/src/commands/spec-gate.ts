@@ -25,6 +25,49 @@ export interface SpecGateInput {
   readonly pipelineExclusions?: readonly string[];
 }
 
+/**
+ * A source is a reference, optionally followed by a note:
+ *
+ *   https://example.com/docs#section      a page in the world
+ *   src/lib/money.ts:42 (formatCents)     a file, or a line of it, in the repo
+ *   ran: npx vitest run lib/              an experiment the spec ran itself
+ *
+ * Only the reference is checked; the note is for the reader. An experiment
+ * cannot be checked after the fact, so it is accepted when it names the
+ * command, which is what lets a reviewer run it again.
+ */
+export const SOURCE_FORMS =
+  'a URL ("https://…"), a repo path ("src/a.ts" or "src/a.ts:42"), or an experiment you ran ("ran: <command>"), each optionally followed by a note';
+
+export function sourceProblem(source: string, root: string): string | null {
+  const ran = /^ran:\s*(.*)$/s.exec(source);
+  if (ran !== null) {
+    return (ran[1] ?? "").trim() === "" ? `cites an experiment without its command: ${source}` : null;
+  }
+  const ref = (source.split(/\s+/)[0] ?? "").replace(/[,;.)]+$/, "");
+  if (/^https?:\/\//.test(ref)) {
+    try {
+      new URL(ref);
+      return null;
+    } catch {
+      return `cites a malformed URL: ${ref}`;
+    }
+  }
+  const m = /^(.+?)(?::(\d+)(?:-(\d+))?)?$/.exec(ref);
+  const rel = normalize(m?.[1] ?? ref);
+  if (rel.startsWith("..") || rel.startsWith("/")) return `cites a path outside the repo: ${ref}`;
+  const full = join(root, rel);
+  if (!existsSync(full)) {
+    return `cites "${ref}", which is not a file in the repo. A source is ${SOURCE_FORMS}`;
+  }
+  const line = m?.[2] === undefined ? null : Number(m[2]);
+  if (line !== null && statSync(full).isFile()) {
+    const lines = readFileSync(full, "utf8").split("\n").length;
+    if (line < 1 || line > lines) return `cites line ${line} of ${rel}, which has ${lines}`;
+  }
+  return null;
+}
+
 export function specProblems(input: SpecGateInput): readonly string[] {
   const problems: string[] = [];
   const research = input.spec.research ?? [];
@@ -41,31 +84,8 @@ export function specProblems(input: SpecGateInput): readonly string[] {
       problems.push(`research ${i + 1} ("${claim.slice(0, 60)}") has no source`);
       return;
     }
-    if (/^https?:\/\//.test(source)) {
-      try {
-        new URL(source);
-      } catch {
-        problems.push(`research ${i + 1} cites a malformed URL: ${source}`);
-      }
-      return;
-    }
-    // path or path:line, inside the repo
-    const m = /^(.+?)(?::(\d+)(?:-(\d+))?)?$/.exec(source);
-    const rel = normalize(m?.[1] ?? source);
-    if (rel.startsWith("..") || rel.startsWith("/")) {
-      problems.push(`research ${i + 1} cites a path outside the repo: ${source}`);
-      return;
-    }
-    const full = join(input.root, rel);
-    if (!existsSync(full)) {
-      problems.push(`research ${i + 1} cites ${rel}, which does not exist`);
-      return;
-    }
-    const line = m?.[2] === undefined ? null : Number(m[2]);
-    if (line !== null && statSync(full).isFile()) {
-      const lines = readFileSync(full, "utf8").split("\n").length;
-      if (line < 1 || line > lines) problems.push(`research ${i + 1} cites line ${line} of ${rel}, which has ${lines}`);
-    }
+    const problem = sourceProblem(source, input.root);
+    if (problem !== null) problems.push(`research ${i + 1} ${problem}`);
   });
 
   // A plan that needs a protected path fails the policy check after the
