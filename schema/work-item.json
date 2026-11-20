@@ -193,6 +193,28 @@
                 "type": "string"
               },
               "description": "Existing test files this build may modify or delete. The policy check fails any other test edit."
+            },
+            "research": {
+              "description": "What the spec found and where, one entry per finding its decisions rest on. A codebase source is path or path:line; a world source is an http(s) URL.",
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "claim",
+                  "source"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "claim": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "source": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              }
             }
           }
         }

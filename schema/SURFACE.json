@@ -3365,6 +3365,7 @@
           "feature_folders",
           "files",
           "plan",
+          "research",
           "tests_added",
           "tests_changed"
         ],
@@ -3408,6 +3409,29 @@
       },
       "/properties/spec/oneOf/1/properties/tests_changed/items": {
         "type": "string"
+      },
+      "/properties/spec/oneOf/1/properties/research": {
+        "type": "array"
+      },
+      "/properties/spec/oneOf/1/properties/research/items": {
+        "type": "object",
+        "properties": [
+          "claim",
+          "source"
+        ],
+        "required": [
+          "claim",
+          "source"
+        ],
+        "additionalProperties": false
+      },
+      "/properties/spec/oneOf/1/properties/research/items/properties/claim": {
+        "type": "string",
+        "minLength": 1
+      },
+      "/properties/spec/oneOf/1/properties/research/items/properties/source": {
+        "type": "string",
+        "minLength": 1
       }
     }
   }

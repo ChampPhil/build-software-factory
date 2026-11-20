@@ -5,6 +5,7 @@ import { FactoryStore, json, workItemPath, runPath } from "../lib/store.js";
 import { MEDIA_REF, type Change } from "../lib/dataref.js";
 import { stripUntrustedText } from "./intake.js";
 import { assertValid } from "../lib/schema.js";
+import { specProblems, type SpecGateInput } from "./spec-gate.js";
 
 /**
  * The steps that run around an agent, inside a role workflow.
@@ -169,6 +170,7 @@ export interface Spec {
   feature_folders?: string[];
   tests_added?: string[];
   tests_changed?: string[];
+  research?: { claim: string; source: string }[];
 }
 
 export interface WriteSpecReport {
@@ -189,6 +191,7 @@ export async function writeSpec(
   id: string,
   from: string,
   _now: string,
+  gate?: Omit<SpecGateInput, "spec">,
 ): Promise<WriteSpecReport> {
   const store = new FactoryStore(gh);
   const item = await store.get<WorkItemFile>(workItemPath(id), "work-item");
@@ -202,6 +205,14 @@ export async function writeSpec(
     // A spec with no checkable acceptance is a spec the verifier cannot act
     // on, which is how a run passes without having been verified.
     throw new Error(`${from} lists no acceptance checks`);
+  }
+  if (gate !== undefined) {
+    const problems = specProblems({ ...gate, spec });
+    if (problems.length > 0) {
+      // Rejected before any code is written: the builder would otherwise
+      // spend an attempt on a plan that was going to fail.
+      throw new Error(`the spec was rejected:\n  - ${problems.join("\n  - ")}`);
+    }
   }
 
   // No updated_at: the work-item schema sets additionalProperties false, and
