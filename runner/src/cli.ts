@@ -21,6 +21,7 @@ import { benchmarkResultPath, FactoryStore, json } from "./lib/store.js";
 import type { CandidatesFile } from "./lib/types.js";
 import { runDoctor, formatReport } from "./commands/doctor.js";
 import { findDashboard, serveDashboard } from "./commands/serve.js";
+import { checkConsistency } from "./commands/consistency.js";
 import {
   submitContribution,
   mergeContribution,
@@ -194,6 +195,13 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
       With --merge-into, the existing list is kept and only genuinely new
       problems are added — what the skill's update mode needs, since one the
       user already rejected must not be offered again.
+
+  bsf consistency [--root PATH] [--json]
+      Compare the artifacts that are supposed to agree: environment variables
+      the code reads against the example file, commands the README tells
+      people to run against the manifest's scripts, declared dependencies
+      against the lockfile. Each file is fine on its own, which is why no
+      linter catches these.
 
   bsf dashboard [--port N] [--dir PATH]
       Serve the dashboard from this machine, on the loopback interface only.
@@ -380,6 +388,9 @@ async function main(argv: readonly string[]): Promise<number> {
 
     case "audit":
       return auditCommand(args);
+
+    case "consistency":
+      return consistencyCommand(args);
 
     case "dashboard":
       return dashboardCommand(args);
@@ -977,6 +988,50 @@ async function auditCommand(args: Args): Promise<number> {
   for (const f of report.findings) process.stderr.write(`${f.kind}: ${f.detail}\n`);
   setOutput("findings", String(report.findings.length));
   return 1;
+}
+
+async function consistencyCommand(args: Args): Promise<number> {
+  const root = typeof args["root"] === "string" ? args["root"] : process.cwd();
+
+  // The files git knows about, so node_modules and build output are out
+  // without a list of directories to ignore going stale.
+  const tracked = await trackedFiles(root);
+  const files = tracked.filter((f) =>
+    /\.(ts|tsx|js|jsx|mjs|cjs|py|go|rb|rs|cs|java|ya?ml)$/.test(f),
+  );
+
+  const findings = checkConsistency({ root, files });
+
+  if (args["json"] === true) {
+    process.stdout.write(`${JSON.stringify({ files: files.length, findings }, null, 2)}\n`);
+  } else if (findings.length === 0) {
+    process.stdout.write(`nothing inconsistent across ${files.length} file(s)\n`);
+  } else {
+    for (const f of findings) {
+      process.stdout.write(`${f.check}\n  ${f.detail}\n  between ${f.between[0]} and ${f.between[1]}\n`);
+    }
+    process.stdout.write(`\n${findings.length} inconsistency(ies)\n`);
+  }
+
+  setOutput("inconsistencies", String(findings.length));
+  // Reported, not failed: every one of these needs a person to say which of
+  // the two artifacts is the one that is wrong.
+  return 0;
+}
+
+async function trackedFiles(root: string): Promise<readonly string[]> {
+  try {
+    const { execFile } = await import("node:child_process");
+    const { promisify } = await import("node:util");
+    const { stdout } = await promisify(execFile)("git", ["ls-files"], {
+      cwd: root,
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+    });
+    return String(stdout).split("\n").filter((l) => l !== "");
+  } catch {
+    return [];
+  }
 }
 
 async function dashboardCommand(args: Args): Promise<number> {

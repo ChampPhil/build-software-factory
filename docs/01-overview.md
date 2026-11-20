@@ -81,6 +81,12 @@ Static rules check code without running it. There are 12 base kinds, from shallo
 
 The twelve kinds are a taxonomy, not a launch list: the rule packs ship text and regex, structured-data schema, syntax tree, canonical form, types and dependency graph in v0.1; call graph, control flow and clone detection in v0.2; data flow and cross-artifact consistency in v1.0. Formal verification is only ever targeted (section 5).
 
+The last two arrived in v1.0 and are worth distinguishing, because they are the two a conventional linter cannot do.
+
+**Data flow** asks where a value came from, not what a line says. `execSync(command)` is not a problem; `execSync(command)` where `command` was built from `req.query` is. The rule packs carry these as Semgrep taint rules — sources and sinks — and each one's good example *still calls the sink*, so the rule is demonstrably about the path and not a ban on a useful function. A ban would be easier to write and worse: it would forbid the safe call too.
+
+**Cross-artifact consistency** compares two artifacts that are supposed to agree, where each is individually fine. `bsf consistency` checks environment variables the code reads against `.env.example` in both directions, commands the README tells people to run against the manifest's scripts, and declared dependencies against the lockfile — plus the commonest case of all, a repo that reads a dozen variables and has no example file at all, reported once rather than once per variable. Every finding names both files, because a mismatch is never a fault in one of them alone and the fix depends on which one is right. It reports and does not fail: deciding which artifact is wrong is a person's job.
+
 Higher-level rules are combinations of the base kinds:
 
 | Higher-level rule | Built from |

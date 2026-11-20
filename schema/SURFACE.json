@@ -2258,7 +2258,9 @@
       "/properties/tools/items/properties/kind": {
         "type": "string",
         "enum": [
+          "\"consistency\"",
           "\"coverage\"",
+          "\"dataflow\"",
           "\"deps\"",
           "\"formatter\"",
           "\"linter\"",

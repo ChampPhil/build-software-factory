@@ -7,8 +7,7 @@ import { parse as parseYaml } from "yaml";
 import { validate } from "../src/lib/schema.js";
 import {
   verifyRule, EslintRunner, RuffRunner, ClippyRunner, GoVetRunner, JavacLintRunner,
-  type RulePack, type RulePackRule, type ToolRunner,
-} from "../src/commands/rulepack.js";
+  type RulePack, type RulePackRule, type ToolRunner, SemgrepRunner } from "../src/commands/rulepack.js";
 
 /**
  * Phase 3 installs a rule only once it has been shown to discriminate: it must
@@ -62,6 +61,7 @@ const HAVE_RUFF = have("ruff", ["--version"]);
 const HAVE_CARGO = have("cargo", ["--version"]);
 const HAVE_GO = have("go", ["env", "GOVERSION"]);
 const HAVE_JAVAC = have("javac", ["-version"]);
+const HAVE_SEMGREP = have("semgrep", ["--version"]);
 
 describe("the rule packs", () => {
   it("there is a pack for each v0.1 language", () => {
@@ -150,6 +150,32 @@ describe.skipIf(!HAVE_RUFF)("ruff rules fail on bad and pass on good", () => {
   }
 });
 
+describe.skipIf(!HAVE_SEMGREP)("data-flow rules fire on the path, not on the call", () => {
+  for (const name of ["typescript", "python"] as const) {
+    const pack = loadPack(name);
+    const runner: ToolRunner = new SemgrepRunner(name);
+    for (const rule of pack.rules.filter((r) => r.tool === "semgrep")) {
+      it(`${name}: ${rule.id}`, async () => {
+        const verdict = await verifyRule(rule, runner);
+        if (!verdict.ok) throw new Error(`${verdict.reason}\n${verdict.detail}`);
+        expect(verdict.ok).toBe(true);
+      }, 120_000);
+    }
+  }
+
+  it("every data-flow rule's good example still calls the sink", () => {
+    // The point of a taint rule is that it does not ban a useful function.
+    // A good example that simply dropped the call would prove nothing — the
+    // rule would pass while being indistinguishable from a ban.
+    const sinkWords = /exec|subprocess|os\.system|\.query\(|\.unsafe\(/;
+    for (const name of ["typescript", "python"] as const) {
+      for (const rule of loadPack(name).rules.filter((r) => r.tool === "semgrep")) {
+        expect(rule.good, `${name}: ${rule.id}`).toMatch(sinkWords);
+      }
+    }
+  });
+});
+
 /* ------------------------------------------------- the verifier itself works */
 
 describe("verifyRule", () => {
@@ -215,7 +241,7 @@ describe("the v1.0 languages", () => {
   it("every rule in a verified pack is covered by a live check below", () => {
     // A pack that is neither live-verified nor marked unverified would be one
     // whose rules nobody has ever run, without saying so.
-    const liveTools = new Set(["eslint", "ruff", "clippy", "go-vet", "javac-lint"]);
+    const liveTools = new Set(["eslint", "ruff", "clippy", "go-vet", "javac-lint", "semgrep"]);
     for (const name of PACKS) {
       if (UNVERIFIED.has(name)) continue;
       const pack = loadPack(name);

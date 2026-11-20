@@ -65,7 +65,9 @@
               "typechecker",
               "secrets",
               "deps",
-              "coverage"
+              "coverage",
+              "dataflow",
+              "consistency"
             ]
           },
           "detect": {

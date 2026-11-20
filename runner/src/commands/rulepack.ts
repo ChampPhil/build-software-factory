@@ -259,6 +259,96 @@ export class RuffRunner implements ToolRunner {
   }
 }
 
+/* ------------------------------------------------------- data-flow rules */
+
+/**
+ * Semgrep in taint mode, for the data-flow rules.
+ *
+ * This is the kind the other runners cannot express. An eslint rule can ban
+ * `execSync`; it cannot say "this particular call is wrong because the string
+ * came from the request". A taint rule says exactly that, which means the
+ * same call stays allowed when the value is a literal — so it discriminates
+ * where a ban would simply forbid a useful function.
+ *
+ * The rule's own `config` carries a whole semgrep rule body, because sources
+ * and sinks have no shorter honest form.
+ */
+export class SemgrepRunner implements ToolRunner {
+  constructor(private readonly language: string) {}
+
+  async violates(rule: RulePackRule, source: string): Promise<{ violates: boolean; detail: string }> {
+    const dir = mkdtempSync(join(tmpdir(), `bsf-rule-${rule.id}-`));
+    try {
+      const body = rule.config["semgrep"];
+      if (typeof body !== "object" || body === null) {
+        throw new Error(`rule ${rule.id} has no \`semgrep\` rule body`);
+      }
+
+      const config = {
+        rules: [{ id: rule.id, languages: [this.language], severity: "ERROR", message: rule.concern, ...body }],
+      };
+      const configPath = join(dir, "rule.json");
+      writeFileSync(configPath, JSON.stringify(config), "utf8");
+
+      const file = join(dir, `example${extensionFor(this.language)}`);
+      writeFileSync(file, source, "utf8");
+
+      const { stdout } = await exec(
+        "semgrep",
+        ["--config", configPath, "--json", "--quiet", "--disable-version-check", "--metrics", "off", file],
+        { encoding: "utf8", maxBuffer: 32 * 1024 * 1024 },
+      ).catch((err: { stdout?: string; stderr?: string; message?: string }) => {
+        // semgrep exits non-zero when it finds something, and its findings
+        // are still on stdout.
+        if (typeof err.stdout === "string" && err.stdout.trim().startsWith("{")) return { stdout: err.stdout };
+        throw new Error(err.stderr ?? err.message ?? "semgrep failed");
+      });
+
+      const out = JSON.parse(String(stdout)) as {
+        results?: { check_id: string; extra?: { message?: string } }[];
+        errors?: { message?: string }[];
+      };
+      const errors = out.errors ?? [];
+      if (errors.length > 0 && (out.results ?? []).length === 0) {
+        // A rule semgrep could not parse reports zero findings, which would
+        // otherwise read as "the bad example is fine".
+        throw new Error(errors.map((e) => e.message ?? "semgrep error").join("; "));
+      }
+
+      const hits = out.results ?? [];
+      return {
+        violates: hits.length > 0,
+        detail: hits.map((h) => `${h.check_id}: ${h.extra?.message ?? ""}`.trim()).join("\n") || "(no findings)",
+      };
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+}
+
+function extensionFor(language: string): string {
+  switch (language) {
+    case "typescript":
+      return ".ts";
+    case "javascript":
+      return ".js";
+    case "python":
+      return ".py";
+    case "go":
+      return ".go";
+    case "java":
+      return ".java";
+    case "ruby":
+      return ".rb";
+    case "csharp":
+      return ".cs";
+    case "rust":
+      return ".rs";
+    default:
+      return ".txt";
+  }
+}
+
 /* ------------------------------------------- the toolchain-native runners */
 
 /**
