@@ -15,7 +15,7 @@ on:
     paths: ["templates/workflows/**", ".github/workflows/ghaw-compile.yml", "runner/src/cli.ts"]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   compile:
@@ -64,6 +64,25 @@ jobs:
           cd /tmp/scratch
           # Lint only what the templates authored; the lock files are gh-aw's.
           /tmp/actionlint -color $(ls .github/workflows/factory-*.yml | grep -v '\.lock\.yml$')
+
+      # Ship the compiled roles with the skill. Setup copies these into a
+      # user's repo, so for the default engine and sandbox posture the user
+      # never needs gh-aw installed; only a different engine or posture, both
+      # compile-time literals, needs a recompile, which runs in their Actions.
+      # A push made with GITHUB_TOKEN starts no workflow, so this cannot loop.
+      - name: Commit the compiled roles beside the templates
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        run: |
+          mkdir -p templates/compiled
+          rm -f templates/compiled/*.lock.yml
+          cp /tmp/scratch/.github/workflows/*.lock.yml templates/compiled/
+          git add templates/compiled
+          if git diff --cached --quiet; then echo "compiled roles unchanged"; exit 0; fi
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -m "Recompile the role templates with gh-aw $(gh aw version 2>/dev/null | head -1)"
+          git push
+        env:
+          GH_TOKEN: ${{ github.token }}
 
       - name: Keep the compiled output and the log
         if: always()
