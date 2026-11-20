@@ -1,6 +1,7 @@
 import { describe, it, expect, afterAll } from "vitest";
 import { spawn, execFileSync, type ChildProcess } from "node:child_process";
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 // @ts-expect-error -- a plain .mjs script with no type declarations; the
@@ -251,5 +252,60 @@ describe("the App's name", () => {
     const name = appName("Factory Recompiler", "bsf-fixtures-ts-webapp");
     expect(name.length).toBeLessThanOrEqual(APP_NAME_MAX);
     expect(name.toLowerCase()).toContain("recomp");
+  });
+});
+
+describe("the App's owner has to be the repo's owner", () => {
+  /**
+   * A GitHub App can only be installed on repositories owned by whoever owns
+   * the App. Getting this wrong fails silently: the App is created, looks
+   * correct, and the install page simply does not list the repository.
+   * That happened on this project — an App created under an organization
+   * could never be installed on a personal repo, and nothing said so.
+   */
+  function run(args: string[], ghType: "User" | "Organization") {
+    const dir = mkdtempSync(join(tmpdir(), "bsf-owner-"));
+    writeFileSync(
+      join(dir, "gh"),
+      [
+        "#!/bin/sh",
+        'case "$*" in',
+        '  *"api user --jq .login"*) echo champphil ;;',
+        '  *"users/"*) echo ' + ghType + " ;;",
+        '  *"repos/"*) echo ok ;;',
+        "  *) echo '' ;;",
+        "esac",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    const saved = process.env["PATH"];
+    process.env["PATH"] = `${dir}:${saved ?? ""}`;
+    try {
+      return execFileSync("node", [join(SCRIPTS, "create-app.mjs"), ...args, "--dry-run"], {
+        encoding: "utf8",
+        stdio: "pipe",
+        timeout: 20_000,
+      });
+    } catch (err) {
+      const e = err as { stdout?: string; stderr?: string };
+      return `${e.stdout ?? ""}${e.stderr ?? ""}`;
+    } finally {
+      process.env["PATH"] = saved ?? "";
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  it("refuses an --org that does not own the repo, even in a preview", () => {
+    // A preview that does not catch an impossible configuration is a preview
+    // that lies about what would happen, so this check runs before the
+    // credentials gate rather than inside it.
+    const out = run(["--repo", "ChampPhil/trinsports", "--org", "bsf-fixtures", "--port", "8931"], "User");
+    expect(out).toContain("does not own");
+    expect(out).toContain("can never be");
+  });
+
+  it("accepts the matching --org without complaint", () => {
+    const out = run(["--repo", "bsf-fixtures/ts-webapp", "--org", "bsf-fixtures", "--port", "8932"], "Organization");
+    expect(out).not.toContain("does not own");
   });
 });

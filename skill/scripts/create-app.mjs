@@ -53,8 +53,10 @@ const USAGE = `
 Create the factory's GitHub App and store its credentials on the repo.
 
   --repo owner/name   The repository the factory runs on (required)
-  --org ORG           Create the App under this organization instead of your
-                      personal account
+  --org ORG           The organization that owns the App. It must be the owner
+                      of --repo: an App can only be installed on repositories
+                      its owner owns. Derived from --repo when that owner is an
+                      organization, so you rarely need to pass it
   --recompiler        Create the recompiler App instead of the factory App
   --port N            Local port for GitHub's redirect (default 8787)
   --dry-run           Print what would happen; create nothing
@@ -238,6 +240,22 @@ async function main() {
   const state = randomBytes(16).toString("hex");
   const kind = args.recompiler ? "recompiler" : "factory";
 
+  // A GitHub App can only be installed on repositories owned by the account
+  // that owns the App. Creating one under the wrong owner produces an App that
+  // looks correct and can never be installed where it is needed — the install
+  // page simply does not offer the repository, with nothing saying why.
+  //
+  // The --org mismatch is pure string comparison, so it runs even in a preview
+  // or a dry run: a preview that does not catch an impossible configuration is
+  // a preview that lies about what would happen.
+  const repoOwner = args.repo.split("/")[0];
+  if (args.org && args.org !== repoOwner) {
+    fail(
+      `--org ${args.org} does not own ${args.repo}. An App owned by ${args.org} can never be ` +
+        `installed on it. Drop --org, or pass --org ${repoOwner}.`,
+    );
+  }
+
   // A dry run and a preview both create nothing and store nothing, so neither
   // needs credentials. Checking them first would stop someone reading what
   // this will do before they sign in.
@@ -255,6 +273,18 @@ async function main() {
     if (!gh(["api", `repos/${args.repo}`, "--jq", ".full_name"], { allowFail: true })) {
       fail(`cannot see ${args.repo}. Check the name, and that your gh login can read it.`);
     }
+
+    // Which of the two the owner is decides where the App must be created.
+    // Derived rather than demanded: naming the repo already settles it.
+    const ownerType = gh(["api", `users/${repoOwner}`, "--jq", ".type"], { allowFail: true });
+    if (!args.org && ownerType === "Organization") {
+      args.org = repoOwner;
+      log(`${repoOwner} is an organization, so the App will be created there — it has to be.`);
+    }
+    if (args.org && ownerType === "User") {
+      fail(`${repoOwner} is a user account, not an organization. Drop --org.`);
+    }
+
   }
 
   if (args.dryRun) {

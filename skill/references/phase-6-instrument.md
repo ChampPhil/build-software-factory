@@ -30,6 +30,19 @@ the manifest, catches GitHub's redirect on a local server, exchanges the
 single-use code, and stores the credentials. The whole flow expires after an
 hour.
 
+**One App per account that owns repositories.** A GitHub App can only be
+installed on repositories owned by whoever owns the App, so a user with repos
+under their own account *and* under an organization needs one App for each.
+The script derives the owner from `--repo` and refuses a `--org` that
+disagrees, because the failure is otherwise silent: the App is created, looks
+correct, and the install page simply does not list the repository, with
+nothing saying why.
+
+If the user has already set a factory up elsewhere, do not reuse that App —
+check who owns it. Making the first App public would also work and is one
+toggle, but it lists the App publicly and widens who can install it, so a
+second App is the better default for a personal repository.
+
 The App requests no `workflows` permission — absent, not "none", because a
 permission that is not requested cannot be granted. That is what stops the
 factory editing `.github/workflows` and so tampering with its own gates. Say
