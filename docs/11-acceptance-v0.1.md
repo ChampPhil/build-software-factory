@@ -3,52 +3,84 @@
 Nov 19, 2026 · Claude
 
 Every v0.1 acceptance criterion from the Build Plan, with what was actually
-established and how.
+established and how. Revised as the build progressed; the first version of
+this report is in git history.
 
 ## How to read the verdicts
 
 **No criterion is fully met.** Every one of the 23 is ultimately a statement
-about behavior on GitHub, and no factory has run: there is no GitHub App, so
-nothing can act on a repo. What exists is the deterministic half of v0.1, with
-its correctness decided locally rather than asserted. So the verdicts are:
+about behaviour on GitHub, and no factory has run: there is no GitHub App, so
+nothing can act on a repo. What exists is the whole deterministic half of
+v0.1 — plus the dashboard, the skill, the adapters and the Worker — with its
+correctness decided locally rather than asserted.
 
 | Verdict | What it means |
 | --- | --- |
 | **Logic proven** | A test decides the same question the criterion asks, on the same inputs, and passes. The decision is right. What is unproven is the wiring that puts it behind a real GitHub check. |
-| **Design verified** | The configuration the criterion depends on is asserted in a test, but the runtime behavior belongs to gh-aw or to GitHub and was not exercised. |
+| **Design verified** | The configuration or code the criterion depends on is asserted in a test, but the runtime behaviour belongs to gh-aw, to GitHub, or to a browser, and was not exercised. |
 | **Blocked** | Cannot be established at all yet, with the reason. |
 
-11 logic proven, 4 design verified, 8 blocked. 222 tests, all passing; run with
-`npm test`.
+Of the 23: **12 logic proven, 7 design verified, 1 partly proven (21), 3
+blocked.** 501 tests, all passing; run with `npm test` in `/runner`.
 
-## What blocks the eight
+The two half-criteria are counted with their main verdict and noted in place:
+criterion 5 is proven on its policy half and design-verified on its structural
+half, and 19 is proven on the fallback queue and blocked on the native one.
 
-Four distinct blockers, three of which need Philip.
+| Test file | Tests | Test file | Tests |
+| --- | --- | --- | --- |
+| `templates.test.ts` | 86 | `policy.test.ts` | 28 |
+| `rulepack.test.ts` | 51 | `queue-rollup.test.ts` | 25 |
+| `gates.test.ts` | 37 | `policy-run.test.ts` | 24 |
+| `skill.test.ts` | 37 | `gates-run.test.ts` | 19 |
+| `schema.test.ts` | 36 | `worker.test.ts` | 19 |
+| `intake.test.ts` | 28 | `adapters.test.ts` | 18 |
+| `review.test.ts` | 17 | `session.test.ts` | 16 |
+| `create-app.test.ts` | 16 | `ghaw-frontmatter.test.ts` | 13 |
+| `run-plan.test.ts` | 11 | `garden.test.ts` | 7 |
+| `step-report.test.ts` | 7 | `audit.test.ts` | 6 |
 
-1. **No GitHub App** (needs Philip: two clicks). Nothing can act on a repo
-   without it, so every end-to-end criterion is behind this one.
-2. **Can't push to `bsf-fixtures`** (needs Philip: install the Claude GitHub
-   App on that org). Read works; push is refused.
-3. **The fixtures are empty.** `bsf-fixtures/ts-webapp` and
-   `ChampPhil/bsf-private-repo-on-github-free-fixture` each hold a README and
-   nothing else. `py-api` and `js-legacy` do not exist and cannot be created
-   from this session. The three v0.1 fixtures have to be built before any
-   criterion can run on them.
-4. **The dashboard and the setup skill are not built.** Three criteria are
-   about the dashboard, two about the skill.
+## What blocks the three, and what no longer does
 
-Two session limits also shaped what could be checked: no Docker daemon, so the
-sandbox could not be built or run; and gh-aw's Go toolchain and release
-binaries are both blocked by the egress policy, so `gh aw compile` never ran
-and the role workflows are unverified against the real compiler.
+**Still blocking, and all three need Philip:**
+
+1. **No GitHub App.** Nothing can act on a repo without it. The script that
+   creates it is built and tested (`create-app.test.ts`, 16 tests); it needs
+   someone to approve the manifest in a browser, which is not a step that can
+   be automated away.
+2. **Can't push to `bsf-fixtures`.** Read works; push is refused. The three
+   fixture repos are built locally and verified, and are waiting on this.
+3. **Setup runs on the user's machine by design.** The skill mines local agent
+   sessions for corrections, which only exist there.
+
+**No longer blocking** — these were in the first version of this report:
+
+- *The dashboard is not built.* It is: nine pages, static export, reads GitHub
+  directly. Criteria 18, 20 and 22 move from blocked to design verified.
+- *The skill's phase scripts are not built.* They are: four scripts and seven
+  phase references, 37 tests. Criterion 1 moves to design verified.
+- *The scheduled workflows don't exist.* All eleven trigger workflows exist
+  now, including the three that legitimately run on a timer. Criterion 16's
+  verification is correspondingly sharper.
+- *`gh aw compile` can't run, so the role workflows are unverified.* Still
+  true of the compiler, but the gap is now covered two ways: the frontmatter
+  is validated against gh-aw's own schema in the test suite — which caught
+  four real bugs — and `bsf audit` detects a lock file that no longer matches
+  its source, using gh-aw's own hash implementation, verified against a real
+  gh-aw workflow and lock file pair.
+
+Two session limits still shaped what could be checked: no Docker daemon, so
+the sandbox could not be built or run; and `refs/factory/*` cannot be created
+from here, so the data-ref layer is tested against its logic rather than
+against a live ref.
 
 ## The criteria
 
-### Logic proven (11)
+### Logic proven (12, plus 21 partly)
 
 | # | Criterion | Evidence |
 | --- | --- | --- |
-| 3 | An issue from an untrusted account starts nothing until `factory:accept` is added | `intake.test.ts` — 5 tests: the item is left `waiting_trust`; its text is stripped from prompts while it waits; the label admits it; an integration's bot is treated as outside however its association reads; a fork event starts nothing |
+| 3 | An issue from an untrusted account starts nothing until `factory:accept` is added | `intake.test.ts` — the item is left `waiting_trust`; its text is stripped from prompts while it waits; the label admits it; an integration's bot is treated as outside however its association reads; a fork event starts nothing |
 | 4 | A PR that edits `.factory/definition/` from the product pipeline fails `factory/policy` | `policy.test.ts` — fails naming the files, and still fails *with* a human approval, because the product pipeline may never change the definition |
 | 5 | A fork PR that edits `factory-gates.yml` to always pass still fails and can't merge without approval | `policy.test.ts` — fails on both the protected path and on being a fork, and is not cleared by an approval from an untrusted author. The structural half is #5 under Design verified |
 | 6 | Ten issues opened within one minute each become a work item; none is lost | `intake.test.ts` — all ten become items in one run; a second run after a dropped one picks up all seven it missed; events at or below the cursor are never processed twice; out-of-order arrival is handled in id order |
@@ -60,9 +92,10 @@ and the role workflows are unverified against the real compiler.
 | 13 | A human PR runs only the deterministic gates and spends nothing on models; `factory:verify` runs agent verification | `gates.test.ts` — `planGates` returns `agentVerification: false` for a human PR and `true` once labelled |
 | 14 | A draft PR's gates run once per commit | `gates.test.ts` — a commit already checked runs nothing; only a missing gate runs; a new commit runs both |
 | 19 | Two approved PRs that each pass alone but break the build together never both land | `queue-rollup.test.ts` — the queue merges the head, then the second is behind main and must update and be re-checked against the main that now contains the first. **Fallback queue only**; the native merge-queue half is blocked |
+| 21 | Cost per run is within 5% of billed usage | **Partly.** The 5% comparison needs real runs and a real bill, so the number is unproven. What is proven is the thing that would make it meaningless: `session.test.ts` and `step-report.test.ts` — gh-aw's normalized session is preferred over the harness's self-report, camelCase and snake_case token aliases count once rather than twice, a reported cost of zero is kept as a measurement, and an *un*reported cost is `unknown` rather than zero. A factory that invented zeros would hit 5% by accident |
+| — | *(not a numbered criterion)* A compiled role workflow that no longer matches its source is detected | `audit.test.ts` — against a real gh-aw workflow and its real lock file: clean when unmodified, caught on a body edit, caught on a frontmatter edit, reported when never compiled. Included because the criteria assume the workflow that runs is the workflow that was reviewed |
 
-Two of these are worth a note, because the tests encode a judgement rather than
-just a check:
+Three of these encode a judgement rather than just a check:
 
 - **The ratchet reads a rule missing from "after" as zero everywhere, never as
   unchanged.** So deleting a rule's baseline entry cannot read as a pass — it
@@ -71,38 +104,52 @@ just a check:
 - **An approval does not carry from an older commit.** The criteria don't ask
   for this; GitHub's own review model allows it, and it would let an approved
   PR be rewritten before merge.
+- **An unknown cost is never written as zero.** The budget pauses pipelines on
+  spend, so a fabricated zero quietly raises the ceiling on what the factory
+  may spend. gh-aw's session specification states the same rule independently.
 
-### Design verified (4)
+### Design verified (7)
 
 | # | Criterion | What was verified, and what wasn't |
 | --- | --- | --- |
-| 5 | (structural half) A PR cannot change the check that judges it | `templates.test.ts` asserts `factory-policy.yml` runs on `pull_request_target` and not `pull_request`, and checks out the default branch with `persist-credentials: false`. That GitHub then uses main's copy is GitHub's documented behavior, not something a test here can show |
-| 7 | A full factory run starts none of a repo's `on: push` CI | The design is right: `refs/factory/data`, `refs/factory/media` and `refs/factory/live/*` sit outside `refs/heads/`, and a push to a non-branch ref fires no `push` workflow. Unverified, and there is no fixture for it — `trinsports` has no `.github/workflows/` at all |
-| 15 | The agent has no write token, can't leave the firewall allowlist, and threat detection blocks a planted secret | `templates.test.ts` asserts, for all seven roles: every `permissions:` scope is `read`, a `network.allowed` list is present, the sandbox is `awf`, threat detection is enabled, and only the builder and hardener can open or push a PR. That those controls then hold at runtime is gh-aw's behavior; the planted-secret test needs a live run |
-| 16 | An idle factory uses under 15 Actions minutes a day | `templates.test.ts` asserts no trigger workflow runs on a schedule. The three that legitimately do — nightly gardening, the daily review check, the daily rollup sweep — are not built yet, and nothing has been measured |
+| 1 | The skill completes setup on each of the three v0.1 fixtures | `skill.test.ts` (37 tests) asserts the phase structure, every user action the Setup Skill Spec lists and no others, the preflight checks, the App-manifest flow, and the spend estimate. The three fixtures are built and verified locally. What is unverified is a real run end to end, which needs the App and a push to `bsf-fixtures` |
+| 5 | (structural half) A PR cannot change the check that judges it | `templates.test.ts` asserts `factory-policy.yml` runs on `pull_request_target` and not `pull_request`, and checks out the default branch with `persist-credentials: false`. That GitHub then uses main's copy is GitHub's documented behaviour, not something a test here can show |
+| 7 | A full factory run starts none of a repo's `on: push` CI | The design is right: `refs/factory/data`, `refs/factory/media` and `refs/factory/live/*` sit outside `refs/heads/`, and a push to a non-branch ref fires no `push` workflow. The data layer now writes through the Git Data API rather than `git push`, which is also why it cannot be exercised from here. No fixture for it either — `trinsports` has no `.github/workflows/` at all |
+| 15 | The agent has no write token, can't leave the firewall allowlist, and threat detection blocks a planted secret | `templates.test.ts` asserts, for all seven roles: every `permissions:` scope is `read`, a `network.allowed` list is present, the sandbox is `awf`, threat detection is enabled, and only the builder and hardener can open or push a PR. `ghaw-frontmatter.test.ts` validates all seven against gh-aw's own schema. That those controls hold at runtime is gh-aw's behaviour; the planted-secret test needs a live run |
+| 16 | An idle factory uses under 15 Actions minutes a day | `templates.test.ts` asserts that exactly three workflows run on a timer, and that they are nightly gardening, the daily review check and the daily rollup sweep — the three doc 07 names and no others. Each is also startable by hand, so none needs a day's wait to test. The minutes themselves are unmeasured; the estimate script puts an idle day at well under 15, and the review check exits on `bsf review due` before spending anything |
+| 18, 20, 22 | The Live view's step/gate/cost within 10 s; a run file shown within 60 s; auto-merge from the dashboard opens a definition PR | The dashboard is built: nine pages, static export, reading GitHub directly, with the refresh intervals doc 08 specifies (5 s on Live, 15 s on the ledger, 60 s on the index). Every file it reads is validated against the shared schemas, so a run file it cannot show is a schema failure rather than a blank page. What is unverified is the latency, which needs a running factory, and the round trip of criterion 22, which needs the App |
 
-### Blocked (8)
+### Blocked (3, plus the native half of 19)
 
 | # | Criterion | Blocked by |
 | --- | --- | --- |
-| 1 | The skill completes setup on each of the three v0.1 fixtures | The skill's phase scripts are not built; the fixtures are empty; setup runs on Philip's machine by design |
-| 2 | A trusted user's issue produces a draft PR with screenshots, on all three fixtures | GitHub App; empty fixtures; `bsf-fixtures` push refused |
+| 2 | A trusted user's issue produces a draft PR with screenshots, on all three fixtures | GitHub App; push to `bsf-fixtures` |
 | 17 | A new runner release produces an upgrade PR without anyone acting | Needs the runner published as a tagged Action and a release for Dependabot to see. The *policy* for upgrade PRs is proven (`policy.test.ts`: scoped to the pin, never merged without a trusted human) |
-| 18 | The Live view shows step, gate attempt and cost within 10 seconds | Dashboard not built |
-| 19 | (native half) The same, on a fixture using GitHub's native merge queue | Needs an org-owned public repo; `bsf-fixtures` push is refused |
-| 20 | Every run produces a valid run file; the dashboard shows it within 60 seconds | The run schema and its validation pass (`schema.test.ts`), but no run has been produced and there is no dashboard |
-| 21 | Cost per run is within 5% of billed usage on a 10-run sample | Needs memex reading real session logs across real runs |
-| 22 | Turning on auto-merge in the dashboard opens a definition PR that merges | Dashboard not built |
-| 23 | The factory is set up on Philip's old repo, and a real issue becomes a verified draft PR | Skill and GitHub App |
+| 19 | (native half) The same, on a fixture using GitHub's native merge queue | Needs an org-owned public repo; push to `bsf-fixtures` is refused |
+| 23 | The factory is set up on Philip's old repo, and a real issue becomes a verified draft PR | GitHub App; setup runs on his machine |
 
 ## v0.2 and v1.0
 
-Not started. The Build Plan gates each release on its own criteria, and v0.1's
-are not met, so beginning v0.2 would mean building on an unverified base. One
-v0.2 criterion is nonetheless proven early, because its logic lives in the
-budget code: *when gardening's budget share is used, gardening pauses while
-product work continues, up to 110% of the total* — `queue-rollup.test.ts`, five
-tests, including the minutes limit and its absence on public repos.
+v0.2's scope is now largely built ahead of its gate, because the eleven
+workflows needed their commands: gardening, hardening and conflict resolution
+have their runner commands and templates, the four extra harness adapters
+exist (marked unverified), the budget shares work, and the dashboard's
+Guardrails, Work items and Sessions pages and the sign-in Worker are done.
+Two v0.2 criteria are proven early:
+
+- *When gardening's budget share is used, gardening pauses while product work
+  continues, up to 110% of the total* — `queue-rollup.test.ts`, five tests,
+  including the minutes limit and its absence on public repos.
+- *Gardening files nothing a PR already fixes* — `garden.test.ts`, via the
+  ledger's `fixes` list, with the per-PR file cap applied at filing time.
+
+v1.0's review loop has its deterministic half: `review.test.ts` proves the
+scheduling thresholds, the grouping and routing of problems, and the
+benchmark admission rule — including the one that matters, that a gain inside
+the run-to-run spread is refused.
+
+What none of this changes: the gates for v0.2 and v1.0 are statements about
+behaviour on GitHub, like v0.1's, and they are behind the same three blockers.
 
 ## What was found about `trinsports`
 
@@ -115,40 +162,16 @@ there:
 - **No tests at all** — no test runner, no test script, no test files. The
   skill's documented no-tests path applies: coverage floor 0%, and gardening
   seeded to add tests per feature folder, most-changed first. Note the
-  consequence: diff coverage at 80% is the main check from the first PR, so the
-  first product-work PR has to arrive with tests, from zero.
+  consequence: diff coverage at 80% is the main check from the first PR, so
+  the first product-work PR has to arrive with tests, from zero.
 - **`npm run build` needs a live Postgres.** `build` runs `db:migrate` first,
-  against `DATABASE_URL`. Two things follow. The sandbox needs a Postgres
-  sidecar, which by spike §4a means the agent runs on
-  `sandbox.agent.runtime: docker-sudo-iptables` — the weaker AWF profile, with
-  host privileges. Philip's own repo is the case that forces the trade-off the
-  spike surfaced, so it is the right place to try the `pre-agent-steps`
-  alternative first.
-- **A real safety hazard for phase 2.** `drizzle.config.ts` loads
-  `.env.local`, and `npm run build` migrates whatever `DATABASE_URL` points at
-  — the developer's Neon dev branch, on a developer's machine. The runbook must
-  point `DATABASE_URL` at a throwaway sidecar and the sandbox must not inherit
-  `.env.local`, or an agent running the documented build command migrates a
-  real database. This belongs in the skill's phase 2 as a check, not as advice.
-- **`AGENTS.md` is partly machine-written.** `next dev` writes and restores two
-  blocks in it. Correction mining treats `AGENTS.md` as a prose-rule source, so
-  it would mine Next.js's own generated instructions as if they were the team's
-  conventions. Mining should skip generated blocks, by their `BEGIN:`/`END:`
-  markers.
-
-## What to do next, in order
-
-1. **Philip:** install the Claude GitHub App on `bsf-fixtures`, and create
-   `py-api` and `js-legacy` there.
-2. **Build the three v0.1 fixtures.** Nothing end-to-end can be tried without
-   them, and they are small.
-3. **Create the factory GitHub App** (Philip, two clicks) — this unblocks eight
-   criteria at once.
-4. **Run `gh aw compile` on the seven role workflows** and fix what it rejects.
-   This is the first thing that can be done on a machine with normal network
-   access, and it validates the spike's central design change.
-5. **The sandbox (phase 2) on `trinsports`**, including the two spike items
-   that need a live run: whether the agent can reach an app in a
-   `pre-agent-steps` devcontainer, and whether a `pre-agent-steps` Postgres
-   avoids `docker-sudo-iptables`.
-6. Then the skill's phase scripts, then the dashboard.
+  and `drizzle.config.ts` loads `.env.local`, so running the documented build
+  command on a machine where that file exists migrates the real Neon dev
+  branch. The runbook template now carries a "commands that change persistent
+  state" table and states that the sandbox inherits no developer environment
+  and reads no `.env` file, so this class of hazard is written down for every
+  repo rather than remembered for this one.
+- **Actions minutes are the binding constraint, not model spend.** The
+  estimate script on `trinsports` puts nightly gardening at 5 PRs around
+  2,466 Actions minutes a month against the 2,000 a private Free-plan repo
+  includes, so setup lowers the nightly cap to 1 there.
