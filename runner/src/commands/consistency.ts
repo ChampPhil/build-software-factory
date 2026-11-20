@@ -1,5 +1,5 @@
 import { readFileSync, existsSync } from "node:fs";
-import { join, relative } from "node:path";
+import { join } from "node:path";
 
 /**
  * Cross-artifact consistency — the twelfth analysis kind (doc 01).
@@ -232,10 +232,7 @@ function safe<T>(fn: () => T): T | null {
 function safeJson(fn: () => string): unknown {
   const text = safe(fn);
   if (text === null) return null;
-  return safe(() => JSON.parse(text));
-}
-
-/** For the CLI: a repo-relative path, for a finding's message. */
-export function rel(root: string, path: string): string {
-  return relative(root, path) || path;
+  // JSON.parse is typed `any`; naming the result unknown keeps that from
+  // leaking into every caller, each of which casts to the shape it expects.
+  return safe<unknown>(() => JSON.parse(text) as unknown);
 }
