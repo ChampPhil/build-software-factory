@@ -64,7 +64,8 @@
                     "bug",
                     "prose_rule",
                     "escalation",
-                    "review_failure"
+                    "review_failure",
+                    "user_declared"
                   ]
                 },
                 "harness": {

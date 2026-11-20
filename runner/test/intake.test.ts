@@ -238,3 +238,41 @@ describe("dispatch", () => {
     expect(d.stayQueued).toContain("b");
   });
 });
+
+describe("declared practices", () => {
+  it("parses a /practice line, and nothing else", async () => {
+    const { practiceText } = await import("../src/commands/intake-run.js");
+    expect(practiceText("/practice use longer identifier names")).toBe("use longer identifier names");
+    expect(practiceText("  /practice  prefer composition\nbecause inheritance bit us")).toBe(
+      "prefer composition\nbecause inheritance bit us",
+    );
+    expect(practiceText("we should /practice this")).toBeNull();
+    expect(practiceText("/practice   ")).toBeNull();
+    expect(practiceText(null)).toBeNull();
+  });
+});
+
+describe("a /practice from a maintainer becomes definition work", () => {
+  it("routes a trusted practice to the definition pipeline with the text intact", () => {
+    const res = runIntake(
+      [ev({ kind: "practice_declared", title: "Practice: use longer identifier names", body: "use longer identifier names" })],
+      ctx(),
+    );
+    const d = res.decisions[0];
+    expect(d?.outcome).toBe("queued");
+    expect(d?.workItem?.pipeline).toBe("definition");
+    expect(d?.workItem?.source.kind).toBe("practice");
+    expect(d?.workItem?.body).toBe("use longer identifier names");
+  });
+
+  it("ignores a practice from someone untrusted outright, rather than queuing it for trust", () => {
+    // Waiting on trust would leave an outsider's standing instruction to
+    // every agent one label away from every prompt.
+    const res = runIntake(
+      [ev({ kind: "practice_declared", actor: "drive-by", actor_association: "NONE", title: "Practice: x", body: "x" })],
+      ctx(),
+    );
+    expect(res.decisions[0]?.outcome).toBe("ignored_untrusted_practice");
+    expect(res.decisions[0]?.workItem).toBeNull();
+  });
+});

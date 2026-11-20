@@ -198,6 +198,10 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
       problems are added — what the skill's update mode needs, since one the
       user already rejected must not be offered again.
 
+  bsf practice add TEXT
+      Declare a practice every agent follows from now on. Opens a PR adding it to
+      practices.md, and a rule where one can enforce it. Same as commenting
+      /practice TEXT on any issue or PR.
   bsf sandbox start
       Bring up the frozen sandbox: its services, its closed environment, its install.
   bsf sandbox check [--file PATH]
@@ -415,6 +419,8 @@ async function main(argv: readonly string[]): Promise<number> {
       return modelsCommand();
     case "sandbox":
       return sandboxCommandCli(second, args);
+    case "practice":
+      return practiceCommand(second, command.slice(2));
 
     case "dashboard":
       return dashboardCommand(args);
@@ -1132,6 +1138,21 @@ async function auditCommand(args: Args): Promise<number> {
  * every role would have started with an empty model. factory.yaml is the one
  * place a model is chosen; there is no second copy to keep in step.
  */
+/**
+ * `bsf practice add TEXT` — the CLI form of a `/practice` comment. Dispatching
+ * factory-intake needs write access, so it is trusted by construction.
+ */
+async function practiceCommand(second: string | undefined, rest: readonly string[]): Promise<number> {
+  const text = rest.join(" ").trim();
+  if (second !== "add" || text === "") die('usage: bsf practice add "use longer, descriptive identifier names"');
+  const gh = new GitHub({ repo: requireRepo() });
+  await gh.dispatchWorkflow("factory-intake.yml", undefined, { title: `/practice ${text}` });
+  process.stdout.write(
+    `declared: ${text}\nThe factory will open a pull request adding it to practices.md, and a rule where one can enforce it.\n`,
+  );
+  return 0;
+}
+
 async function sandboxCommandCli(second: string | undefined, args: Args): Promise<number> {
   if (second === "start") {
     const r = await startSandbox({

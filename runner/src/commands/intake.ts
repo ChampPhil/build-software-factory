@@ -14,7 +14,9 @@ import { isTrustedActor } from "./policy.js";
 export type EventKind =
   | "issue_opened" | "issue_labeled" | "issue_comment" | "review_comment"
   | "ci_failure_on_main" | "dashboard_dispatch" | "schedule_gardening"
-  | "review_routed" | "conflict_detected" | "correction";
+  | "review_routed" | "conflict_detected" | "correction"
+  /** `/practice …` from a trusted person: a standing instruction for every agent. */
+  | "practice_declared";
 
 export interface IncomingEvent {
   /** Monotonic per-repo event id. The cursor is the highest id processed. */
@@ -69,7 +71,8 @@ export interface IntakeDecision {
     | "waiting_trust"
     | "revision_of_existing_run"
     | "ignored_fork"
-    | "ignored_trigger_disabled";
+    | "ignored_trigger_disabled"
+    | "ignored_untrusted_practice";
   readonly reason: string;
   /** Open items whose fingerprint is close enough to be worth triage's attention. */
   readonly duplicateShortlist: readonly string[];
@@ -115,6 +118,8 @@ const ROUTE: Readonly<Record<EventKind, { pipeline: Pipeline; cls: TriggerClass;
   ci_failure_on_main: { pipeline: "product_work", cls: "dev_event", priority: "high" },
   review_comment: { pipeline: "product_work", cls: "dev_event" },
   correction: { pipeline: "hardening", cls: "self" },
+  // A practice changes what every agent reads, which is the definition.
+  practice_declared: { pipeline: "definition", cls: "request" },
   schedule_gardening: { pipeline: "gardening", cls: "scheduled" },
   review_routed: { pipeline: "hardening", cls: "self" },
   conflict_detected: { pipeline: "conflict", cls: "dev_event" },
@@ -222,6 +227,18 @@ function decide(event: IncomingEvent, ctx: IntakeContext): IntakeDecision {
     machineOrigin ||
     isTrustedActor(ctx.policy, event.actor, event.actor_association, { isBot: event.actor_is_bot === true });
 
+  // A practice is an instruction every agent will follow from then on, so it
+  // is never queued for a maintainer to wave through: from anyone else it is
+  // ignored outright. Waiting on trust would leave an outsider's instruction
+  // one label away from every prompt.
+  if (event.kind === "practice_declared" && !trusted) {
+    return {
+      event, workItem: null, outcome: "ignored_untrusted_practice",
+      reason: `${event.actor} is not trusted to set practices; only maintainers can`,
+      duplicateShortlist: [],
+    };
+  }
+
   const accepted = (event.labels ?? []).includes(ctx.policy.trust.accept_label);
 
   const fp = fingerprint({ title: event.title, body: event.body, area: event.touched_area });
@@ -293,6 +310,7 @@ export function sourceKind(kind: EventKind): string {
     case "review_routed": return "review";
     case "conflict_detected": return "conflict";
     case "correction": return "correction";
+    case "practice_declared": return "practice";
   }
 }
 

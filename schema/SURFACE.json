@@ -503,7 +503,8 @@
           "\"prose_rule\"",
           "\"revert\"",
           "\"review_comment\"",
-          "\"review_failure\""
+          "\"review_failure\"",
+          "\"user_declared\""
         ]
       },
       "/properties/candidates/items/properties/sources/items/properties/harness": {
@@ -3272,6 +3273,7 @@
           "\"issue\"",
           "\"issue_comment\"",
           "\"pr\"",
+          "\"practice\"",
           "\"review\"",
           "\"review_comment\"",
           "\"schedule\""

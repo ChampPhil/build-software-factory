@@ -103,6 +103,24 @@ export function normalizeEvent(
   if ((eventName === "issue_comment" || eventName === "pull_request_review_comment") && payload.comment !== undefined) {
     if (payload.action !== "created") return null;
     const onPr = payload.pull_request !== undefined || eventName === "pull_request_review_comment";
+    const practice = practiceText(payload.comment.body);
+    if (practice !== null) {
+      // Wherever someone already is — an issue, a PR, a review thread — a
+      // `/practice` line declares a standing instruction. It is not a
+      // revision of that PR's run or a new product request.
+      return {
+        id,
+        kind: "practice_declared",
+        at: payload.comment.created_at ?? now,
+        actor: payload.comment.user?.login ?? "unknown",
+        actor_association: assoc(payload.comment.author_association),
+        actor_is_bot: payload.comment.user?.type === "Bot",
+        title: `Practice: ${practice}`,
+        body: practice,
+        ref: `#${payload.pull_request?.number ?? payload.issue?.number ?? 0}`,
+        ...(payload.pull_request === undefined ? {} : { from_fork: isFork(payload.pull_request) }),
+      };
+    }
     return {
       id,
       kind: onPr ? "review_comment" : "issue_comment",
@@ -138,6 +156,16 @@ export function normalizeEvent(
   if (eventName === "workflow_dispatch") {
     const inputs = payload.inputs ?? {};
     const kindInput = inputs["kind"] as EventKind | undefined;
+    const practice = practiceText(typeof inputs["title"] === "string" ? inputs["title"] : undefined);
+    if (practice !== null) {
+      return {
+        id, kind: "practice_declared", at: now,
+        actor: payload.sender?.login ?? "unknown",
+        actor_association: "COLLABORATOR",
+        title: `Practice: ${practice}`,
+        body: practice,
+      };
+    }
     return {
       id,
       kind: kindInput ?? "dashboard_dispatch",
@@ -153,6 +181,18 @@ export function normalizeEvent(
   }
 
   return null;
+}
+
+/**
+ * The practice a comment declares, or null. A line `/practice <text>` at the
+ * start of the comment; anything after it on later lines is kept as context.
+ */
+export function practiceText(body: string | null | undefined): string | null {
+  if (body == null) return null;
+  const m = /^\s*\/practice\s+([\s\S]+)$/.exec(body);
+  if (m?.[1] === undefined) return null;
+  const text = m[1].trim();
+  return text === "" ? null : text;
 }
 
 function isFork(pr: NonNullable<Payload["pull_request"]>): boolean {
