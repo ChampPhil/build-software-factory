@@ -5,3 +5,5 @@ coverage/
 *.tsbuildinfo
 runner/dist/
 .bsf-rule-check/
+dashboard/.next/
+dashboard/out/
