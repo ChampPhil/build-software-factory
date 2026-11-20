@@ -25,8 +25,11 @@ import { gardenScan, gardenFile, hardenContext, reviewCollect, reviewWrite } fro
 import { runTestsGate } from "./commands/tests-gate.js";
 import { mineCorrections, listSessions, clusterCorrections, candidatesFrom } from "./commands/mine.js";
 import { mineRepo } from "./commands/mine-repo.js";
-import { readFileSync, appendFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { runScorers, loadRubrics } from "./commands/score.js";
+import { buildTasks, buildBenchmarkConfig, runBenchmark, readBenchmark, admit, type BenchmarkTask } from "./commands/benchmark.js";
+import { runBenchmarkTask, type BenchmarkTaskInput } from "./commands/benchmark-run.js";
+import { readFileSync, appendFileSync, writeFileSync, mkdirSync, existsSync, readdirSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 /**
  * `bsf` — the factory's deterministic runner.
@@ -147,6 +150,23 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
       Read the sessions the user did not exclude and find the moments they
       corrected an agent. Each one is a rule they already wanted. Writes
       guardrail candidates; reports and continues if memex is not installed.
+
+  bsf score --runs PATH --out PATH [--repeat N]
+      Grade runs against their pipeline's rubric and the shared one, on
+      promptfoo's LLM-rubric graders. Reports a criterion whose repeats
+      disagree instead of routing it.
+
+  bsf benchmark build --runs PATH [--out DIR]
+      Turn merged runs into frozen benchmark tasks, including the ones a human
+      had to correct — those are what a definition change must show it fixes.
+
+  bsf benchmark run --tasks DIR --before PATH --after PATH [--repeats N]
+      Run both definitions over the same tasks and say whether the change is
+      admissible. A must-pass check that regressed is a veto.
+
+  bsf benchmark-run --task JSON --definition PATH [--json]
+      One task, one definition, in this checkout. Called by the promptfoo
+      provider; reports unavailable rather than a pass when it cannot run.
 
   bsf validate SCHEMA FILE
       Validate a file against one of the shared schemas.
@@ -292,6 +312,15 @@ async function main(argv: readonly string[]): Promise<number> {
 
     case "mine-corrections":
       return mineCommand(args);
+
+    case "score":
+      return scoreCommand(args);
+
+    case "benchmark":
+      return benchmarkCommand(second, args);
+
+    case "benchmark-run":
+      return benchmarkRunCommand(args);
 
     case "fetch-work-item":
       return fetchWorkItemCommand(command[1], args);
@@ -1114,6 +1143,129 @@ async function mineCommand(args: Args): Promise<number> {
   process.stdout.write(`${candidates.length} candidate(s) -> ${out}\n`);
   setOutput("mined", String(candidates.length));
   return 0;
+}
+
+
+async function scoreCommand(args: Args): Promise<number> {
+  const runsPath = args["runs"];
+  const out = args["out"];
+  if (typeof runsPath !== "string" || typeof out !== "string") {
+    die("usage: bsf score --runs PATH --out PATH [--repeat N]");
+  }
+  const runs = JSON.parse(readFileSync(runsPath, "utf8")) as Parameters<typeof runScorers>[0]["runs"];
+  const rubrics = loadRubrics(".factory/definition/rubrics");
+  if (rubrics.length === 0) die("no rubrics in .factory/definition/rubrics");
+
+  const grader = process.env["FACTORY_GRADER_PROVIDER"] ?? "anthropic:messages:claude-opus-5";
+  const repeat = typeof args["repeat"] === "string" ? Number(args["repeat"]) : 2;
+  const report = await runScorers({
+    rubrics,
+    runs,
+    graderProvider: grader,
+    workDir: ".factory/work/scorers",
+    repeat: Number.isInteger(repeat) && repeat > 0 ? repeat : 2,
+  });
+
+  for (const e of report.errors) process.stderr.write(`grading error: ${e}\n`);
+  for (const u of report.unreliable) {
+    process.stdout.write(`  not routed, the repeats disagreed: ${u}\n`);
+  }
+  mkdirSync(dirname(out), { recursive: true });
+  writeFileSync(out, `${JSON.stringify({ failures: report.failures }, null, 2)}\n`);
+  process.stdout.write(
+    `${report.rows.length} grade(s), ${report.failures.length} failure(s) -> ${out}\n`,
+  );
+  return 0;
+}
+
+async function benchmarkCommand(second: string | undefined, args: Args): Promise<number> {
+  if (second === "build") {
+    const runsPath = args["runs"];
+    if (typeof runsPath !== "string") die("usage: bsf benchmark build --runs PATH [--out DIR]");
+    const dir = typeof args["out"] === "string" ? args["out"] : ".factory/benchmarks";
+    const runs = JSON.parse(readFileSync(runsPath, "utf8")) as Parameters<typeof buildTasks>[0]["runs"];
+    const existing = readTasks(dir);
+    const { tasks, skipped } = buildTasks({ runs, now: nowIso(), existing });
+
+    mkdirSync(dir, { recursive: true });
+    for (const t of tasks) {
+      assertValid("benchmark-task", t);
+      writeFileSync(join(dir, `${t.id}.json`), `${JSON.stringify(t, null, 2)}\n`);
+    }
+    const byOrigin = new Map<string, number>();
+    for (const t of [...existing, ...tasks]) byOrigin.set(t.origin, (byOrigin.get(t.origin) ?? 0) + 1);
+    process.stdout.write(
+      `${tasks.length} new task(s), ${existing.length + tasks.length} in all: ` +
+        `${[...byOrigin].map(([o, n]) => `${n} ${o}`).join(", ")}\n`,
+    );
+    for (const s of skipped) process.stdout.write(`  skipped ${s.run}: ${s.why}\n`);
+    return 0;
+  }
+
+  if (second === "run") {
+    const dir = typeof args["tasks"] === "string" ? args["tasks"] : ".factory/benchmarks";
+    const before = args["before"];
+    const after = args["after"];
+    if (typeof before !== "string" || typeof after !== "string") {
+      die("usage: bsf benchmark run --before PATH --after PATH [--tasks DIR] [--repeats N]");
+    }
+    const tasks = readTasks(dir);
+    if (tasks.length === 0) die(`no benchmark tasks in ${dir}`);
+
+    const repeats = typeof args["repeats"] === "string" ? Number(args["repeats"]) : 3;
+    const config = buildBenchmarkConfig({
+      tasks,
+      provider: `file://${join(process.cwd(), "provider/pipeline.cjs")}`,
+      definitions: [
+        { label: "before", path: before },
+        { label: "after", path: after },
+      ],
+      graderProvider: process.env["FACTORY_GRADER_PROVIDER"] ?? "anthropic:messages:claude-opus-5",
+      repeats: Number.isInteger(repeats) && repeats > 0 ? repeats : 3,
+    });
+
+    const result = await runBenchmark({ config, workDir: ".factory/work/benchmark" });
+    if (!result.ran) {
+      process.stderr.write(`${result.note}\n`);
+      return 1;
+    }
+    const sides = readBenchmark(JSON.parse(readFileSync(result.outputPath, "utf8")), tasks);
+    const verdict = admit(sides.get("before") ?? [], sides.get("after") ?? [], repeats);
+
+    process.stdout.write(`${verdict.admit ? "admissible" : "not admissible"}\n`);
+    for (const r of verdict.reasons) process.stdout.write(`  ${r}\n`);
+    setOutput("admit", String(verdict.admit));
+    return verdict.admit ? 0 : 1;
+  }
+
+  die("usage: bsf benchmark build|run");
+}
+
+async function benchmarkRunCommand(args: Args): Promise<number> {
+  const taskJson = args["task"];
+  const definition = args["definition"];
+  if (typeof taskJson !== "string" || typeof definition !== "string") {
+    die("usage: bsf benchmark-run --task JSON --definition PATH");
+  }
+  const cfg = await factoryConfig().catch(() => ({}) as Awaited<ReturnType<typeof factoryConfig>>);
+  const report = await runBenchmarkTask({
+    task: JSON.parse(taskJson) as BenchmarkTaskInput,
+    definitionPath: definition,
+    worktree: process.cwd(),
+    testCommand: cfg.tests?.command ?? null,
+  });
+  // One line of JSON on stdout: the provider reads the last JSON object, so
+  // progress may be printed to stderr without confusing it.
+  process.stdout.write(`${JSON.stringify(report)}\n`);
+  return 0;
+}
+
+function readTasks(dir: string): readonly BenchmarkTask[] {
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir)
+    .filter((f) => f.endsWith(".json"))
+    .map((f) => JSON.parse(readFileSync(join(dir, f), "utf8")) as BenchmarkTask)
+    .filter((t) => t.schema === "benchmark-task/1");
 }
 
 function parseYamlLazy(text: string): unknown {
