@@ -3,7 +3,7 @@ import { GitHub } from "./lib/github.js";
 import {
   DiskLoader, RefLoader, loadPolicy, loadBaselines, loadCoverage, changedFilesSince,
 } from "./lib/config.js";
-import { runStaticGate, runCoverageGate, recordGateResult, alreadyChecked } from "./commands/gates-run.js";
+import { runStaticGate, runCoverageGate, checkedFromCheckRuns, summarizeGates, GATES_CHECK, type JobResult } from "./commands/gates-run.js";
 import { runPolicyCommand } from "./commands/policy-run.js";
 import { planGates } from "./commands/gates.js";
 import { SCHEMA_NAMES, assertValid, type SchemaName, SCHEMA_DIR } from "./lib/schema.js";
@@ -44,7 +44,7 @@ import { runReviewDue, runReviewRoute, type ScoredFailure } from "./commands/rev
 import { planRun, afterGates } from "./commands/run-plan.js";
 import { buildStepReport, writeStepReport, changedFilesFromGit, type Harness } from "./commands/step-report.js";
 import { pausedPipelines, type BudgetState } from "./commands/rollup.js";
-import { loadFactory } from "./lib/config.js";
+import { loadFactory, resolveRead } from "./lib/config.js";
 import { fetchWorkItem, writeSpec, fetchArtifact, storeMedia } from "./commands/role-io.js";
 import { gardenScan, gardenFile, hardenContext, reviewCollect, reviewWrite } from "./commands/role-steps.js";
 import { runTestsGate } from "./commands/tests-gate.js";
@@ -93,7 +93,8 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
       Gate 2's test half. Reads the repo's own test check for this commit when
       it has one; runs the tests itself if that check does not report in time.
 
-  bsf gates record --gate static|verification --result pass|fail|skipped
+  bsf gates record --plan-static B --plan-verification B --plan-agent B --static R --verification R --agent R [--commit SHA]
+      Report factory/gates: the verdict over every gate the plan called for.
       Record a gate's result against the head commit, so the same commit is
       never checked twice.
 
@@ -505,10 +506,15 @@ async function main(argv: readonly string[]): Promise<number> {
       const verifyLabel =
         typeof args["verify-label"] === "string" ? args["verify-label"] : "factory:verify";
 
-      // Results are keyed by commit on disk, so a commit already checked
-      // re-runs nothing. Without reading them here, every push would re-run
-      // both gates and the once-per-commit rule would only exist in tests.
-      const checked = alreadyChecked(process.cwd(), commit);
+      // A gate that already passed on this commit — its check runs say so —
+      // re-runs nothing. Read from GitHub, which keeps them; a file in the
+      // checkout would be gone when the job ended.
+      let checked: readonly ("static" | "verification")[] = [];
+      try {
+        checked = checkedFromCheckRuns(await new GitHub({ repo: requireRepo() }).checkRunsFor(commit));
+      } catch {
+        /* unreadable: run everything rather than skip on a guess */
+      }
       const plan = planGates({
         commit,
         actor,
@@ -616,25 +622,34 @@ async function gatesCoverage(args: Args): Promise<number> {
   return result.conclusion === "failure" ? 1 : 0;
 }
 
-function gatesRecord(args: Args): number {
-  const gate = args["gate"];
-  const resultArg = args["result"];
-  if (gate !== "static" && gate !== "verification") {
-    die("usage: bsf gates record --gate static|verification --result pass|fail|skipped");
-  }
-  if (resultArg !== "pass" && resultArg !== "fail" && resultArg !== "skipped") {
-    die("--result must be pass, fail or skipped");
-  }
-  const attempt = typeof args["attempt"] === "string" ? Number(args["attempt"]) : 1;
-  recordGateResult(process.cwd(), {
-    commit: headSha(),
-    gate,
-    attempt: Number.isInteger(attempt) && attempt > 0 ? attempt : 1,
-    result: resultArg,
-    recorded_at: new Date().toISOString(),
+/**
+ * `bsf gates record` — report the one check branch protection requires.
+ *
+ * Protection required `factory/gates` while the gates reported only
+ * `factory/gate-static`, `-tests` and `-coverage`, so with protection applied
+ * every PR would have waited forever on a check nothing reported. This always
+ * reports it, as the verdict over every gate the plan called for.
+ */
+async function gatesRecord(args: Args): Promise<number> {
+  const result = (k: string): JobResult => {
+    const v = args[k];
+    return v === "success" || v === "failure" || v === "cancelled" || v === "skipped" ? v : "";
+  };
+  const planned = (k: string): boolean => args[k] === "true";
+  const verdict = summarizeGates({
+    planned: { static: planned("plan-static"), verification: planned("plan-verification"), agent: planned("plan-agent") },
+    results: { static: result("static"), verification: result("verification"), agent: result("agent") },
   });
-  process.stdout.write(`recorded ${gate}=${resultArg} for ${headSha()}\n`);
-  return 0;
+  const commit = typeof args["commit"] === "string" ? args["commit"] : headSha();
+  process.stdout.write(`${GATES_CHECK}: ${verdict.conclusion}\n${verdict.lines.map((l) => `  ${l}`).join("\n")}\n`);
+  await new GitHub({ repo: requireRepo() }).reportCheck({
+    name: GATES_CHECK,
+    headSha: commit,
+    conclusion: verdict.conclusion,
+    title: verdict.conclusion === "success" ? "Every planned gate passed" : "A planned gate did not pass",
+    summary: verdict.lines.join("\n"),
+  });
+  return verdict.conclusion === "success" ? 0 : 1;
 }
 
 /* ------------------------------------------------------------- new commands */
@@ -672,7 +687,7 @@ interface FactoryConfig {
 const ROLLUP_WINDOW_DAYS = 30;
 
 /** The required checks sync-settings adds. These are the factory's own check names. */
-const FACTORY_REQUIRED_CHECKS = ["factory/policy", "factory/gates"];
+const FACTORY_REQUIRED_CHECKS = ["factory/policy", GATES_CHECK];
 
 /**
  * The runner's own version: the VERSION file the bundle ships beside itself,
@@ -688,19 +703,33 @@ function runnerVersion(): string {
 }
 
 /**
- * The test command the sandbox episode verified, from the frozen manifest.
- * Null until a manifest exists; the tests gate then relies on existing CI.
+ * A command the sandbox episode verified, from the frozen manifest.
+ *
+ * Three answers, kept distinct because they mean different things to a gate:
+ * the manifest is missing (setup never finished, so the factory does not know
+ * how to run anything here), the manifest records no such command (this repo
+ * has none, e.g. no tests), or the command itself.
  */
-function sandboxCommand(name: "test" | "build"): string | null {
+type SandboxCommand =
+  | { readonly kind: "no_manifest" }
+  | { readonly kind: "none" }
+  | { readonly kind: "command"; readonly command: string };
+
+function sandboxCommand(name: "test" | "build", root = process.cwd()): SandboxCommand {
+  let m: { commands?: Record<string, unknown> };
   try {
-    const m = JSON.parse(readFileSync(join(process.cwd(), ".factory/sandbox/manifest.json"), "utf8")) as {
-      commands?: Record<string, unknown>;
-    };
-    const c = m.commands?.[name];
-    return typeof c === "string" && c.trim() !== "" ? c : null;
+    m = JSON.parse(readFileSync(resolveRead(root, ".factory/sandbox/manifest.json"), "utf8")) as typeof m;
   } catch {
-    return null;
+    return { kind: "no_manifest" };
   }
+  const c = m.commands?.[name];
+  return typeof c === "string" && c.trim() !== "" ? { kind: "command", command: c } : { kind: "none" };
+}
+
+/** Just the command, for callers that treat "none" and "unknown" alike. */
+function sandboxCommandText(name: "test" | "build"): string | null {
+  const c = sandboxCommand(name);
+  return c.kind === "command" ? c.command : null;
 }
 
 async function factoryConfig(): Promise<FactoryConfig> {
@@ -1553,11 +1582,28 @@ async function reviewWriteCommand(args: Args): Promise<number> {
 async function gatesTests(args: Args): Promise<number> {
   const cfg = await factoryConfig();
   const gh = new GitHub({ repo: requireRepo() });
+  const test = sandboxCommand("test");
+  const existingCheck = cfg.existing_ci?.test_check ?? null;
+
+  // Not knowing how to test a repo is not the same as the repo having no
+  // tests. Reported neutral, it read as "nothing to run" on a repo with a
+  // perfectly good `npm test`, and the aggregate gate would have passed a
+  // change no test had seen.
+  if (test.kind === "no_manifest" && existingCheck === null) {
+    const summary =
+      "The factory does not know how to run this repo's tests: there is no .factory/sandbox/manifest.json, " +
+      "which setup writes once it has run them. Finish setup, or set existing_ci.test_check in factory.yaml.";
+    process.stdout.write(`${summary}\n`);
+    await maybeReportCheck(args, "failure", "Tests could not run", summary, "factory/gate-tests");
+    setOutput("tests_source", "unknown");
+    return 1;
+  }
+
   const result = await runTestsGate({
     gh,
     commit: headSha(),
-    existingCheck: cfg.existing_ci?.test_check ?? null,
-    command: sandboxCommand("test"),
+    existingCheck,
+    command: test.kind === "command" ? test.command : null,
     root: process.cwd(),
   });
   process.stdout.write(`${result.summary}\n`);
@@ -1837,7 +1883,7 @@ async function benchmarkRunCommand(args: Args): Promise<number> {
     task: JSON.parse(taskJson) as BenchmarkTaskInput,
     definitionPath: definition,
     worktree: process.cwd(),
-    testCommand: sandboxCommand("test"),
+    testCommand: sandboxCommandText("test"),
   });
   // One line of JSON on stdout: the provider reads the last JSON object, so
   // progress may be printed to stderr without confusing it.

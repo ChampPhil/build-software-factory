@@ -68,3 +68,32 @@ describe("every call into a reusable workflow grants what that workflow's jobs r
     }
   }
 });
+
+describe("every runner step that may call GitHub has a token", () => {
+  // Found on the first executed run: gate and role steps called GitHub with
+  // no token in their environment, so every role would have failed at its
+  // first step. `bsf models` and `--version` read only local files.
+  const LOCAL_ONLY = /\bbsf (models|--version)\b/;
+  const files = readdirSync(WORKFLOWS).filter((f) => /^factory-.*\.(yml|md)$/.test(f));
+  for (const file of files) {
+    it(file, () => {
+      const text = readFileSync(join(WORKFLOWS, file), "utf8");
+      const yamlText = file.endsWith(".md") ? text.split("\n---\n")[0]?.replace(/^---\n/, "") ?? "" : text;
+      const doc = parse(yamlText) as {
+        jobs?: Record<string, { steps?: { name?: string; run?: string; env?: Record<string, string> }[] }>;
+        "pre-agent-steps"?: { name?: string; run?: string; env?: Record<string, string> }[];
+        "post-steps"?: { name?: string; run?: string; env?: Record<string, string> }[];
+      };
+      const steps = [
+        ...Object.values(doc.jobs ?? {}).flatMap((j) => j.steps ?? []),
+        ...(doc["pre-agent-steps"] ?? []),
+        ...(doc["post-steps"] ?? []),
+      ];
+      const missing = steps
+        .filter((s) => /\bbsf /.test(s.run ?? "") && !(s.run ?? "").includes("bsf/bsf") && !LOCAL_ONLY.test(s.run ?? ""))
+        .filter((s) => s.env?.["GH_TOKEN"] === undefined)
+        .map((s) => s.name ?? "(unnamed)");
+      expect(missing).toEqual([]);
+    });
+  }
+});

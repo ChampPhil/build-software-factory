@@ -173,6 +173,14 @@ export class GitHub {
 
   /* --------------------------------------------------------------- check runs */
 
+  /** The check runs on a commit: name and conclusion, which is what the gates record. */
+  async checkRunsFor(sha: string): Promise<readonly { name: string; conclusion: string | null }[]> {
+    const r = await this.get<{ check_runs: { name: string; conclusion: string | null }[] }>(
+      `${this.base}/commits/${sha}/check-runs?per_page=100`,
+    );
+    return r.check_runs.map((c) => ({ name: c.name, conclusion: c.conclusion }));
+  }
+
   /** Report a gate's verdict as a check run, which is what a required check reads. */
   async reportCheck(opts: {
     readonly name: string;

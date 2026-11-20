@@ -26,10 +26,45 @@ export interface Loader {
 }
 
 /** Reads from a checkout on disk. */
+/**
+ * Paths that decide how a change is judged — the definition (policy, factory
+ * config, roles) and the frozen sandbox (which test command runs). In CI these
+ * are read from the default branch, never from the change under judgement.
+ */
+const TRUSTED_PREFIXES = [".factory/definition/", ".factory/sandbox/"];
+
+/**
+ * Where the default branch's copy of the trusted paths is, when a workflow
+ * has fetched one. Unset outside Actions, where the checkout is the only copy.
+ */
+export function trustedRoot(): string | undefined {
+  const r = process.env["BSF_TRUSTED_ROOT"];
+  return r === undefined || r === "" ? undefined : r;
+}
+
+/** The file to read for `path`: the trusted copy for judging paths, else the checkout. */
+export function resolveRead(root: string, path: string): string {
+  const trusted = trustedRoot();
+  const normalized = path.replace(/^\.\//, "");
+  if (trusted !== undefined && TRUSTED_PREFIXES.some((p) => normalized.startsWith(p))) {
+    return join(trusted, normalized);
+  }
+  return join(root, normalized);
+}
+
+/**
+ * Reads files from a checkout.
+ *
+ * A gate checks out the change it is judging, so reading `factory.yaml` or the
+ * sandbox manifest from that checkout let a pull request choose its own test
+ * command, or point `existing_ci.test_check` at a check that always passes.
+ * With a trusted root set, the judging paths come from the default branch and
+ * only the code being judged comes from the change.
+ */
 export class DiskLoader implements Loader {
   constructor(private readonly root: string = process.cwd()) {}
   async read(path: string): Promise<string | null> {
-    const full = join(this.root, path);
+    const full = resolveRead(this.root, path);
     return existsSync(full) ? readFileSync(full, "utf8") : null;
   }
 }

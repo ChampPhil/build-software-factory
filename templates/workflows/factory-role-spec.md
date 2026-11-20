@@ -83,7 +83,10 @@ pre-agent-steps:
     with:
       ref: ${{ github.event.repository.default_branch }}
       path: .factory-trusted
-      sparse-checkout: .factory/bin
+      sparse-checkout: |
+        .factory/bin
+        .factory/definition
+        .factory/sandbox
       sparse-checkout-cone-mode: false
       persist-credentials: false
   - name: Put the trusted runner on PATH
@@ -91,25 +94,56 @@ pre-agent-steps:
     run: |
       mkdir -p "$RUNNER_TEMP/bsf"
       cp -R .factory-trusted/.factory/bin/. "$RUNNER_TEMP/bsf/"
+      # The definition and the sandbox decide how a change is judged, so
+      # bsf reads them from this copy, never from the checkout.
+      mkdir -p "$RUNNER_TEMP/bsf-trusted/.factory"
+      for d in definition sandbox; do
+        if [ -d ".factory-trusted/.factory/$d" ]; then cp -R ".factory-trusted/.factory/$d" "$RUNNER_TEMP/bsf-trusted/.factory/"; fi
+      done
+      echo "BSF_TRUSTED_ROOT=$RUNNER_TEMP/bsf-trusted" >> "$GITHUB_ENV"
       rm -rf .factory-trusted
       echo "$RUNNER_TEMP/bsf" >> "$GITHUB_PATH"
       "$RUNNER_TEMP/bsf/bsf" --version
+  # Read-only, for the steps that fetch this item's data before the agent
+  # starts. Minted here rather than handed to the agent: step outputs never
+  # reach the agent's sandbox.
+  - name: Mint a read-only token for the factory's data
+    id: read-token
+    uses: actions/create-github-app-token@v1
+    with:
+      app-id: ${{ vars.FACTORY_APP_CLIENT_ID }}
+      private-key: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
+      permission-contents: read
+      permission-actions: read
   - name: Fetch the work item and triage's finding
     shell: bash
     env:
+      GH_TOKEN: ${{ steps.read-token.outputs.token }}
       WORK_ITEM: ${{ inputs.work_item }}
     run: bsf fetch-work-item "$WORK_ITEM" --with-triage --out /tmp/gh-aw/agent/bsf/work-item.json
 
 post-steps:
+  # Write access, only after the agent has exited, for the steps that store
+  # what it produced on the factory's data ref.
+  - name: Mint a token to store this step's results
+    id: write-token
+    uses: actions/create-github-app-token@v1
+    with:
+      app-id: ${{ vars.FACTORY_APP_CLIENT_ID }}
+      private-key: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
+      permission-contents: write
+      permission-actions: read
   - name: Write the StepReport with memex
     shell: bash
     env:
+      GH_TOKEN: ${{ steps.write-token.outputs.token }}
       ROLE: spec
       ATTEMPT: ${{ inputs.attempt }}
     run: bsf step-report --role "$ROLE" --attempt "$ATTEMPT" --out /tmp/gh-aw/agent/bsf/step-report.json
   - name: Write the spec back onto the work item
     shell: bash
     env:
+      GH_TOKEN: ${{ steps.write-token.outputs.token }}
       WORK_ITEM: ${{ inputs.work_item }}
     run: bsf write-spec "$WORK_ITEM" --from /tmp/gh-aw/agent/bsf/spec.json
 ---

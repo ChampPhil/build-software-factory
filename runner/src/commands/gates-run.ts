@@ -1,4 +1,4 @@
-import { readFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { Baselines, Coverage, Policy } from "../lib/types.js";
 import {
@@ -267,41 +267,60 @@ export async function runCoverageGate(args: {
 
 /* --------------------------------------------------- commit-keyed results */
 
-export interface GateRecord {
-  readonly commit: string;
-  readonly gate: "static" | "verification";
-  readonly attempt: number;
-  readonly result: "pass" | "fail" | "skipped";
-  readonly recorded_at: string;
+/**
+ * The check runs each gate reports. A gate's result is its check run on the
+ * commit: GitHub keeps it, branch protection reads it, and it survives the job.
+ *
+ * This replaced a file under the checkout, which a CI job throws away when it
+ * ends, so "never re-run a gate for the same commit" persisted nothing.
+ */
+export const GATE_CHECKS = {
+  static: ["factory/gate-static"],
+  verification: ["factory/gate-tests", "factory/gate-coverage"],
+} as const;
+
+/** The single check branch protection requires; the aggregate of the gates. */
+export const GATES_CHECK = "factory/gates";
+
+export interface CheckRunSummary {
+  readonly name: string;
+  readonly conclusion: string | null;
 }
 
-const RESULTS_DIR = ".factory/.gate-results";
+/** Gates that already passed on this commit, from its check runs. */
+export function checkedFromCheckRuns(runs: readonly CheckRunSummary[]): readonly ("static" | "verification")[] {
+  const passed = (name: string): boolean =>
+    runs.some((r) => r.name === name && r.conclusion === "success");
+  const out: ("static" | "verification")[] = [];
+  for (const gate of ["static", "verification"] as const) {
+    if (GATE_CHECKS[gate].every(passed)) out.push(gate);
+  }
+  return out;
+}
+
+export type JobResult = "success" | "failure" | "cancelled" | "skipped" | "";
 
 /**
- * Gate results are keyed by commit, so opening a PR re-runs nothing and an
- * approval registers without re-running the gates.
+ * The aggregate verdict over the gate jobs, as GitHub reports each job's
+ * result to the job that needs it.
+ *
+ * `skipped` is a pass only when the plan did not call for that gate; a gate
+ * that was planned and skipped (because something before it failed) is not.
+ * A required check that only ever reported on some PRs would block the rest
+ * forever, which is why this one is always reported.
  */
-export function recordGateResult(root: string, record: GateRecord): void {
-  const dir = join(root, RESULTS_DIR);
-  mkdirSync(dir, { recursive: true });
-  const file = join(dir, `${record.commit}.json`);
-  const existing = readGateResults(root, record.commit);
-  const merged = [...existing.filter((r) => r.gate !== record.gate), record];
-  writeFileSync(file, `${JSON.stringify(merged, null, 2)}\n`);
-}
-
-export function readGateResults(root: string, commit: string): readonly GateRecord[] {
-  const file = join(root, RESULTS_DIR, `${commit}.json`);
-  if (!existsSync(file)) return [];
-  try {
-    return JSON.parse(readFileSync(file, "utf8")) as GateRecord[];
-  } catch {
-    return [];
+export function summarizeGates(input: {
+  readonly planned: { readonly static: boolean; readonly verification: boolean; readonly agent: boolean };
+  readonly results: { readonly static: JobResult; readonly verification: JobResult; readonly agent: JobResult };
+}): { readonly conclusion: "success" | "failure"; readonly lines: readonly string[] } {
+  const lines: string[] = [];
+  let ok = true;
+  for (const gate of ["static", "verification", "agent"] as const) {
+    const planned = input.planned[gate];
+    const result = input.results[gate];
+    const passed = result === "success" || (!planned && (result === "skipped" || result === ""));
+    if (!passed) ok = false;
+    lines.push(`${gate}: ${planned ? "planned" : "not planned"}, ${result === "" ? "did not run" : result}${passed ? "" : " — FAILED"}`);
   }
-}
-
-export function alreadyChecked(root: string, commit: string): readonly ("static" | "verification")[] {
-  return readGateResults(root, commit)
-    .filter((r) => r.result !== "skipped")
-    .map((r) => r.gate);
+  return { conclusion: ok ? "success" : "failure", lines };
 }

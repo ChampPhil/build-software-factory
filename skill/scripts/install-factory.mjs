@@ -25,6 +25,18 @@ function arg(name) {
   const i = process.argv.indexOf(`--${name}`);
   return i === -1 ? undefined : process.argv[i + 1];
 }
+if (process.argv.includes("--help") || process.argv.includes("-h")) {
+  console.log(`Copy the factory's own files into a repository checkout.
+
+  node skill/scripts/install-factory.mjs --into PATH [--force] [--dry-run]
+
+The runner (.factory/bin) and the factory-* workflows are the factory's own:
+they are replaced whole, and files the new version no longer ships are
+removed. The definition, context and guardrails are the user's once written,
+and are kept unless --force. Repo-specific content — the context files and the
+sandbox — is written afterwards by the setup agent, by reading the repo.`);
+  process.exit(0);
+}
 const into = arg("into");
 const force = process.argv.includes("--force");
 const dryRun = process.argv.includes("--dry-run");

@@ -6,7 +6,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   runStaticGate, runCoverageGate, measuredCounts, withZeroBaselines,
-  recordGateResult, readGateResults, alreadyChecked,
+  checkedFromCheckRuns, summarizeGates,
 } from "../src/commands/gates-run.js";
 import { runEslint } from "../src/lib/tools.js";
 import type { Baselines, Coverage, Policy } from "../src/lib/types.js";
@@ -298,57 +298,57 @@ describe("a tool that cannot run is not a pass", () => {
   }, 60_000);
 });
 
-describe("commit-keyed gate results", () => {
-  it("records a gate, and reads it back for that commit only", () => {
-    const dir = mkdtempSync(join(tmpdir(), "bsf-results-"));
-    try {
-      recordGateResult(dir, {
-        commit: "aaa111", gate: "static", attempt: 1, result: "pass",
-        recorded_at: new Date().toISOString(),
-      });
-      expect(readGateResults(dir, "aaa111")).toHaveLength(1);
-      expect(readGateResults(dir, "bbb222")).toHaveLength(0);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
+describe("gate results are the commit's check runs", () => {
+  // These were a file in the checkout, which a CI job throws away, so the
+  // once-per-commit rule held only in tests. GitHub keeps check runs.
+  it("counts a gate as checked only when every one of its checks passed", () => {
+    expect(checkedFromCheckRuns([{ name: "factory/gate-static", conclusion: "success" }])).toEqual(["static"]);
+    // Verification is two checks; one passing is not enough.
+    expect(checkedFromCheckRuns([{ name: "factory/gate-tests", conclusion: "success" }])).toEqual([]);
+    expect(
+      checkedFromCheckRuns([
+        { name: "factory/gate-tests", conclusion: "success" },
+        { name: "factory/gate-coverage", conclusion: "success" },
+      ]),
+    ).toEqual(["verification"]);
   });
 
-  it("replaces a gate's own earlier result rather than appending a second", () => {
-    const dir = mkdtempSync(join(tmpdir(), "bsf-results-"));
-    try {
-      const at = new Date().toISOString();
-      recordGateResult(dir, { commit: "c1", gate: "static", attempt: 1, result: "fail", recorded_at: at });
-      recordGateResult(dir, { commit: "c1", gate: "static", attempt: 2, result: "pass", recorded_at: at });
-      const all = readGateResults(dir, "c1");
-      expect(all).toHaveLength(1);
-      expect(all[0]?.result).toBe("pass");
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
+  it("does not count a failed or unfinished gate as checked", () => {
+    expect(
+      checkedFromCheckRuns([
+        { name: "factory/gate-static", conclusion: "failure" },
+        { name: "factory/gate-tests", conclusion: null },
+        { name: "factory/gate-coverage", conclusion: "success" },
+      ]),
+    ).toEqual([]);
+  });
+});
+
+describe("the factory/gates check branch protection requires", () => {
+  const all = { static: true, verification: true, agent: true };
+  it("passes only when every planned gate succeeded", () => {
+    expect(
+      summarizeGates({ planned: all, results: { static: "success", verification: "success", agent: "success" } }).conclusion,
+    ).toBe("success");
+    expect(
+      summarizeGates({ planned: all, results: { static: "success", verification: "failure", agent: "skipped" } }).conclusion,
+    ).toBe("failure");
   });
 
-  it("keeps both gates for one commit", () => {
-    const dir = mkdtempSync(join(tmpdir(), "bsf-results-"));
-    try {
-      const at = new Date().toISOString();
-      recordGateResult(dir, { commit: "c1", gate: "static", attempt: 1, result: "pass", recorded_at: at });
-      recordGateResult(dir, { commit: "c1", gate: "verification", attempt: 1, result: "pass", recorded_at: at });
-      expect([...alreadyChecked(dir, "c1")].sort()).toEqual(["static", "verification"]);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
+  it("treats an unplanned gate's skip as a pass and a planned gate's skip as a failure", () => {
+    // A planned gate skipped because something before it failed is not a pass.
+    const notAgent = { static: true, verification: true, agent: false };
+    expect(
+      summarizeGates({ planned: notAgent, results: { static: "success", verification: "success", agent: "skipped" } }).conclusion,
+    ).toBe("success");
+    expect(
+      summarizeGates({ planned: all, results: { static: "success", verification: "success", agent: "skipped" } }).conclusion,
+    ).toBe("failure");
   });
 
-  it("does not count a skipped gate as checked", () => {
-    const dir = mkdtempSync(join(tmpdir(), "bsf-results-"));
-    try {
-      recordGateResult(dir, {
-        commit: "c1", gate: "verification", attempt: 1, result: "skipped",
-        recorded_at: new Date().toISOString(),
-      });
-      expect(alreadyChecked(dir, "c1")).toHaveLength(0);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
+  it("fails a cancelled gate", () => {
+    expect(
+      summarizeGates({ planned: all, results: { static: "cancelled", verification: "success", agent: "success" } }).conclusion,
+    ).toBe("failure");
   });
 });

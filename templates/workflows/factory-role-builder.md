@@ -127,7 +127,10 @@ pre-agent-steps:
     with:
       ref: ${{ github.event.repository.default_branch }}
       path: .factory-trusted
-      sparse-checkout: .factory/bin
+      sparse-checkout: |
+        .factory/bin
+        .factory/definition
+        .factory/sandbox
       sparse-checkout-cone-mode: false
       persist-credentials: false
   - name: Put the trusted runner on PATH
@@ -135,9 +138,27 @@ pre-agent-steps:
     run: |
       mkdir -p "$RUNNER_TEMP/bsf"
       cp -R .factory-trusted/.factory/bin/. "$RUNNER_TEMP/bsf/"
+      # The definition and the sandbox decide how a change is judged, so
+      # bsf reads them from this copy, never from the checkout.
+      mkdir -p "$RUNNER_TEMP/bsf-trusted/.factory"
+      for d in definition sandbox; do
+        if [ -d ".factory-trusted/.factory/$d" ]; then cp -R ".factory-trusted/.factory/$d" "$RUNNER_TEMP/bsf-trusted/.factory/"; fi
+      done
+      echo "BSF_TRUSTED_ROOT=$RUNNER_TEMP/bsf-trusted" >> "$GITHUB_ENV"
       rm -rf .factory-trusted
       echo "$RUNNER_TEMP/bsf" >> "$GITHUB_PATH"
       "$RUNNER_TEMP/bsf/bsf" --version
+  # Read-only, for the steps that fetch this item's data before the agent
+  # starts. Minted here rather than handed to the agent: step outputs never
+  # reach the agent's sandbox.
+  - name: Mint a read-only token for the factory's data
+    id: read-token
+    uses: actions/create-github-app-token@v1
+    with:
+      app-id: ${{ vars.FACTORY_APP_CLIENT_ID }}
+      private-key: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
+      permission-contents: read
+      permission-actions: read
   # Build and start the app's own environment. The agent stays in AWF's
   # container and reaches the app from there (spike §4b).
   - name: Start the devcontainer and any services the app needs
@@ -146,22 +167,35 @@ pre-agent-steps:
   - name: Fetch the work item and its spec from factory-data
     shell: bash
     env:
+      GH_TOKEN: ${{ steps.read-token.outputs.token }}
       WORK_ITEM: ${{ inputs.work_item }}
     run: bsf fetch-work-item "$WORK_ITEM" --out /tmp/gh-aw/agent/bsf/work-item.json
   - name: Fetch the previous attempt's gate failures, if any
     if: inputs.attempt > 1
     shell: bash
     env:
+      GH_TOKEN: ${{ steps.read-token.outputs.token }}
       GATE_FAILURES: ${{ inputs.gate_failures }}
     run: bsf fetch-artifact "$GATE_FAILURES" --out /tmp/gh-aw/agent/bsf/gate-failures.json
 
 post-steps:
+  # Write access, only after the agent has exited, for the steps that store
+  # what it produced on the factory's data ref.
+  - name: Mint a token to store this step's results
+    id: write-token
+    uses: actions/create-github-app-token@v1
+    with:
+      app-id: ${{ vars.FACTORY_APP_CLIENT_ID }}
+      private-key: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
+      permission-contents: write
+      permission-actions: read
   # memex reads the harness's own session log for tokens and cost. The log is
   # the source of truth; agents' own cost reporting is uneven (doc 07).
   - name: Write the StepReport with memex
     id: report
     shell: bash
     env:
+      GH_TOKEN: ${{ steps.write-token.outputs.token }}
       ROLE: builder
       ATTEMPT: ${{ inputs.attempt }}
     run: bsf step-report --role "$ROLE" --attempt "$ATTEMPT" --out /tmp/gh-aw/agent/bsf/step-report.json
