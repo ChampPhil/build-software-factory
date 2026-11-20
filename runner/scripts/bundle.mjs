@@ -5,27 +5,40 @@
 // user's runner has to get it from somewhere. Fetching at run time ties every
 // run to this repo's visibility and to the network, and makes the version a
 // moving target. A committed bundle is pinned (the version is a reviewed file),
-// works in private repos, needs no egress, and upgrades through factory-sync
-// like the rest of the definition.
+// works in private repos, needs no egress at run time, and upgrades through
+// factory-sync like the rest of the definition.
 //
-// Output, all of which must travel together:
-//   bsf.mjs         the CLI, every dependency inlined
-//   bsf             a shell launcher, so workflows can call `bsf` on PATH
-//   schema/         read at run time to validate every shared file
-//   vendor/gh-aw/   gh-aw's own hasher, loaded beside the bundle
-//   VERSION         package version and a hash of bsf.mjs
+// Why packed: the first install on a real repo broke that repo's own CI. Its
+// `eslint .` linted the vendored JavaScript. Every ecosystem's linter,
+// formatter and type checker walks the tree differently, so asking each repo
+// to ignore a directory cannot work across many repos. Nothing in any
+// ecosystem reads inside a .tgz, so the runner ships as one:
+//
+//   bsf          a POSIX shell launcher (no extension, no language tooling
+//                claims it) that unpacks once, beside itself or in a temp dir
+//   runner.tgz   bsf.mjs + schema/ + vendor/gh-aw/, packed deterministically
+//   VERSION      package version and a hash of runner.tgz
+//
+// Pass --unpacked to get the plain directory instead, for tests.
 import { build } from "esbuild";
-import { cpSync, mkdirSync, rmSync, writeFileSync, chmodSync, readFileSync } from "node:fs";
+import { cpSync, mkdirSync, rmSync, writeFileSync, chmodSync, readFileSync, mkdtempSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const runner = join(dirname(fileURLToPath(import.meta.url)), "..");
 const repo = join(runner, "..");
-const out = process.argv[2] ?? join(runner, "dist-bundle");
+const args = process.argv.slice(2);
+const unpacked = args.includes("--unpacked");
+const out = args.find((a) => !a.startsWith("--")) ?? join(runner, "dist-bundle");
 
+// Built into a staging directory; packed into `out` unless --unpacked.
+const stage = unpacked ? out : mkdtempSync(join(tmpdir(), "bsf-stage-"));
 rmSync(out, { recursive: true, force: true });
 mkdirSync(out, { recursive: true });
+mkdirSync(stage, { recursive: true });
 
 await build({
   // Pinned so the output does not depend on where this is run from: esbuild
@@ -37,7 +50,7 @@ await build({
   platform: "node",
   format: "esm",
   target: "node20",
-  outfile: join(out, "bsf.mjs"),
+  outfile: join(stage, "bsf.mjs"),
   // The CJS packages inlined into an ESM bundle call require() for Node
   // built-ins; give them one. No shebang here: cli.ts carries its own and
   // esbuild keeps it on line 1, so a second one is a syntax error.
@@ -51,19 +64,69 @@ await build({
   logLevel: "warning",
 });
 
-cpSync(join(repo, "schema"), join(out, "schema"), { recursive: true });
-cpSync(join(runner, "vendor", "gh-aw"), join(out, "vendor", "gh-aw"), { recursive: true });
+cpSync(join(repo, "schema"), join(stage, "schema"), { recursive: true });
+cpSync(join(runner, "vendor", "gh-aw"), join(stage, "vendor", "gh-aw"), { recursive: true });
+chmodSync(join(stage, "bsf.mjs"), 0o755);
 
-writeFileSync(join(out, "bsf"), '#!/usr/bin/env sh\nexec node "$(dirname "$0")/bsf.mjs" "$@"\n');
-chmodSync(join(out, "bsf"), 0o755);
-chmodSync(join(out, "bsf.mjs"), 0o755);
-
-// A content hash rather than a commit id, so rebuilding unchanged source gives
-// byte-identical output. That is what lets CI check the committed copy in
-// skill/runner/ against the source, and what lets a user's repo say exactly
-// which runner it carries.
 const version = JSON.parse(readFileSync(join(runner, "package.json"), "utf8")).version;
-const digest = createHash("sha256").update(readFileSync(join(out, "bsf.mjs"))).digest("hex").slice(0, 12);
+
+if (unpacked) {
+  writeFileSync(join(out, "bsf"), '#!/usr/bin/env sh\nexec node "$(dirname "$0")/bsf.mjs" "$@"\n');
+  chmodSync(join(out, "bsf"), 0o755);
+  const digest = createHash("sha256").update(readFileSync(join(out, "bsf.mjs"))).digest("hex").slice(0, 12);
+  writeFileSync(join(out, "VERSION"), `${version} ${digest}\n`);
+  console.log(`bundled (unpacked) into ${out}`);
+  process.exit(0);
+}
+
+// Deterministic: sorted names, fixed mtime and owner, and gzip without a
+// timestamp, so unchanged source gives byte-identical output.
+const tarball = join(out, "runner.tgz");
+const tar = execFileSync(
+  "tar",
+  ["--sort=name", "--mtime=@0", "--owner=0", "--group=0", "--numeric-owner", "--format=gnu", "-C", stage, "-cf", "-", "bsf.mjs", "schema", "vendor"],
+  { maxBuffer: 64 * 1024 * 1024 },
+);
+writeFileSync(tarball, execFileSync("gzip", ["-n", "-9"], { input: tar, maxBuffer: 64 * 1024 * 1024 }));
+rmSync(stage, { recursive: true, force: true });
+
+const digest = createHash("sha256").update(readFileSync(tarball)).digest("hex").slice(0, 12);
 writeFileSync(join(out, "VERSION"), `${version} ${digest}\n`);
 
+// Unpacks once per version into the temp dir — never beside itself, which
+// would put the runner's JavaScript back into the user's working tree where
+// their tools would find it.
+//
+// Lock-free and portable. Each caller extracts into a private directory;
+// `mkdir` is atomic everywhere, so exactly one caller wins the shared
+// directory and moves bsf.mjs in last, which makes its presence mean the rest
+// is there. A caller that loses runs from its own private copy. (An earlier
+// `mv tmp dir` nested the loser's copy inside the winner's whenever two jobs
+// started together, and `mv -T` does not exist on macOS.)
+writeFileSync(
+  join(out, "bsf"),
+  [
+    "#!/usr/bin/env sh",
+    "# Build Software Factory runner launcher. The runner itself is in runner.tgz,",
+    "# packed so that no linter, formatter or type checker in this repo reads it.",
+    "set -eu",
+    'here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)',
+    'base="${TMPDIR:-/tmp}"',
+    `dir="$base/bsf-${digest}"`,
+    'if [ ! -f "$dir/bsf.mjs" ]; then',
+    '  tmp=$(mktemp -d "$base/bsf-unpack.XXXXXX")',
+    '  tar -xzf "$here/runner.tgz" -C "$tmp"',
+    '  if mkdir "$dir" 2>/dev/null; then',
+    '    mv "$tmp/schema" "$tmp/vendor" "$dir/"',
+    '    mv "$tmp/bsf.mjs" "$dir/bsf.mjs"',
+    '    rmdir "$tmp"',
+    '  else',
+    '    exec node "$tmp/bsf.mjs" "$@"',
+    '  fi',
+    "fi",
+    'exec node "$dir/bsf.mjs" "$@"',
+    "",
+  ].join("\n"),
+);
+chmodSync(join(out, "bsf"), 0o755);
 console.log(`bundled into ${out}`);

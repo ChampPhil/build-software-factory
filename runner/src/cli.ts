@@ -124,7 +124,7 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
   bsf conflicts scan [--no-dispatch]
       Find open factory PRs that became conflicting; dispatch resolution runs.
 
-  bsf review due
+  bsf review due [--force true]
       Whether the scheduled review should run, and why.
 
   bsf review route --failures PATH [--plan]
@@ -154,7 +154,7 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
       then the harness's log, then the price table — and says the cost is
       unknown rather than estimating one the budget would then pause on.
 
-  bsf fetch-work-item ID --out PATH [--spec-only] [--with-triage]
+  bsf fetch-work-item ID --out PATH [--spec-only] [--with-triage] [--with-shortlist]
       Write what a role may see into a file. Untrusted text is stripped here,
       not in the prompt.
 
@@ -1006,6 +1006,14 @@ async function reviewCommand(second: string | undefined, args: Args): Promise<nu
   const gh = new GitHub({ repo: requireRepo() });
 
   if (second === "due") {
+    // A manual dispatch with force=true always reviews. The workflow passed
+    // this flag from the start and nothing read it.
+    if (args["force"] === true || args["force"] === "true") {
+      process.stdout.write("due: forced by the dispatcher\n");
+      setOutput("due", "true");
+      setOutput("reason", "forced");
+      return 0;
+    }
     const r = await runReviewDue({
       gh,
       now: nowIso(),
@@ -1015,6 +1023,7 @@ async function reviewCommand(second: string | undefined, args: Args): Promise<nu
     });
     process.stdout.write(`${r.due ? "due" : "not due"}: ${r.reason}\n`);
     setOutput("due", String(r.due));
+    setOutput("reason", r.reason);
     setOutput("runs_since", String(r.runsSinceLastReview));
     return 0;
   }
@@ -1421,6 +1430,7 @@ async function fetchWorkItemCommand(id: string | undefined, args: Args): Promise
     out,
     ...(args["spec-only"] === true ? { specOnly: true } : {}),
     ...(args["with-triage"] === true ? { withTriage: true } : {}),
+    ...(args["with-shortlist"] === true ? { withShortlist: true } : {}),
   });
   process.stdout.write(
     `${r.id} -> ${r.wrote}${r.specOnly ? " (spec only)" : ""}` +

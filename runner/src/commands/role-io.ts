@@ -46,6 +46,13 @@ export interface FetchWorkItemOptions {
   readonly specOnly?: boolean;
   /** The spec role gets triage's notes as well. */
   readonly withTriage?: boolean;
+  /**
+   * Triage gets the open items that may be the same request, so it can decide
+   * whether this one is a duplicate. Computed here from the ledger: intake
+   * shortlists by fingerprint but never stored the result, so the flag triage
+   * passed asked for something that did not exist.
+   */
+  readonly withShortlist?: boolean;
   /** Associations the policy trusts, for deciding whether the body may be used. */
   readonly trustedAssociations?: readonly string[];
 }
@@ -86,6 +93,7 @@ export async function fetchWorkItem(opts: FetchWorkItemOptions): Promise<FetchWo
   );
 
   const triage = opts.withTriage === true ? await readTriageNotes(store, item) : null;
+  const shortlist = opts.withShortlist === true ? await duplicateShortlist(store, item) : null;
 
   const payload = {
     id: item.id,
@@ -101,6 +109,7 @@ export async function fetchWorkItem(opts: FetchWorkItemOptions): Promise<FetchWo
     related: item.related ?? [],
     spec: item.spec,
     ...(triage === null ? {} : { triage }),
+    ...(shortlist === null ? {} : { possible_duplicates: shortlist }),
   };
   write(opts.out, json(payload));
   return {
@@ -110,6 +119,27 @@ export async function fetchWorkItem(opts: FetchWorkItemOptions): Promise<FetchWo
     includedTriage: triage !== null,
     specOnly: false,
   };
+}
+
+/**
+ * Open items with this item's fingerprint, as intake's shortlist computes it.
+ * Titles only: triage compares requests, and an untrusted author's body would
+ * otherwise reach a prompt through another item's entry.
+ */
+async function duplicateShortlist(
+  store: FactoryStore,
+  item: WorkItemFile,
+): Promise<readonly { id: string; title: string | null; status: string }[]> {
+  const fp = (item as { fingerprint?: string }).fingerprint;
+  if (fp === undefined) return [];
+  const ledger = await store.ledger(new Date().toISOString());
+  const same = ledger.open.filter((o) => o.fingerprint === fp && o.work_item !== item.id);
+  const out: { id: string; title: string | null; status: string }[] = [];
+  for (const o of same) {
+    const other = await store.get<WorkItemFile>(workItemPath(o.work_item), "work-item");
+    out.push({ id: o.work_item, title: typeof other?.title === "string" ? other.title : null, status: o.status });
+  }
+  return out;
 }
 
 interface StepReportLike {
