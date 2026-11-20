@@ -86,10 +86,12 @@ merged, dispatch `factory-setup`. From there it runs on its own:
 
 Tell the user the tier it reached and, below `renders`, what stopped it — the
 manifest records why. A repo that can only reach `build_and_test` still gets a
-factory; its gates claim no more than that tier allows.
+factory; its gates claim no more than that tier allows. If the trial reaches
+no tier at all — the app does not even build — stop and show the failing step.
+A factory that cannot verify anything produces confident, unverified PRs.
 
-You do not design the sandbox yourself, and you do not hand it any credential
-of the user's. The agent decides the values; the closed environment and the
+You do not design the sandbox yourself.
+Never let the sandbox inherit real credentials — not the user's, not production's. The agent decides the values; the closed environment and the
 trial make that safe.
 
 ## Phase 3 — Install guardrails

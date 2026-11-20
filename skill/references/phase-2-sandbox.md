@@ -101,3 +101,22 @@ docker-sudo-iptables`, a weaker isolation profile, so the default compiled
 roles do not assume it. A repo whose sandbox has services is recompiled at
 setup with that posture; tell the user it gets a measurably weaker isolation
 level than a repo with none, and why.
+
+## What to watch for
+
+- **A real connection string reaching the sandbox.** If the repo's
+  `DATABASE_URL` points at a hosted database, the manifest must give the app a
+  throwaway service's URL instead, never the hosted one. The closed environment
+  is a positive list, not a denylist: a variable reaches the app only because
+  the manifest names it, so a forgotten production value is absent rather than
+  inherited.
+- **A tier claimed but not reached.** The setup PR states the measured tier.
+  If the agent's notes say `renders` and the trial says `build_and_test`, the
+  trial is right; read `tier_reason` for what stopped it.
+- **A stub standing in for something the change touches.** A stub has
+  provenance (`captured_from`, `captured_at`); when a work item changes
+  behaviour that depends on the stubbed service, the verifier's report should
+  name it under `not_exercised` rather than pass it.
+- **Services without the isolation they need.** See the section above: a
+  manifest with services means the weaker runtime posture, and the user is
+  told so.
