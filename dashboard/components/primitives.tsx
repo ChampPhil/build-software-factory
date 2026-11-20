@@ -38,6 +38,9 @@ export const asPct1 = (n: number): string => formatPct(n, 1);
 export const asUsd = (n: number): string => formatUsd(n);
 export const asDuration = (n: number): string => formatDuration(n);
 export const asCount = (n: number): string => n.toLocaleString("en-US");
+/** One decimal place, for an average of small counts. */
+export const asDecimal = (n: number): string =>
+  n.toLocaleString("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 
 /**
  * A track with a fill and, where one exists, a marked line the fill must not

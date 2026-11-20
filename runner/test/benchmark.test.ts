@@ -4,10 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   buildTasks, originOf, compare, regressedChecks, admit, buildBenchmarkConfig, readBenchmark,
-  type MergedRun, type BenchmarkRunResult, type BenchmarkTask,
+  type MergedRun, type BenchmarkRunResult, type BenchmarkTask, sideSummary,
 } from "../src/commands/benchmark.js";
 import { runBenchmarkTask } from "../src/commands/benchmark-run.js";
-import { assertValid } from "../src/lib/schema.js";
+import { assertValid, validate } from "../src/lib/schema.js";
 
 const SHA = "a".repeat(40);
 const SHA2 = "b".repeat(40);
@@ -307,5 +307,97 @@ describe("runBenchmarkTask", () => {
       runHarness: async () => ({ code: 0, stdout: "done", stderr: "" }),
     });
     expect(r.unavailable).toBeUndefined();
+  });
+});
+
+describe("sideSummary", () => {
+  const run = (over: Partial<BenchmarkRunResult>): BenchmarkRunResult => ({
+    task: "bt_01JD000000000000000000000A",
+    origin: "succeeded",
+    score: 4,
+    cost_usd: 0.5,
+    passed_must_pass: true,
+    ...over,
+  });
+
+  it("reports the mean score and the cost per task", () => {
+    const s = sideSummary(
+      "after",
+      [
+        run({ task: "a", score: 4, cost_usd: 1 }),
+        run({ task: "b", score: 2, cost_usd: 1 }),
+      ],
+      1,
+    );
+    expect(s.score_mean).toBe(3);
+    expect(s.cost_usd).toBe(2);
+    expect(s.cost_per_task).toBe(1);
+  });
+
+  it("measures the spread as how much the number moves between repeats", () => {
+    // Two repeats of two tasks, repeat-major: the first repeat means 4, the
+    // second 2, so the number moves by 2 with nothing changed. A difference
+    // between two sides smaller than that means nothing.
+    const s = sideSummary(
+      "after",
+      [
+        run({ task: "a", score: 4 }),
+        run({ task: "b", score: 4 }),
+        run({ task: "a", score: 2 }),
+        run({ task: "b", score: 2 }),
+      ],
+      2,
+    );
+    expect(s.score_spread).toBe(2);
+  });
+
+  it("has no spread with a single repeat, rather than inventing one", () => {
+    const s = sideSummary("after", [run({ task: "a", score: 4 }), run({ task: "b", score: 2 })], 1);
+    expect(s.score_spread).toBe(0);
+  });
+
+  it("counts the must-pass rate over the runs", () => {
+    const s = sideSummary(
+      "after",
+      [
+        run({ task: "a", passed_must_pass: true }),
+        run({ task: "b", passed_must_pass: false }),
+        run({ task: "c", passed_must_pass: true }),
+        run({ task: "d", passed_must_pass: true }),
+      ],
+      1,
+    );
+    expect(s.must_pass_rate).toBe(0.75);
+  });
+
+  it("carries the models, so a point on the chart names a configuration", () => {
+    const s = sideSummary("after", [run({})], 1, { models: { builder: "claude-sonnet-5-5" } });
+    expect(s.models).toEqual({ builder: "claude-sonnet-5-5" });
+  });
+
+  it("marks the current configuration only when told to", () => {
+    expect(sideSummary("before", [run({})], 1, { current: true }).current).toBe(true);
+    expect(sideSummary("after", [run({})], 1)).not.toHaveProperty("current");
+  });
+
+  it("survives a side that produced nothing", () => {
+    const s = sideSummary("after", [], 3);
+    expect(s).toMatchObject({ score_mean: 0, cost_per_task: 0, must_pass_rate: 0, score_spread: 0 });
+  });
+
+  it("produces a document that validates", () => {
+    const doc = {
+      schema: "benchmark-result/1",
+      id: "bench_01JD000000000000000000000A",
+      at: "2026-11-20T10:00:00Z",
+      repeats: 3,
+      task_count: 2,
+      sides: [sideSummary("before", [run({})], 1, { current: true }), sideSummary("after", [run({})], 1)],
+      admitted: false,
+      reasons: ["inside the noise"],
+      regressed: [],
+    };
+    const res = validate("benchmark-result", doc);
+    expect(res.ok, JSON.stringify(res.ok ? [] : res.errors)).toBe(true);
   });
 });

@@ -22,6 +22,7 @@ export const runPath = (id: string): string => `runs/${id}.json`;
 export const stepReportPath = (runId: string, role: string): string =>
   `runs/${runId}/steps/${role}.json`;
 export const reviewPath = (at: string): string => `reviews/${at}.json`;
+export const benchmarkResultPath = (id: string): string => `benchmark-results/${id}.json`;
 export const livePath = (runId: string): string => `live/${runId}.json`;
 
 export interface Ledger {
@@ -95,6 +96,7 @@ export function schemaFor(path: string): Parameters<typeof assertValid>[0] | nul
   if (path.startsWith("runs/")) return "run";
   if (path.startsWith("live/")) return "live";
   if (path.startsWith("reviews/")) return "review";
+  if (path.startsWith("benchmark-results/")) return "benchmark-result";
   if (path.startsWith("benchmarks/")) return "benchmark-task";
   // Files the layout does not name — the event cursor, the budget note — have
   // no shared schema. Guessing one would reject legitimate writes.

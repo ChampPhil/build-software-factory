@@ -16,8 +16,11 @@ import { runSyncCommand } from "./commands/sync-settings.js";
 import { runAuditCommand } from "./commands/audit.js";
 import { byFileOf } from "./commands/gates.js";
 import { parseYaml } from "./lib/yaml.js";
+import { benchmarkResultId } from "./lib/ids.js";
+import { benchmarkResultPath, FactoryStore, json } from "./lib/store.js";
 import type { CandidatesFile } from "./lib/types.js";
 import { runDoctor, formatReport } from "./commands/doctor.js";
+import { findDashboard, serveDashboard } from "./commands/serve.js";
 import {
   submitContribution,
   mergeContribution,
@@ -47,10 +50,14 @@ import { runTestsGate } from "./commands/tests-gate.js";
 import { mineCorrections, listSessions, clusterCorrections, candidatesFrom } from "./commands/mine.js";
 import { mineRepo } from "./commands/mine-repo.js";
 import { runScorers, loadRubrics } from "./commands/score.js";
-import { buildTasks, buildBenchmarkConfig, runBenchmark, readBenchmark, admit, type BenchmarkTask } from "./commands/benchmark.js";
+import {
+  buildTasks, buildBenchmarkConfig, runBenchmark, readBenchmark, admit, sideSummary,
+  type BenchmarkTask,
+} from "./commands/benchmark.js";
 import { runBenchmarkTask, type BenchmarkTaskInput } from "./commands/benchmark-run.js";
 import { readFileSync, appendFileSync, writeFileSync, mkdirSync, existsSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 /**
  * `bsf` — the factory's deterministic runner.
@@ -188,6 +195,11 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
       problems are added — what the skill's update mode needs, since one the
       user already rejected must not be offered again.
 
+  bsf dashboard [--port N] [--dir PATH]
+      Serve the dashboard from this machine, on the loopback interface only.
+      It is a static export that talks to GitHub from your browser, so there
+      is nothing else to run and no server sees your token.
+
   bsf doctor [--root PATH] [--repo OWNER/REPO] [--json]
       What is wrong with an installed factory: missing definition, role or
       context files, a guardrail file that no longer validates, a missing
@@ -210,6 +222,13 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
       Grade runs against their pipeline's rubric and the shared one, on
       promptfoo's LLM-rubric graders. Reports a criterion whose repeats
       disagree instead of routing it.
+
+  bsf benchmark run --before PATH --after PATH [--tasks DIR] [--repeats N]
+                    [--pr N] [--repo OWNER/REPO] [--result-out PATH]
+      Run the frozen tasks against two definitions and say whether the change
+      is admissible. Writes the comparison — each side's score, spread and
+      cost — so the Improvement page can plot cost against quality; with
+      --repo it also stores it in the factory's data ref.
 
   bsf benchmark build --runs PATH [--out DIR]
       Turn merged runs into frozen benchmark tasks, including the ones a human
@@ -361,6 +380,9 @@ async function main(argv: readonly string[]): Promise<number> {
 
     case "audit":
       return auditCommand(args);
+
+    case "dashboard":
+      return dashboardCommand(args);
 
     case "doctor":
       return doctorCommand(args);
@@ -957,6 +979,42 @@ async function auditCommand(args: Args): Promise<number> {
   return 1;
 }
 
+async function dashboardCommand(args: Args): Promise<number> {
+  const dir =
+    typeof args["dir"] === "string" ? args["dir"] : findDashboard(dirname(fileURLToPath(import.meta.url)));
+  if (dir === null) {
+    die(
+      "the built dashboard was not found. In a checkout, run `npm -w @bsf/dashboard run build` first, " +
+        "or pass --dir PATH to the directory holding its index.html.",
+    );
+  }
+
+  const port = typeof args["port"] === "string" ? Number(args["port"]) : 7777;
+  if (!Number.isInteger(port) || port < 0 || port > 65535) die(`${String(args["port"])} is not a port`);
+
+  const server = await serveDashboard({ root: dir, port }).catch((err: unknown) => {
+    // The common one by far, and the message node gives for it says nothing
+    // about what to do.
+    if (/EADDRINUSE/.test(String(err))) {
+      die(`port ${port} is already in use; pass --port with another one`);
+    }
+    throw err;
+  });
+
+  process.stdout.write(`${server.url}\n`);
+  process.stdout.write("Serving the dashboard on this machine only. Ctrl-C to stop.\n");
+
+  // Held open until the process is stopped; there is nothing else to do.
+  await new Promise<void>((resolve) => {
+    const stop = () => {
+      void server.close().then(() => resolve());
+    };
+    process.once("SIGINT", stop);
+    process.once("SIGTERM", stop);
+  });
+  return 0;
+}
+
 async function doctorCommand(args: Args): Promise<number> {
   const root = typeof args["root"] === "string" ? args["root"] : process.cwd();
   const repo = typeof args["repo"] === "string" ? args["repo"] : undefined;
@@ -1514,15 +1572,84 @@ async function benchmarkCommand(second: string | undefined, args: Args): Promise
       return 1;
     }
     const sides = readBenchmark(JSON.parse(readFileSync(result.outputPath, "utf8")), tasks);
-    const verdict = admit(sides.get("before") ?? [], sides.get("after") ?? [], repeats);
+    const beforeRuns = sides.get("before") ?? [];
+    const afterRuns = sides.get("after") ?? [];
+    const verdict = admit(beforeRuns, afterRuns, repeats);
 
     process.stdout.write(`${verdict.admit ? "admissible" : "not admissible"}\n`);
     for (const r of verdict.reasons) process.stdout.write(`  ${r}\n`);
+
+    // Persisted so the Improvement page can plot cost against quality without
+    // re-running anything. Each side is one configuration tried.
+    const doc = {
+      schema: "benchmark-result/1" as const,
+      id: benchmarkResultId(),
+      at: nowIso(),
+      repeats,
+      task_count: tasks.length,
+      sides: [
+        sideSummary("before", beforeRuns, repeats, {
+          ...(modelsOf(before) === null ? {} : { models: modelsOf(before) as Record<string, string> }),
+          current: true,
+        }),
+        sideSummary("after", afterRuns, repeats, {
+          ...(modelsOf(after) === null ? {} : { models: modelsOf(after) as Record<string, string> }),
+        }),
+      ],
+      admitted: verdict.admit,
+      reasons: [...verdict.reasons],
+      regressed: [...verdict.regressed],
+      ...(typeof args["pr"] === "string" && Number.isInteger(Number(args["pr"]))
+        ? { pr: Number(args["pr"]) }
+        : {}),
+    };
+    assertValid("benchmark-result", doc);
+
+    const resultOut =
+      typeof args["result-out"] === "string"
+        ? args["result-out"]
+        : join(".factory/work/benchmark", `${doc.id}.json`);
+    mkdirSync(dirname(resultOut), { recursive: true });
+    writeFileSync(resultOut, `${JSON.stringify(doc, null, 2)}\n`);
+    process.stdout.write(`result -> ${resultOut}\n`);
+
+    if (typeof args["repo"] === "string") {
+      // On a real run the comparison happens in CI, so the result has to
+      // reach the data ref for the dashboard to ever see it.
+      const store = new FactoryStore(new GitHub({ repo: args["repo"] }));
+      await store.put(
+        [{ path: benchmarkResultPath(doc.id), content: json(doc) }],
+        `benchmark: ${doc.admitted ? "admissible" : "not admissible"} over ${tasks.length} task(s)`,
+      );
+      process.stdout.write(`stored at ${benchmarkResultPath(doc.id)}\n`);
+    }
+
     setOutput("admit", String(verdict.admit));
+    setOutput("benchmark_result", doc.id);
     return verdict.admit ? 0 : 1;
   }
 
   die("usage: bsf benchmark build|run");
+}
+
+/**
+ * The model per role a definition file names, for labelling a point on the
+ * cost-vs-quality chart. Null when the file cannot be read: a point with no
+ * models is still a point, and guessing them would mislabel the chart.
+ */
+function modelsOf(definitionPath: string): Readonly<Record<string, string>> | null {
+  try {
+    const doc = parseYaml(readFileSync(definitionPath, "utf8")) as { models?: unknown };
+    const models = doc.models;
+    if (typeof models !== "object" || models === null) return null;
+    const out: Record<string, string> = {};
+    for (const [role, model] of Object.entries(models)) {
+      if (typeof model === "string") out[role] = model;
+    }
+    return Object.keys(out).length === 0 ? null : out;
+  } catch {
+    return null;
+  }
 }
 
 async function benchmarkRunCommand(args: Args): Promise<number> {

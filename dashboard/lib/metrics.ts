@@ -1,6 +1,6 @@
 import type {
   IndexFile, LedgerFile, LiveFile, RunFile, DailyPoint, Pipeline,
-  BaselinesFile, CoverageFile,
+  BaselinesFile, CoverageFile, ReviewFile, BenchmarkResultFile,
 } from "./types.js";
 
 /**
@@ -29,6 +29,7 @@ export interface Headline {
   readonly actionsMinutes: Measure;
   readonly actionsMinutesLimit: Measure;
   readonly revertRate: Measure;
+  readonly humanInteractionsPerPr: Measure;
 }
 
 /**
@@ -43,6 +44,7 @@ export function headline(index: IndexFile | null): Headline {
       autonomy: unknown(why), cycleTimeP50: unknown(why), cycleTimeP90: unknown(why),
       costPerPr: unknown(why), spendUsd: unknown(why), budgetUsd: unknown(why),
       actionsMinutes: unknown(why), actionsMinutesLimit: unknown(why), revertRate: unknown(why),
+      humanInteractionsPerPr: unknown(why),
     };
   }
   const m = index.metrics;
@@ -65,6 +67,16 @@ export function headline(index: IndexFile | null): Headline {
       merged === 0 || m.spend_usd === undefined
         ? unknown("No merged pull requests yet.")
         : known(Math.round((m.spend_usd / merged) * 100) / 100),
+    // Null from the rollup means no merged PR in the window recorded a count.
+    // Showing 0 would read as a factory nobody had to steer.
+    humanInteractionsPerPr:
+      m.human_interactions_per_pr === undefined || m.human_interactions_per_pr === null
+        ? unknown(
+            merged === 0
+              ? "No merged pull requests yet."
+              : "Not measured on the pull requests merged in this window.",
+          )
+        : known(m.human_interactions_per_pr),
     spendUsd: m.spend_usd === undefined ? unknown("Not recorded.") : known(m.spend_usd),
     budgetUsd: m.budget_usd === undefined ? unknown("No budget set.") : known(m.budget_usd),
     actionsMinutes:
@@ -422,4 +434,122 @@ export function elapsedSince(iso: string | undefined, now: Date = new Date()): s
   const then = Date.parse(iso);
   if (Number.isNaN(then)) return "—";
   return formatDuration(Math.max(0, (now.getTime() - then) / 1000));
+}
+
+/* ------------------------------------------------------------- improvement */
+
+/** One point on the cost-vs-quality chart: a configuration that was tried. */
+export interface ConfigPoint {
+  readonly label: string;
+  readonly models: Readonly<Record<string, string>>;
+  readonly costPerTask: number;
+  readonly score: number;
+  readonly spread: number;
+  readonly mustPassRate: number;
+  readonly current: boolean;
+  readonly at: string;
+  /** True when no other point scores at least as well for no more cost. */
+  readonly onFrontier: boolean;
+}
+
+/** A configuration's identity, so the same models tried twice are one point. */
+function configKey(models: Readonly<Record<string, string>> | undefined, label: string): string {
+  if (models === undefined || Object.keys(models).length === 0) return `label:${label}`;
+  return Object.entries(models)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([role, model]) => `${role}=${model}`)
+    .join(",");
+}
+
+/**
+ * Every configuration tried, newest measurement per configuration, with the
+ * cost-quality frontier marked.
+ *
+ * A configuration appearing in two comparisons is one point, not two: it is
+ * the same thing measured twice, and plotting both would suggest the factory
+ * has more options than it does. The newest measurement wins, because models
+ * and prices change.
+ */
+export function configPoints(results: readonly BenchmarkResultFile[]): readonly ConfigPoint[] {
+  const newest = new Map<string, ConfigPoint>();
+
+  for (const result of [...results].sort((a, b) => a.at.localeCompare(b.at))) {
+    for (const side of result.sides) {
+      const key = configKey(side.models, side.label);
+      newest.set(key, {
+        label: side.label,
+        models: side.models ?? {},
+        costPerTask: side.cost_per_task,
+        score: side.score_mean,
+        spread: side.score_spread,
+        mustPassRate: side.must_pass_rate,
+        current: side.current === true,
+        at: result.at,
+        onFrontier: false,
+      });
+    }
+  }
+
+  const points = [...newest.values()];
+  return points.map((p) => ({
+    ...p,
+    // On the frontier when nothing else is at least as good for no more money.
+    onFrontier: !points.some(
+      (q) => q !== p && q.costPerTask <= p.costPerTask && q.score >= p.score && (q.costPerTask < p.costPerTask || q.score > p.score),
+    ),
+  }));
+}
+
+export type Verdict = "adopted" | "rejected" | "no_clear_winner";
+
+/**
+ * What a comparison decided, and whether it decided anything at all.
+ *
+ * The distinction this page exists for: a change whose score went up by less
+ * than the run-to-run spread has not been shown to be better, and calling
+ * that a rejection would suggest the factory learned something it did not.
+ */
+export function verdictOf(result: BenchmarkResultFile): { readonly verdict: Verdict; readonly why: string } {
+  const current = result.sides.find((s) => s.current === true) ?? result.sides[0];
+  const other = result.sides.find((s) => s !== current);
+  if (current === undefined || other === undefined) {
+    return { verdict: "no_clear_winner", why: "only one configuration was measured" };
+  }
+
+  if ((result.regressed ?? []).length > 0) {
+    return {
+      verdict: "rejected",
+      why: `${(result.regressed ?? []).length} task(s) stopped passing a check the reference merge passed`,
+    };
+  }
+
+  const difference = other.score_mean - current.score_mean;
+  const noise = Math.max(current.score_spread, other.score_spread);
+  if (Math.abs(difference) <= noise) {
+    return {
+      verdict: "no_clear_winner",
+      why: `the difference (${difference.toFixed(2)}) is inside the run-to-run spread (${noise.toFixed(2)})`,
+    };
+  }
+  return result.admitted
+    ? { verdict: "adopted", why: `scored ${difference.toFixed(2)} higher, outside the spread` }
+    : { verdict: "rejected", why: result.reasons[0] ?? "did not meet the admission rule" };
+}
+
+/** Pass rate per criterion across a review's scores, for the scorer cards. */
+export function scorerCards(
+  review: ReviewFile,
+): readonly { readonly criterion: string; readonly passRate: number; readonly runs: number }[] {
+  const byCriterion = new Map<string, { pass: number; total: number }>();
+  for (const s of review.scores) {
+    const entry = byCriterion.get(s.criterion) ?? { pass: 0, total: 0 };
+    entry.total += 1;
+    // The scorers answer 1-5 and the review routes anything at or below 2, so
+    // that is the line a card has to draw.
+    if (s.score > 2) entry.pass += 1;
+    byCriterion.set(s.criterion, entry);
+  }
+  return [...byCriterion.entries()]
+    .map(([criterion, e]) => ({ criterion, passRate: e.pass / e.total, runs: e.total }))
+    .sort((a, b) => a.passRate - b.passRate);
 }

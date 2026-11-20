@@ -8,6 +8,7 @@ import type { GitHub, PullResponse, PullFile, ReviewResponse } from "../src/lib/
 import { runPolicy } from "../src/commands/policy.js";
 import { loadPolicy, type Loader } from "../src/lib/config.js";
 import type { Policy } from "../src/lib/types.js";
+import { SCHEMA_NAMES } from "../src/lib/schema.js";
 
 function repoRoot(): string {
   let dir = dirname(fileURLToPath(import.meta.url));
@@ -216,9 +217,12 @@ describe("the bsf CLI", () => {
   });
 
   it("lists the schemas it reads and writes", () => {
+    // Counted from the registry rather than written down: a hardcoded number
+    // breaks on every schema added and teaches nothing when it does.
     const out = execFileSync("node", [cli, "schemas"], { encoding: "utf8" });
-    expect(out).toContain("policy/1");
-    expect(out.trim().split("\n")).toHaveLength(16);
+    const lines = out.trim().split("\n");
+    expect(lines).toHaveLength(SCHEMA_NAMES.length);
+    for (const name of SCHEMA_NAMES) expect(lines).toContain(`${name}/1`);
   });
 
   it("validates a good file", () => {

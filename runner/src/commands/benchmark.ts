@@ -368,3 +368,64 @@ export function readBenchmark(
   }
   return sides;
 }
+
+
+/* ------------------------------------------------- the persisted comparison */
+
+export interface BenchmarkSide {
+  readonly label: string;
+  readonly models?: Readonly<Record<string, string>>;
+  readonly score_mean: number;
+  readonly score_spread: number;
+  readonly cost_usd: number;
+  readonly cost_per_task: number;
+  readonly must_pass_rate: number;
+  readonly current?: boolean;
+}
+
+/**
+ * Turn one side's runs into the point the Improvement page plots.
+ *
+ * `score_spread` is the highest mean minus the lowest across the repeats, not
+ * the spread of individual runs: it answers "how much does this number move
+ * when nothing changed", which is what decides whether a difference between
+ * two sides means anything.
+ */
+export function sideSummary(
+  label: string,
+  runs: readonly BenchmarkRunResult[],
+  repeats: number,
+  extra: { readonly models?: Readonly<Record<string, string>>; readonly current?: boolean } = {},
+): BenchmarkSide {
+  const mean = (xs: readonly number[]): number =>
+    xs.length === 0 ? 0 : xs.reduce((a, b) => a + b, 0) / xs.length;
+
+  // Runs arrive repeat-major from promptfoo, so chunking by task count gives
+  // one mean per repeat.
+  const perRepeat: number[] = [];
+  const size = repeats > 0 ? Math.ceil(runs.length / repeats) : runs.length;
+  for (let i = 0; size > 0 && i < runs.length; i += size) {
+    perRepeat.push(mean(runs.slice(i, i + size).map((r) => r.score)));
+  }
+  const spread = perRepeat.length < 2 ? 0 : Math.max(...perRepeat) - Math.min(...perRepeat);
+
+  const tasks = new Set(runs.map((r) => r.task)).size;
+  const cost = runs.reduce((a, r) => a + r.cost_usd, 0);
+  const decided = runs;
+
+  return {
+    label,
+    ...(extra.models === undefined ? {} : { models: extra.models }),
+    score_mean: round2(mean(runs.map((r) => r.score))),
+    score_spread: round2(spread),
+    cost_usd: round2(cost),
+    cost_per_task: tasks === 0 ? 0 : round2(cost / tasks),
+    must_pass_rate:
+      decided.length === 0 ? 0 : round2(decided.filter((r) => r.passed_must_pass).length / decided.length),
+    ...(extra.current === true ? { current: true } : {}),
+  };
+}
+
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
+}

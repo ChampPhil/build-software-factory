@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { GitHubClient, GitHubHttpError, type Auth } from "./github";
 import type {
   IndexFile, LedgerFile, LiveFile, RunFile, BaselinesFile, CoverageFile, CandidatesFile,
+  ReviewFile, BenchmarkResultFile,
 } from "./types";
 
 /**
@@ -121,6 +122,43 @@ export function useGuardrails(client: GitHubClient | null): Loaded<{
           return { baselines, coverage, candidates };
         };
   return usePolled(load, 60_000, [client?.repo]);
+}
+
+/**
+ * What the Improvement page needs: the recent reviews, the benchmark task set
+ * and every comparison that has been run.
+ *
+ * Polled slowly — a review happens every few days, not every minute — and the
+ * most recent few of each are read in full rather than all of them, because a
+ * factory a year old would otherwise fetch hundreds of files to draw one chart.
+ */
+export function useImprovement(client: GitHubClient | null): Loaded<{
+  readonly reviews: readonly ReviewFile[];
+  readonly results: readonly BenchmarkResultFile[];
+  readonly taskCount: number;
+}> {
+  const load =
+    client === null
+      ? null
+      : async () => {
+          const [reviewNames, resultNames, taskNames] = await Promise.all([
+            client.listFromRef("reviews"),
+            client.listFromRef("benchmark-results"),
+            client.listFromRef("benchmarks"),
+          ]);
+          const [reviews, results] = await Promise.all([
+            Promise.all(reviewNames.slice(0, 10).map((n) => client.fileFromRef<ReviewFile>(`reviews/${n}`))),
+            Promise.all(
+              resultNames.slice(0, 20).map((n) => client.fileFromRef<BenchmarkResultFile>(`benchmark-results/${n}`)),
+            ),
+          ]);
+          return {
+            reviews: reviews.filter((r): r is ReviewFile => r !== null),
+            results: results.filter((r): r is BenchmarkResultFile => r !== null),
+            taskCount: taskNames.length,
+          };
+        };
+  return usePolled(load, 300_000, [client?.repo]);
 }
 
 export function useRun(client: GitHubClient | null, id: string | null): Loaded<RunFile | null> {

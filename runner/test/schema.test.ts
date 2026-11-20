@@ -202,6 +202,25 @@ const valid: Record<SchemaName, unknown> = {
     grading: { must_pass: ["src/export/download.test.ts"], rubric: "product_work" },
     tags: ["representative", "export"],
   },
+  "benchmark-result": {
+    schema: "benchmark-result/1", id: "bench_01JD000000000000000000000A",
+    at: "2026-11-20T10:00:00Z", repeats: 3, task_count: 12,
+    pipeline: "product_work", pr: 41,
+    sides: [
+      {
+        label: "current", models: { builder: "claude-opus-5", spec: "claude-opus-5" },
+        score_mean: 3.9, score_spread: 0.3, cost_usd: 8.4, cost_per_task: 0.7, must_pass_rate: 0.92,
+        current: true,
+      },
+      {
+        label: "cheaper builder", models: { builder: "claude-sonnet-5-5", spec: "claude-opus-5" },
+        score_mean: 4.2, score_spread: 0.25, cost_usd: 5.1, cost_per_task: 0.43, must_pass_rate: 0.92,
+      },
+    ],
+    admitted: true,
+    reasons: ["the failing tasks improved by more than the run-to-run spread", "cost fell"],
+    regressed: [],
+  },
 };
 
 describe("schema registry", () => {

@@ -49,6 +49,7 @@ The metrics landing page for a chosen date range (7, 30 or 90 days), comparing e
 | Tile | Definition |
 | --- | --- |
 | Autonomy | Merged factory PRs that needed no human code push ÷ all merged PRs |
+| Human interactions per PR | Comments, change requests and human commits on merged factory PRs ÷ those PRs. An approving review is the gate working as designed, so it is not counted. Counted when the PR merges and stored on the run, so the dashboard needs no extra API calls; absent means not measured, which is shown as such rather than as zero |
 | Cycle time | Median work item created → merged, with a median per stage: triage, spec, build, gates, waiting for review, merge queue |
 | Cost per PR | Median model cost per merged PR, including retries and conflict resolution |
 | Spend vs. budget | Month-to-date model spend and Actions minutes against both limits and each pipeline's share, with a projection to month end |
@@ -207,7 +208,7 @@ A calm control room: dense with information, but quiet until something needs att
 - **Every number is a door.** Tiles, chart points and table rows link to the runs behind them.
 - **Keyboard first:** `g h` Home, `g l` Live, `g r` Runs, `/` search, `a` approve in review view.
 - **Empty states teach.** A fresh factory shows what will appear and how to trigger the first work, not blank panels.
-- **Responsive:** Home, Live and PR review work on a phone for quick approvals; the other pages are desktop-first.
+- **Responsive:** Home, Live and PR review work on a phone for quick approvals; the other pages are desktop-first. Below 560px a row stacks to one column and its action becomes a full-width target: these rows set their column template inline per page, so at 390px a five-column row pushed the Approve button — the whole point of opening it on a phone — off the right edge.
 
 ## Static-export constraints
 
@@ -217,5 +218,5 @@ The dashboard is a Next.js app built with `output: 'export'` and served as stati
 - **Routes known at build time only.** Pages for a specific item read the ID from the query string: `/run?id=`, `/review?pr=`, `/rule?id=`. The repo comes from `?repo=owner/name` and is remembered per browser.
 - **Client data layer:** one fetch wrapper that adds auth, ETags and rate-limit handling; a cache keyed by URL; polling hooks that stop when the tab is hidden.
 - **Schema validation in the browser:** every file read from `factory-data` is validated against `/schema`; unknown major versions show an "upgrade your runner" notice instead of breaking the page.
-- **Self-hostable:** the same build deploys to any static host, or runs locally with `npx build-software-factory dashboard`.
+- **Self-hostable:** the same build deploys to any static host, or runs locally with `bsf dashboard`. It serves the static export on the loopback interface only — the page holds a GitHub token in browser storage, and a dashboard reachable from the network would hand anyone on that network a page that acts as the person running it.
 - **The only optional server piece** is the sign-in Worker, which uses a few requests per login, well within Cloudflare's free tier.

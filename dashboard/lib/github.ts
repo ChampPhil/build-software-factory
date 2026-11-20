@@ -132,6 +132,24 @@ export class GitHubClient {
     }
   }
 
+  /**
+   * The JSON files in one directory of the data ref, newest name first.
+   *
+   * Reviews and benchmark results have no index: their ids are time-ordered,
+   * so listing the directory and sorting by name gives newest first without a
+   * second file to keep in step.
+   */
+  async listFromRef(dir: string, ref = "refs/factory/data"): Promise<readonly string[]> {
+    const res = await this.getOrNull<{ name: string; type: string }[]>(
+      `repos/${this.auth.repo}/contents/${encodeURI(dir)}?ref=${encodeURIComponent(ref)}`,
+    );
+    if (res === null) return [];
+    return res
+      .filter((e) => e.type === "file" && e.name.endsWith(".json"))
+      .map((e) => e.name)
+      .sort((a, b) => b.localeCompare(a));
+  }
+
   /** Lists the live-status refs, one per run in flight. */
   async liveRefs(): Promise<readonly { readonly ref: string; readonly sha: string }[]> {
     const res = await this.getOrNull<{ ref: string; object: { sha: string } }[]>(

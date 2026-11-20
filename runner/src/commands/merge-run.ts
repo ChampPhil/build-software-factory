@@ -1,5 +1,6 @@
 import type { GitHub, PullResponse } from "../lib/github.js";
-import { FactoryStore, LEDGER, json } from "../lib/store.js";
+import { FactoryStore, LEDGER, runPath, workItemPath, json } from "../lib/store.js";
+import { fetchInteractions } from "./interactions.js";
 import { isEligible, queueOrder, nextAction, humanPrMayMerge, type QueueCandidate, type QueueAction } from "./merge-queue.js";
 import { hasTrustedHumanApproval } from "./policy.js";
 import { toReview } from "./policy-run.js";
@@ -137,21 +138,67 @@ export async function runMergeCommand(opts: MergeOptions): Promise<MergeReport> 
   if (opts.apply === true) {
     applied = await apply(opts, action, candidates);
     if (action.kind === "merge" && applied !== null) {
-      await store.put(
-        [{
+      const changes = [
+        {
           path: LEDGER,
           content: json({
             ...ledger,
             updated_at: opts.now,
             merge_queue: ledger.merge_queue.filter((q) => q.pr !== action.pr),
           }),
-        }],
-        `merge-queue: #${action.pr} merged`,
-      );
+        },
+        // Counted here because this is the moment the PR is finished: a count
+        // taken earlier would miss the last round of review, and one taken
+        // later costs API calls on every rollup forever.
+        ...(await interactionChanges(store, opts, action.pr, candidates)),
+      ];
+      await store.put(changes, `merge-queue: #${action.pr} merged`);
     }
   }
 
   return { considered: candidates.length, action, applied, blocked, humanPrs };
+}
+
+/**
+ * Write the human-interaction count onto the run that produced this PR.
+ *
+ * The rollup then averages it with no further API calls. If anything here
+ * fails the field simply stays absent, which the rollup reads as "not
+ * measured" rather than as zero — a merge is never worth failing for a metric.
+ */
+async function interactionChanges(
+  store: FactoryStore,
+  opts: MergeOptions,
+  pr: number,
+  candidates: readonly QueueCandidate[],
+): Promise<readonly { readonly path: string; readonly content: string }[]> {
+  const head = candidates.find((c) => c.pr === pr);
+  if (head === undefined || head.work_item === "") return [];
+
+  const item = await store.get<{ readonly runs?: readonly string[] }>(
+    workItemPath(head.work_item),
+    "work-item",
+  ).catch(() => null);
+  const runId = item?.runs?.[item.runs.length - 1];
+  if (runId === undefined) return [];
+
+  // Typed rather than cast: `actor` is a string in the run schema, and
+  // String() on an unknown would quietly write "[object Object]" as the PR
+  // author, which would then count the agent's own comments as steering.
+  const run = await store
+    .get<Record<string, unknown> & { readonly actor?: string }>(runPath(runId), "run")
+    .catch(() => null);
+  if (run === null) return [];
+
+  const interactions = await fetchInteractions({
+    gh: opts.gh,
+    pr,
+    prAuthor: run.actor ?? "",
+    appLogins: opts.appLogins ?? [],
+  });
+  if (interactions === null) return [];
+
+  return [{ path: runPath(runId), content: json({ ...run, human_interactions: interactions }) }];
 }
 
 async function apply(

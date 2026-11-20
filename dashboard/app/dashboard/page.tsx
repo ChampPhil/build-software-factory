@@ -5,7 +5,7 @@ import { readSession } from "@/lib/session";
 import { useClient, useIndex } from "@/lib/data";
 import {
   PageHead, Section, Figure, Gauge, Bars, Note, Empty,
-  asPct, asPct1, asUsd, asDuration, asCount,
+  asPct, asPct1, asUsd, asDuration, asCount, asDecimal,
 } from "@/components/primitives";
 import { headline, projectToMonthEnd, shareUse, series, formatUsd } from "@/lib/metrics";
 
@@ -73,6 +73,8 @@ export default function Dashboard() {
           sub={h.budgetUsd.known ? `of ${asUsd(h.budgetUsd.value)} budget` : "no budget set"} />
         <Figure label="Revert rate" value={h.revertRate} format={asPct1}
           sub="reverted within 14 days" />
+        <Figure label="Human interactions / PR" value={h.humanInteractionsPerPr} format={asDecimal}
+          sub="comments, change requests and human commits" />
         <Figure label="Runs" value={{ known: true, value: m.runs }} format={asCount}
           sub={`${m.merged ?? 0} merged · ${m.escalated ?? 0} escalated`} />
       </dl>

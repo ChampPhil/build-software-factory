@@ -24,6 +24,10 @@
         "type": "string",
         "pattern": "^bt_[0-9A-HJKMNP-TV-Z]{26}$"
       },
+      "/$defs/benchmarkResultId": {
+        "type": "string",
+        "pattern": "^bench_[0-9A-HJKMNP-TV-Z]{26}$"
+      },
       "/$defs/candidateId": {
         "type": "string",
         "pattern": "^cand_[0-9A-HJKMNP-TV-Z]{26}$"
@@ -156,6 +160,133 @@
       "/properties/rules/additionalProperties/properties/by_file/additionalProperties": {
         "type": "integer",
         "minimum": 0
+      }
+    },
+    "benchmark-result.json": {
+      "/": {
+        "type": "object",
+        "properties": [
+          "admitted",
+          "at",
+          "id",
+          "pipeline",
+          "pr",
+          "reasons",
+          "regressed",
+          "repeats",
+          "schema",
+          "sides",
+          "task_count"
+        ],
+        "required": [
+          "admitted",
+          "at",
+          "id",
+          "reasons",
+          "repeats",
+          "schema",
+          "sides",
+          "task_count"
+        ],
+        "additionalProperties": false
+      },
+      "/properties/schema": {
+        "const": "\"benchmark-result/1\""
+      },
+      "/properties/id": {
+        "ref": "_common.json#/$defs/benchmarkResultId"
+      },
+      "/properties/at": {
+        "ref": "_common.json#/$defs/timestamp"
+      },
+      "/properties/repeats": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "/properties/task_count": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "/properties/pipeline": {
+        "ref": "_common.json#/$defs/pipeline"
+      },
+      "/properties/pr": {
+        "type": "integer"
+      },
+      "/properties/sides": {
+        "type": "array",
+        "minItems": 1
+      },
+      "/properties/sides/items": {
+        "type": "object",
+        "properties": [
+          "cost_per_task",
+          "cost_usd",
+          "current",
+          "label",
+          "models",
+          "must_pass_rate",
+          "score_mean",
+          "score_spread"
+        ],
+        "required": [
+          "cost_per_task",
+          "cost_usd",
+          "label",
+          "must_pass_rate",
+          "score_mean",
+          "score_spread"
+        ],
+        "additionalProperties": false
+      },
+      "/properties/sides/items/properties/label": {
+        "type": "string",
+        "minLength": 1
+      },
+      "/properties/sides/items/properties/models": {
+        "type": "object"
+      },
+      "/properties/sides/items/properties/models/additionalProperties": {
+        "type": "string"
+      },
+      "/properties/sides/items/properties/score_mean": {
+        "type": "number",
+        "minimum": 0
+      },
+      "/properties/sides/items/properties/score_spread": {
+        "type": "number",
+        "minimum": 0
+      },
+      "/properties/sides/items/properties/cost_usd": {
+        "type": "number",
+        "minimum": 0
+      },
+      "/properties/sides/items/properties/cost_per_task": {
+        "type": "number",
+        "minimum": 0
+      },
+      "/properties/sides/items/properties/must_pass_rate": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1
+      },
+      "/properties/sides/items/properties/current": {
+        "type": "boolean"
+      },
+      "/properties/admitted": {
+        "type": "boolean"
+      },
+      "/properties/reasons": {
+        "type": "array"
+      },
+      "/properties/reasons/items": {
+        "type": "string"
+      },
+      "/properties/regressed": {
+        "type": "array"
+      },
+      "/properties/regressed/items": {
+        "type": "string"
       }
     },
     "benchmark-task.json": {
@@ -970,6 +1101,7 @@
           "cycle_time_p50_sec",
           "cycle_time_p90_sec",
           "escalated",
+          "human_interactions_per_pr",
           "merged",
           "revert_rate",
           "runs",
@@ -1059,6 +1191,9 @@
       },
       "/properties/metrics/properties/by_pipeline/additionalProperties/properties/paused": {
         "type": "boolean"
+      },
+      "/properties/metrics/properties/human_interactions_per_pr": {
+        "type": "null|number"
       },
       "/properties/daily": {
         "type": "array"
@@ -2230,6 +2365,7 @@
           "ended_at",
           "escalated",
           "gates",
+          "human_interactions",
           "id",
           "outcome",
           "pipeline",
@@ -2552,6 +2688,38 @@
       },
       "/properties/escalated": {
         "type": "boolean"
+      },
+      "/properties/human_interactions": {
+        "type": "object",
+        "properties": [
+          "change_requests",
+          "comments",
+          "human_commits",
+          "total"
+        ],
+        "required": [
+          "change_requests",
+          "comments",
+          "human_commits",
+          "total"
+        ],
+        "additionalProperties": false
+      },
+      "/properties/human_interactions/properties/comments": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "/properties/human_interactions/properties/change_requests": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "/properties/human_interactions/properties/human_commits": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "/properties/human_interactions/properties/total": {
+        "type": "integer",
+        "minimum": 0
       }
     },
     "step-report.json": {

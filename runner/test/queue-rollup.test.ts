@@ -251,3 +251,90 @@ describe("criterion (v0.2): when gardening's budget share is used, gardening pau
     expect(paused).toContain("hardening");
   });
 });
+
+describe("human interactions per PR", () => {
+  const run = (over: Partial<RunSummary>): RunSummary => ({
+    id: "run_01JDF8YQKX7M3N2PQRS4TVWX01",
+    pipeline: "product_work",
+    actor_kind: "agent",
+    started_at: "2026-11-19T09:00:00Z",
+    ended_at: "2026-11-19T10:00:00Z",
+    outcome: "merged",
+    cost_usd: 1,
+    escalated: false,
+    pr: 1,
+    ...over,
+  });
+
+  const input = (runs: readonly RunSummary[]) => ({
+    now: "2026-11-20T10:00:00Z",
+    runs,
+    workItems: [],
+    mergeQueue: [],
+    runningRuns: 0,
+    maxRuns: 5,
+    pausedPipelines: [],
+    windowDays: 30,
+  });
+
+  it("averages over the merged factory PRs that recorded a count", () => {
+    const r = runRollup(
+      input([
+        run({ id: "run_01JDF8YQKX7M3N2PQRS4TVWX01", human_interactions: { total: 2 } }),
+        run({ id: "run_01JDF8YQKX7M3N2PQRS4TVWX02", human_interactions: { total: 5 } }),
+      ]),
+    );
+    expect(r.metrics.human_interactions_per_pr).toBe(3.5);
+  });
+
+  it("is null when nothing recorded a count, never zero", () => {
+    // Zero would read as a factory nobody had to steer, which is the opposite
+    // of what an unmeasured window means.
+    const r = runRollup(input([run({})]));
+    expect(r.metrics.human_interactions_per_pr).toBeNull();
+  });
+
+  it("ignores a run that recorded nothing rather than counting it as zero", () => {
+    const r = runRollup(
+      input([
+        run({ id: "run_01JDF8YQKX7M3N2PQRS4TVWX01", human_interactions: { total: 4 } }),
+        run({ id: "run_01JDF8YQKX7M3N2PQRS4TVWX02" }),
+      ]),
+    );
+    expect(r.metrics.human_interactions_per_pr).toBe(4);
+  });
+
+  it("counts only merged factory PRs, not a human's own PR", () => {
+    const r = runRollup(
+      input([
+        run({ id: "run_01JDF8YQKX7M3N2PQRS4TVWX01", actor_kind: "human", human_interactions: { total: 9 } }),
+        run({ id: "run_01JDF8YQKX7M3N2PQRS4TVWX02", human_interactions: { total: 1 } }),
+      ]),
+    );
+    expect(r.metrics.human_interactions_per_pr).toBe(1);
+  });
+
+  it("ignores a run that did not merge", () => {
+    const r = runRollup(
+      input([
+        run({ id: "run_01JDF8YQKX7M3N2PQRS4TVWX01", outcome: "escalated", human_interactions: { total: 9 } }),
+        run({ id: "run_01JDF8YQKX7M3N2PQRS4TVWX02", human_interactions: { total: 2 } }),
+      ]),
+    );
+    expect(r.metrics.human_interactions_per_pr).toBe(2);
+  });
+
+  it("ignores a merge outside the window", () => {
+    const r = runRollup(
+      input([
+        run({
+          id: "run_01JDF8YQKX7M3N2PQRS4TVWX01",
+          ended_at: "2026-01-01T10:00:00Z",
+          human_interactions: { total: 9 },
+        }),
+        run({ id: "run_01JDF8YQKX7M3N2PQRS4TVWX02", human_interactions: { total: 3 } }),
+      ]),
+    );
+    expect(r.metrics.human_interactions_per_pr).toBe(3);
+  });
+});

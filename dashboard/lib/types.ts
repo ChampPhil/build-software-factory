@@ -20,6 +20,8 @@ export interface IndexFile {
     readonly revert_rate?: number;
     readonly cycle_time_p50_sec?: number;
     readonly cycle_time_p90_sec?: number;
+    /** Null means no merged PR in the window recorded a count — not zero. */
+    readonly human_interactions_per_pr?: number | null;
     readonly spend_usd?: number;
     readonly budget_usd?: number;
     readonly actions_minutes?: number;
@@ -180,4 +182,51 @@ export interface CandidatesFile {
     readonly status: "pending" | "accepted" | "rejected" | "installed";
     readonly critical_logic?: boolean;
   }[];
+}
+
+/** A scheduled review, as the runner writes it. */
+export interface ReviewFile {
+  readonly schema: "review/1";
+  readonly id: string;
+  readonly window: { readonly from: string; readonly to: string; readonly runs: number };
+  readonly scores: readonly {
+    readonly run: string;
+    readonly criterion: string;
+    readonly score: number;
+    readonly tags?: readonly string[];
+    readonly note?: string;
+  }[];
+  readonly problems: readonly {
+    readonly title: string;
+    readonly runs: readonly string[];
+    readonly route: "hardening" | "definition";
+    readonly work_item?: string;
+    readonly change?: string;
+    readonly pr?: number;
+    readonly benchmark?: string;
+  }[];
+}
+
+/** One benchmark comparison: the points the cost-vs-quality chart plots. */
+export interface BenchmarkResultFile {
+  readonly schema: "benchmark-result/1";
+  readonly id: string;
+  readonly at: string;
+  readonly repeats: number;
+  readonly task_count: number;
+  readonly pipeline?: string;
+  readonly pr?: number;
+  readonly sides: readonly {
+    readonly label: string;
+    readonly models?: Readonly<Record<string, string>>;
+    readonly score_mean: number;
+    readonly score_spread: number;
+    readonly cost_usd: number;
+    readonly cost_per_task: number;
+    readonly must_pass_rate: number;
+    readonly current?: boolean;
+  }[];
+  readonly admitted: boolean;
+  readonly reasons: readonly string[];
+  readonly regressed?: readonly string[];
 }

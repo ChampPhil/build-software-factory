@@ -24,6 +24,8 @@ export interface RunSummary {
   readonly needed_no_human_changes?: boolean;
   /** Set when a factory PR was reverted within 14 days. */
   readonly reverted?: boolean;
+  /** Counted when the PR merged; absent means not measured. */
+  readonly human_interactions?: { readonly total: number };
   readonly work_item?: string;
   readonly actions_minutes?: number;
 }
@@ -61,6 +63,7 @@ export interface Metrics {
   readonly spend_usd: number;
   readonly cycle_time_p50_sec: number;
   readonly cycle_time_p90_sec: number;
+  readonly human_interactions_per_pr: number | null;
   readonly by_pipeline: Readonly<Record<string, { runs: number; merged: number; spend_usd: number; revert_rate: number }>>;
 }
 
@@ -115,6 +118,15 @@ export function runRollup(input: RollupInput): RollupResult {
     b.revert_rate = pMerged.length === 0 ? 0 : round3(pReverted.length / pMerged.length);
   }
 
+  // Human interactions per PR, over the merged factory PRs that recorded a
+  // count. Null when none did: an unmeasured window reported as zero would
+  // read as a factory nobody had to steer, which is the opposite of the truth.
+  const measured = agentMerged
+    .map((r) => r.human_interactions?.total)
+    .filter((n): n is number => typeof n === "number");
+  const human_interactions_per_pr =
+    measured.length === 0 ? null : round2(measured.reduce((a, b) => a + b, 0) / measured.length);
+
   // Cycle time = work item created -> merged.
   const cycleTimes: number[] = [];
   for (const item of input.workItems) {
@@ -149,6 +161,7 @@ export function runRollup(input: RollupInput): RollupResult {
       merged: merged.length,
       escalated: inWindow.filter((r) => r.escalated).length,
       automation_rate,
+      human_interactions_per_pr,
       revert_rate,
       spend_usd: round2(inWindow.reduce((a, r) => a + r.cost_usd, 0)),
       cycle_time_p50_sec: percentile(cycleTimes, 50),
