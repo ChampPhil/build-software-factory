@@ -40,13 +40,16 @@ const COST = {
 const FREE_PRIVATE_MINUTES = 2000;
 
 function parseArgs(argv) {
-  const args = { days: 90, gardeningPrs: 5, json: false };
+  const args = { days: 90, gardeningPrs: 5, json: false, visibility: null, plan: null };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--repo") args.repo = argv[++i];
     else if (a === "--days") args.days = Number(argv[++i]);
     else if (a === "--gardening-prs") args.gardeningPrs = Number(argv[++i]);
     else if (a === "--json") args.json = true;
+    else if (a === "--private") args.visibility = "private";
+    else if (a === "--public") args.visibility = "public";
+    else if (a === "--plan") args.plan = argv[++i];
     else if (a === "--help" || a === "-h") args.help = true;
     else die(`unknown argument ${a}`, 2);
   }
@@ -96,8 +99,18 @@ function countRecentActivity(repo, days) {
     const list = ghJson(`repos/${repo}/issues?state=all&since=${since}T00:00:00Z&per_page=100`, {
       allowFail: true,
     });
-    const n = Array.isArray(list) ? list.length : 0;
-    return { issues: n, prs: 0, source: "issue list (search unavailable)", capped: n >= 100 };
+    if (!Array.isArray(list)) {
+      // Nothing could be read. Saying "0 issues" here would read as a quiet
+      // repo rather than as no measurement, and the estimate below would look
+      // like a finished answer.
+      return { issues: 0, prs: 0, source: "unavailable (could not read this repo)", capped: false };
+    }
+    return {
+      issues: list.length,
+      prs: 0,
+      source: "issue list (search unavailable)",
+      capped: list.length >= 100,
+    };
   }
 
   return {
@@ -173,13 +186,19 @@ function estimate({ activity, days, gardeningPrs, isPrivate, planName }) {
       ...(activity.capped
         ? ["The activity count hit the listing cap, so the real rate is higher than this."]
         : []),
-      ...(activity.issues === 0
+      ...(activity.source.startsWith("unavailable")
         ? [
-            "No issues in the window, so product work is estimated at zero. The budget " +
-              "below covers gardening and reviews only; it will need raising once people " +
-              "start filing work.",
+            "Activity could not be read for this repo, so product work is estimated at " +
+              "zero and this is a floor, not an estimate. The figures below cover " +
+              "gardening and reviews only.",
           ]
-        : []),
+        : activity.issues === 0
+          ? [
+              "No issues in the window, so product work is estimated at zero. The budget " +
+                "below covers gardening and reviews only; it will need raising once people " +
+                "start filing work.",
+            ]
+          : []),
     ],
   };
 }
@@ -192,6 +211,9 @@ Estimate the factory's monthly cost from this repo's last 90 days.
   --repo owner/name     Default: the origin remote
   --days N              Window to measure (default 90)
   --gardening-prs N     Cleanup PRs per night (default 5)
+  --private | --public  State the repo's visibility instead of reading it
+  --plan NAME         State the owner's plan (free, pro, team, enterprise).
+                      With both of these, no API call is made at all
   --json                Print JSON
 `);
   process.exit(0);
@@ -202,16 +224,34 @@ const m = originUrl === null ? null : /github\.com[/:]([^/]+)\/(.+?)(?:\.git)?$/
 const repo = args.repo ?? (m === null ? null : `${m[1]}/${m[2]}`);
 if (repo === null) die("could not work out the repo; pass --repo owner/name", 2);
 
-const info = ghJson(`repos/${repo}`);
-if (info === null) die(`cannot read ${repo}`);
+// Visibility and plan are the only two things the estimate needs from the
+// API, and together they decide whether Actions minutes are metered. Given
+// both on the command line, no API call is made at all — which is how you
+// size a repo you have not created yet, or one you cannot read.
+let isPrivate;
+let planName;
+if (args.visibility !== null && args.plan !== null) {
+  isPrivate = args.visibility === "private";
+  planName = args.plan;
+} else {
+  const info = ghJson(`repos/${repo}`);
+  if (info === null) {
+    die(
+      `cannot read ${repo}. Pass --private or --public together with --plan NAME ` +
+        `(free, pro, team, enterprise) to estimate without reading the repo.`,
+    );
+  }
+  isPrivate = args.visibility === null ? info.private === true : args.visibility === "private";
+  planName = args.plan ?? info.owner?.plan?.name ?? null;
+}
 
 const activity = countRecentActivity(repo, args.days);
 const result = estimate({
   activity,
   days: args.days,
   gardeningPrs: args.gardeningPrs,
-  isPrivate: info.private === true,
-  planName: info.owner?.plan?.name ?? null,
+  isPrivate,
+  planName,
 });
 
 if (args.json) {

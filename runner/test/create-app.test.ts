@@ -35,7 +35,11 @@ let proc: ChildProcess | undefined;
 let stdout = "";
 
 async function startServer(): Promise<void> {
-  proc = spawn("node", ["create-app.mjs", "--repo", "bsf-fixtures/ts-webapp", "--port", String(PORT)], {
+  // --preview runs the whole server — the page, the state check, the
+  // callback refusals — and stops before exchanging a code, so it needs no
+  // `gh` login. Without it these tests only pass on a machine already signed
+  // in to GitHub, which is how they passed locally and failed in CI.
+  proc = spawn("node", ["create-app.mjs", "--repo", "bsf-fixtures/ts-webapp", "--port", String(PORT), "--preview"], {
     cwd: SCRIPTS,
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -189,6 +193,19 @@ describe("create-app.mjs local server", () => {
   it("tells the user what permissions it will ask for before opening the browser", () => {
     expect(stdout).toContain("contents: write");
     expect(stdout).toContain("workflows: not requested");
+  });
+
+  // Last in this block on purpose: a handled callback closes the server.
+  it("in preview, does not exchange a code even when the state is right", async () => {
+    // The code is single-use, so exchanging it would spend it and create a
+    // real App. This is the one thing a preview must not do.
+    const start = await get("/start");
+    const state = /name="state" value="([0-9a-f]{32})"/.exec(start.body)?.[1];
+    expect(state).toBeDefined();
+    const res = await get(`/callback?state=${state}&code=not-a-real-code`);
+    expect(res.status).toBe(200);
+    expect(res.body).toContain("not exchanged");
+    expect(res.body).toContain("Nothing was created and nothing was stored");
   });
 });
 

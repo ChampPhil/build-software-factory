@@ -34,7 +34,7 @@ const MANIFESTS = join(HERE, "..", "manifests");
 /* ----------------------------------------------------------------- arguments */
 
 function parseArgs(argv) {
-  const args = { port: 8787, recompiler: false, dryRun: false };
+  const args = { port: 8787, recompiler: false, dryRun: false, preview: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--repo") args.repo = argv[++i];
@@ -42,6 +42,7 @@ function parseArgs(argv) {
     else if (a === "--port") args.port = Number(argv[++i]);
     else if (a === "--recompiler") args.recompiler = true;
     else if (a === "--dry-run") args.dryRun = true;
+    else if (a === "--preview") args.preview = true;
     else if (a === "--help" || a === "-h") args.help = true;
     else throw new Error(`unknown argument: ${a}`);
   }
@@ -57,6 +58,10 @@ Create the factory's GitHub App and store its credentials on the repo.
   --recompiler        Create the recompiler App instead of the factory App
   --port N            Local port for GitHub's redirect (default 8787)
   --dry-run           Print what would happen; create nothing
+  --preview           Run the whole flow — the local server, the page GitHub
+                      posts to, the state check — but stop before exchanging
+                      a code. Creates nothing, stores nothing, and needs no
+                      gh login, so you can read what it will do first
 `;
 
 /* --------------------------------------------------------------------- utils */
@@ -233,10 +238,10 @@ async function main() {
   const state = randomBytes(16).toString("hex");
   const kind = args.recompiler ? "recompiler" : "factory";
 
-  // A dry run creates nothing and stores nothing, so it needs no credentials.
-  // Checking them first would stop someone reading what this will do before
-  // they sign in.
-  if (!args.dryRun) {
+  // A dry run and a preview both create nothing and store nothing, so neither
+  // needs credentials. Checking them first would stop someone reading what
+  // this will do before they sign in.
+  if (!args.dryRun && !args.preview) {
     // `gh` is how the credentials reach the repo, so check it before sending
     // the user to GitHub — failing afterwards would waste a created App.
     // `gh api user` rather than `gh auth status`, because what matters is
@@ -263,6 +268,14 @@ async function main() {
   }
 
   const result = await runFlow({ manifest, state, args, kind });
+  if (result === null) {
+    // A preview. The server ran and the callback was checked, but no code was
+    // exchanged, so there is nothing to store.
+    log("");
+    log("Preview over. Nothing was created and nothing was stored.");
+    log(`Run the same command without --preview to create the ${kind} App.`);
+    return;
+  }
   storeCredentials({ repo: args.repo, kind, app: result, dryRun: false });
 
   log("");
@@ -312,6 +325,17 @@ function runFlow({ manifest, state, args, kind }) {
       if (!code) {
         res.writeHead(400, { "content-type": "text/html; charset=utf-8" });
         res.end(errorPage("GitHub redirected back without a code."));
+        return;
+      }
+
+      if (args.preview) {
+        // The one thing a preview must not do. The code is single-use, so
+        // exchanging it here would spend it and create a real App.
+        res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+        res.end(errorPage("Preview: the redirect arrived with a valid state and a code, which was not exchanged. Nothing was created and nothing was stored."));
+        settled = true;
+        server.close();
+        resolve(null);
         return;
       }
 

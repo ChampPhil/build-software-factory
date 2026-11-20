@@ -1,5 +1,6 @@
-import { describe, it, expect } from "vitest";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { describe, it, expect, beforeAll } from "vitest";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -22,8 +23,19 @@ const ROOT = repoRoot();
 const JS_LEGACY = join(ROOT, "fixtures/js-legacy");
 const TS_WEBAPP = join(ROOT, "fixtures/ts-webapp");
 
+/**
+ * These two blocks run the real gates against the real tools in the fixture
+ * repos, so they need those fixtures installed. `npm ci` at the root does not
+ * install them (they are not workspaces), and CI installs them in a job of
+ * its own — see .github/workflows/ci.yml.
+ *
+ * The coverage guard used to be the presence of `coverage/coverage-summary.json`,
+ * which is gitignored. That made the block skip everywhere but a machine that
+ * had already produced a report by hand: on CI it never ran once. The guard is
+ * now whether the fixture is installed, and the report is produced here.
+ */
 const HAVE_JS_LEGACY = existsSync(join(JS_LEGACY, "node_modules/eslint/bin/eslint.js"));
-const HAVE_TS_COVERAGE = existsSync(join(TS_WEBAPP, "coverage/coverage-summary.json"));
+const HAVE_TS_COVERAGE = existsSync(join(TS_WEBAPP, "node_modules/vitest/package.json"));
 
 const policy: Policy = {
   schema: "policy/1",
@@ -157,10 +169,39 @@ describe.skipIf(!HAVE_JS_LEGACY)("the static gate on js-legacy", () => {
 });
 
 describe.skipIf(!HAVE_TS_COVERAGE)("the coverage gate on ts-webapp", () => {
+  // The gate reads a report; it does not produce one. Producing it here means
+  // the gate is measured against coverage of the fixture as it stands now,
+  // not against whatever report happened to be lying in the working tree.
+  // A floor the fixture actually meets, read from the report rather than
+  // written down here. A hardcoded floor goes stale the moment the fixture
+  // gains a file, and then every test in this block fails on the total
+  // instead of testing what it is named for.
+  let fixtureCoverage: Coverage = coverage;
+
+  beforeAll(() => {
+    execFileSync("npx", ["vitest", "run", "--coverage"], {
+      cwd: TS_WEBAPP,
+      stdio: "pipe",
+      env: { ...process.env, CI: "true" },
+    });
+    const summary = JSON.parse(
+      readFileSync(join(TS_WEBAPP, "coverage/coverage-summary.json"), "utf8"),
+    ) as { total: { lines: { pct: number } } };
+    const total = summary.total.lines.pct;
+    fixtureCoverage = { ...coverage, high_pct: total, floor_pct: Math.max(0, total - 1) };
+  }, 180_000);
+
+  it("reads the total the report actually carries", () => {
+    // Guards the setup above: a floor derived from a report that failed to
+    // regenerate would make the rest of this block meaningless.
+    expect(fixtureCoverage.floor_pct).toBeLessThanOrEqual(fixtureCoverage.high_pct);
+    expect(fixtureCoverage.high_pct).toBeGreaterThan(0);
+  });
+
   it("measures diff coverage of the changed files, which is the main check", async () => {
     const res = await runCoverageGate({
       root: TS_WEBAPP,
-      current: coverage,
+      current: fixtureCoverage,
       changedFiles: ["lib/invoices.ts"],
     });
     expect(res.diff_pct).toBe(100);
@@ -170,7 +211,7 @@ describe.skipIf(!HAVE_TS_COVERAGE)("the coverage gate on ts-webapp", () => {
   it("fails when diff coverage is below the minimum", async () => {
     const res = await runCoverageGate({
       root: TS_WEBAPP,
-      current: { ...coverage, diff_min_pct: 80 },
+      current: { ...fixtureCoverage, diff_min_pct: 80 },
       changedFiles: ["app/invoices/page.tsx"],
     });
     // The page component is uncovered, so a change to it fails diff coverage.
@@ -181,16 +222,26 @@ describe.skipIf(!HAVE_TS_COVERAGE)("the coverage gate on ts-webapp", () => {
 
   it("treats an unmeasurable change as nothing to measure, not as zero", async () => {
     const res = await runCoverageGate({
-      root: TS_WEBAPP, current: coverage, changedFiles: ["README.md", "package.json"],
+      root: TS_WEBAPP, current: fixtureCoverage, changedFiles: ["README.md", "package.json"],
     });
     expect(res.diff_pct).toBeNull();
     expect(res.conclusion).toBe("success");
     expect(res.summary).toContain("different from measuring zero");
   }, 60_000);
 
+  it("fails when the total is below the floor, naming both numbers", async () => {
+    const res = await runCoverageGate({
+      root: TS_WEBAPP,
+      current: { ...fixtureCoverage, floor_pct: fixtureCoverage.high_pct + 20 },
+      changedFiles: ["lib/invoices.ts"],
+    });
+    expect(res.conclusion).toBe("failure");
+    expect(res.failures.join(" ")).toContain("below the floor");
+  }, 60_000);
+
   it("shows the measured and required numbers side by side", async () => {
     const res = await runCoverageGate({
-      root: TS_WEBAPP, current: coverage, changedFiles: ["lib/invoices.ts"],
+      root: TS_WEBAPP, current: fixtureCoverage, changedFiles: ["lib/invoices.ts"],
     });
     expect(res.summary).toContain("| diff coverage |");
     expect(res.summary).toContain("| total coverage |");

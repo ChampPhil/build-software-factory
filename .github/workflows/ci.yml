@@ -50,6 +50,63 @@ jobs:
       # already-written data validating fails here, and doc 09 asks for a major
       # bump with a migration in `bsf migrate` instead.
       - name: schema surface
+        run: npm run schema-check
+
+  # The gates, run for real against the fixture repos and their actual tools.
+  # Separate because it installs the fixtures, which the main job does not:
+  # they are not workspaces, so `npm ci` at the root skips them. Without this
+  # job these blocks skip in CI and only ever ran on a developer's machine.
+  gates-on-fixtures:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      - name: install the fixtures the gates run against
         run: |
-          npm -w @bsf/runner run build
-          npm run schema-check
+          npm ci --prefix fixtures/js-legacy
+          npm ci --prefix fixtures/ts-webapp
+
+      # The rule packs are checked by running each linter and confirming the
+      # rule fires. ruff is the one a runner image does not ship; go, javac and
+      # cargo come with ubuntu-latest, and if an image ever drops one the skip
+      # check below says so rather than passing quietly.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install ruff
+      - name: the toolchains the rule packs need
+        run: |
+          for t in ruff go javac cargo; do
+            printf '%s: ' "$t"
+            command -v "$t" || echo "MISSING"
+          done
+
+      # Run with the JSON reporter so the next step can see whether anything
+      # skipped. A skipped gate test looks the same as a passing one in the
+      # summary line, which is how these went unrun in CI for weeks.
+      - name: the static gate and the coverage gate, against real tools
+        working-directory: runner
+        run: |
+          npx vitest run test/gates-run.test.ts test/rulepack.test.ts \
+            --reporter=default --reporter=json --outputFile=/tmp/gates.json
+
+      - name: every gate test must have actually run
+        run: |
+          node -e '
+            const j = require("/tmp/gates.json");
+            console.log(`${j.numPassedTests} passed, ${j.numPendingTests} skipped`);
+            if (j.numPendingTests > 0) {
+              const names = j.testResults
+                .flatMap((f) => f.assertionResults)
+                .filter((t) => t.status === "pending")
+                .map((t) => t.fullName);
+              console.error("skipped:\n  " + names.join("\n  "));
+              process.exit(1);
+            }
+          '

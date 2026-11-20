@@ -1,8 +1,9 @@
 import { describe, it, expect } from "vitest";
 import { execFileSync } from "node:child_process";
-import { readFileSync, readdirSync, existsSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { tmpdir } from "node:os";
 
 /**
  * The setup skill's structure and its deterministic scripts.
@@ -28,10 +29,29 @@ const REFS = join(SKILL, "references");
 
 const PHASES = [1, 2, 3, 4, 5, 6, 7] as const;
 
-function node(script: string, args: string[], opts: { cwd?: string } = {}): { out: string; code: number } {
+/**
+ * `noGh` puts a `gh` on PATH that always fails, so a test can prove a script
+ * works with no GitHub credentials — the condition CI actually runs under.
+ */
+function noGhPath(): string {
+  const dir = mkdtempSync(join(tmpdir(), "bsf-no-gh-"));
+  const shim = join(dir, "gh");
+  writeFileSync(shim, '#!/bin/sh\necho "gh: not logged in" >&2\nexit 1\n', { mode: 0o755 });
+  return dir;
+}
+
+function node(
+  script: string,
+  args: string[],
+  opts: { cwd?: string; noGh?: boolean } = {},
+): { out: string; code: number } {
+  const env =
+    opts.noGh === true
+      ? { ...process.env, PATH: `${noGhPath()}:${process.env["PATH"] ?? ""}` }
+      : process.env;
   try {
     const out = execFileSync("node", [join(SCRIPTS, script), ...args], {
-      encoding: "utf8", stdio: "pipe", cwd: opts.cwd ?? ROOT,
+      encoding: "utf8", stdio: "pipe", cwd: opts.cwd ?? ROOT, env,
     });
     return { out, code: 0 };
   } catch (e) {
@@ -167,9 +187,33 @@ describe("preflight.mjs", () => {
   });
 });
 
+/**
+ * Visibility and plan stated on the command line, so the estimate needs no
+ * API call and no `gh` login. Without this these tests passed only on a
+ * machine signed in to GitHub — they failed the first time CI ran them.
+ */
+const FIXED_REPO = ["--repo", "ChampPhil/trinsports", "--private", "--plan", "free"];
+
 describe("estimate-spend.mjs", () => {
+  it("needs no credentials when told the visibility and plan", () => {
+    const { out } = node("estimate-spend.mjs", [...FIXED_REPO, "--json"], { noGh: true });
+    const r = JSON.parse(out) as { actions_minutes_limit: number | null; activity: { source: string } };
+    // A private Free repo is the case where minutes bind before dollars.
+    expect(r.actions_minutes_limit).toBe(2000);
+    expect(r.activity.source).toContain("unavailable");
+  });
+
+  it("calls an unreadable repo unavailable rather than reporting zero activity", () => {
+    const { out } = node("estimate-spend.mjs", [...FIXED_REPO, "--json"], { noGh: true });
+    const r = JSON.parse(out) as { notes: string[] };
+    // "0 issues" would read as a quiet repo rather than as no measurement.
+    expect(r.notes.join(" ")).toContain("could not be read");
+    expect(r.notes.join(" ")).toContain("a floor, not an estimate");
+  });
+
+
   it("estimates Actions minutes as well as dollars, since minutes usually bind first", () => {
-    const { out } = node("estimate-spend.mjs", ["--repo", "ChampPhil/trinsports", "--json"]);
+    const { out } = node("estimate-spend.mjs", [...FIXED_REPO, "--json"]);
     const r = JSON.parse(out) as {
       model_usd_per_month: number;
       actions_minutes_per_month: number;
@@ -180,9 +224,7 @@ describe("estimate-spend.mjs", () => {
   });
 
   it("lowers the nightly gardening cap rather than overrunning the included minutes", () => {
-    const { out } = node("estimate-spend.mjs", [
-      "--repo", "ChampPhil/trinsports", "--gardening-prs", "5", "--json",
-    ]);
+    const { out } = node("estimate-spend.mjs", [...FIXED_REPO, "--gardening-prs", "5", "--json"]);
     const r = JSON.parse(out) as {
       actions_minutes_per_month: number;
       actions_minutes_limit: number | null;
@@ -196,15 +238,23 @@ describe("estimate-spend.mjs", () => {
   });
 
   it("says so when there is no recent activity, rather than implying the budget is complete", () => {
-    const { out } = node("estimate-spend.mjs", ["--repo", "ChampPhil/trinsports", "--json"]);
-    const r = JSON.parse(out) as { activity: { issues: number }; notes: string[] };
-    if (r.activity.issues === 0) {
-      expect(r.notes.join(" ")).toMatch(/will need raising/);
+    const { out } = node("estimate-spend.mjs", [...FIXED_REPO, "--json"]);
+    const r = JSON.parse(out) as { activity: { issues: number; source: string }; notes: string[] };
+    if (r.activity.issues > 0) return;
+    const notes = r.notes.join(" ");
+    // Two honest readings of zero, and the note has to distinguish them: no
+    // issues were filed, or nothing could be measured. Either way the figure
+    // must not read as a finished budget.
+    expect(notes).toMatch(/will need raising|a floor, not an estimate/);
+    if (r.activity.source.startsWith("unavailable")) {
+      expect(notes).toContain("could not be read");
+    } else {
+      expect(notes).toContain("No issues in the window");
     }
   });
 
   it("suggests shares that add up to 100", () => {
-    const { out } = node("estimate-spend.mjs", ["--repo", "ChampPhil/trinsports", "--json"]);
+    const { out } = node("estimate-spend.mjs", [...FIXED_REPO, "--json"]);
     const s = (JSON.parse(out) as { suggested: { shares: Record<string, number> } }).suggested.shares;
     expect(s["product_work"]! + s["gardening"]! + s["review_and_benchmarks"]!).toBe(100);
   });
