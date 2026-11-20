@@ -42,6 +42,14 @@ on:
       FACTORY_SANDBOX_ENV:
         required: false
 
+# Who may start this: decided upstream, not here. This workflow's only
+# trigger is workflow_call, so only this repo's own workflows can start it, and
+# the run that calls it starts only from someone with write access or from the
+# factory's App after intake has checked the request's author is trusted.
+# gh-aw's default role check would test the App itself — whose name differs in
+# every repo and cannot be a compile-time literal — and skip every run.
+roles: all
+
 github-app:
   client-id: ${{ vars.FACTORY_APP_CLIENT_ID }}
   private-key: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
