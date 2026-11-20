@@ -143,6 +143,15 @@ jobs:
   agent-verification:
     needs: [plan, verification]
     if: needs.plan.outputs.agent_verification == 'true'
+    # What the compiled role's own jobs request. A caller must grant at
+    # least this, or GitHub refuses to start the run; derived from the lock
+    # file and checked by a test, so a gh-aw upgrade cannot silently break it.
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+      issues: write
+      pull-requests: write
     uses: ./.github/workflows/factory-role-verifier.lock.yml
     with:
       model: ${{ needs.plan.outputs.model_verifier }}

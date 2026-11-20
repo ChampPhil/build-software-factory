@@ -9,9 +9,11 @@
 // (the context files, the sandbox, the guardrail baselines) is written by the
 // setup agent after this runs, by reading the repo.
 //
-// It never overwrites an existing file without --force: a repo that already
-// has a .factory/ was set up before, and its definition is the user's.
-import { cpSync, existsSync, mkdirSync, readdirSync, statSync, chmodSync } from "node:fs";
+// The runner and the factory-* workflows are the factory's own, so they are
+// replaced whole on every install, upgrades included. Anything else that
+// already exists — the definition, the context, the guardrails — is the
+// user's, and is kept unless --force.
+import { cpSync, existsSync, mkdirSync, readdirSync, statSync, chmodSync, rmSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -54,6 +56,36 @@ function files(dir) {
   return out;
 }
 
+/**
+ * What the factory owns outright, and so replaces whole on an upgrade:
+ * anything here that the new version no longer ships is removed, or an
+ * upgrade would leave the old runner's JavaScript in the user's tree for
+ * their tools to trip on. Everything else — the definition, the context
+ * files, the guardrails — is the user's once written, and is never deleted.
+ */
+const OWNED = [
+  { dir: ".factory/bin", match: () => true },
+  { dir: ".github/workflows", match: (name) => /^factory-.*\.(md|ya?ml)$/.test(name) },
+];
+
+const shipped = new Set();
+for (const [src, dest] of PLAN) {
+  if (!existsSync(src)) continue;
+  for (const file of files(src)) shipped.add(join(dest, relative(src, file)));
+}
+
+const removed = [];
+for (const { dir, match } of OWNED) {
+  const abs = join(into, dir);
+  if (!existsSync(abs)) continue;
+  for (const file of files(abs)) {
+    const rel = relative(into, file);
+    if (!match(relative(abs, file)) || shipped.has(rel)) continue;
+    removed.push(rel);
+    if (!dryRun) rmSync(file);
+  }
+}
+
 const written = [];
 const kept = [];
 for (const [src, dest] of PLAN) {
@@ -63,7 +95,9 @@ for (const [src, dest] of PLAN) {
   }
   for (const file of files(src)) {
     const target = join(into, dest, relative(src, file));
-    if (existsSync(target) && !force) {
+    // Owned files always take the new version; the user's are kept unless --force.
+    const owned = OWNED.some(({ dir, match }) => target.startsWith(join(into, dir) + "/") && match(relative(join(into, dir), target)));
+    if (existsSync(target) && !force && !owned) {
       kept.push(relative(into, target));
       continue;
     }
@@ -81,6 +115,10 @@ if (!dryRun) {
 }
 
 console.log(`${dryRun ? "would write" : "wrote"} ${written.length} file(s) into ${into}`);
+if (removed.length > 0) {
+  console.log(`${dryRun ? "would remove" : "removed"} ${removed.length} file(s) the factory no longer ships:`);
+  for (const r of removed.slice(0, 20)) console.log(`  ${r}`);
+}
 if (kept.length > 0) {
   console.log(`kept ${kept.length} existing file(s); pass --force to replace them:`);
   for (const k of kept.slice(0, 20)) console.log(`  ${k}`);

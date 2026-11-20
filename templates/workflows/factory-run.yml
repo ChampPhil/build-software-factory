@@ -105,6 +105,15 @@ jobs:
   triage:
     needs: plan
     if: needs.plan.outputs.needs_triage == 'true' && needs.plan.outputs.proceed == 'true'
+    # What the compiled role's own jobs request. A caller must grant at
+    # least this, or GitHub refuses to start the run; derived from the lock
+    # file and checked by a test, so a gh-aw upgrade cannot silently break it.
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+      issues: write
+      pull-requests: write
     uses: ./.github/workflows/factory-role-triage.lock.yml
     with:
       model: ${{ needs.plan.outputs.model_triage }}
@@ -119,6 +128,15 @@ jobs:
   hardener:
     needs: plan
     if: needs.plan.outputs.needs_hardener == 'true' && needs.plan.outputs.proceed == 'true'
+    # What the compiled role's own jobs request. A caller must grant at
+    # least this, or GitHub refuses to start the run; derived from the lock
+    # file and checked by a test, so a gh-aw upgrade cannot silently break it.
+    permissions:
+      actions: read
+      checks: read
+      contents: write
+      issues: write
+      pull-requests: write
     uses: ./.github/workflows/factory-role-hardener.lock.yml
     with:
       model: ${{ needs.plan.outputs.model_hardener }}
@@ -132,6 +150,15 @@ jobs:
   gardener:
     needs: plan
     if: needs.plan.outputs.needs_gardener == 'true' && needs.plan.outputs.proceed == 'true'
+    # What the compiled role's own jobs request. A caller must grant at
+    # least this, or GitHub refuses to start the run; derived from the lock
+    # file and checked by a test, so a gh-aw upgrade cannot silently break it.
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+      issues: write
+      pull-requests: read
     uses: ./.github/workflows/factory-role-gardener.lock.yml
     with:
       model: ${{ needs.plan.outputs.model_gardener }}
@@ -148,6 +175,15 @@ jobs:
       always() && needs.plan.outputs.proceed == 'true' && needs.plan.outputs.needs_spec == 'true' &&
       (needs.triage.result == 'success' || needs.triage.result == 'skipped') &&
       (needs.hardener.result == 'success' || needs.hardener.result == 'skipped')
+    # What the compiled role's own jobs request. A caller must grant at
+    # least this, or GitHub refuses to start the run; derived from the lock
+    # file and checked by a test, so a gh-aw upgrade cannot silently break it.
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+      issues: write
+      pull-requests: write
     uses: ./.github/workflows/factory-role-spec.lock.yml
     with:
       model: ${{ needs.plan.outputs.model_spec }}
@@ -164,6 +200,15 @@ jobs:
       always() && needs.plan.outputs.proceed == 'true' &&
       (needs.spec.result == 'success' || needs.spec.result == 'skipped') &&
       (needs.gardener.result == 'success' || needs.gardener.result == 'skipped')
+    # What the compiled role's own jobs request. A caller must grant at
+    # least this, or GitHub refuses to start the run; derived from the lock
+    # file and checked by a test, so a gh-aw upgrade cannot silently break it.
+    permissions:
+      actions: read
+      checks: read
+      contents: write
+      issues: write
+      pull-requests: write
     uses: ./.github/workflows/factory-role-builder.lock.yml
     with:
       model: ${{ needs.plan.outputs.model_builder }}
