@@ -1,5 +1,6 @@
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
+import { scriptHazards, describeHazard } from "../lib/script_hazards.js";
 
 /**
  * Cross-artifact consistency — the twelfth analysis kind (doc 01).
@@ -17,7 +18,9 @@ import { join } from "node:path";
  * - a command the README tells people to run that the manifest does not
  *   define, so the documented first step does not work;
  * - a dependency the manifest declares that the lockfile does not carry, so
- *   an install reproduces something other than what was reviewed.
+ *   an install reproduces something other than what was reviewed;
+ * - a command the runbook records for the factory to run whose chain touches
+ *   persistent state, which the runbook does not say.
  *
  * Each finding names both artifacts, because a mismatch is never a fault in
  * one of them alone and the fix depends on which one is right.
@@ -29,7 +32,8 @@ export interface ConsistencyFinding {
     | "env_unused"
     | "env_no_example"
     | "documented_script_missing"
-    | "dependency_unlocked";
+    | "dependency_unlocked"
+    | "runbook_command_touches_state";
   /** The two files that disagree. */
   readonly between: readonly [string, string];
   readonly detail: string;
@@ -243,7 +247,53 @@ export function checkConsistency(input: ConsistencyInput): readonly ConsistencyF
     }
   }
 
+  /* ------------------------ runbook commands vs what those commands do */
+
+  /*
+   * Phase 2 promises the runbook records which commands touch persistent
+   * state. This checks the promise against the manifest.
+   *
+   * Gated on the runbook existing and naming the script, for two reasons. A
+   * repo with no factory has no runbook and no claim to contradict, so there
+   * is nothing to report. And a hazard in a script the runbook never runs is
+   * the repo's own business — `npm run deploy` deploying is not a finding.
+   */
+  const runbook = ["context/runbook.md", "context/RUNBOOK.md"].find(exists);
+  if (runbook !== undefined && manifest !== null) {
+    const pkg = safeJson(() => read(manifest)) as { scripts?: Record<string, string> } | null;
+    const text = safe(() => read(runbook));
+    if (pkg?.scripts !== undefined && text !== null) {
+      for (const h of scriptHazards(pkg.scripts)) {
+        // Does the runbook actually tell the factory to run this script?
+        const invoked = new RegExp(`\\b(?:npm|pnpm|yarn|bun)\\s+run\\s+${escapeRe(h.script)}\\b`).test(text);
+        if (!invoked) continue;
+        // Already classified? A runbook that names the effect has kept the
+        // promise, and repeating it back would train people to ignore this.
+        const classified = new RegExp(
+          `${escapeRe(h.command.split(/\s+/)[0] ?? h.command)}[\\s\\S]{0,400}?` +
+            `(touches|mutates|persistent state|do not run|destructive|migrat)`,
+          "i",
+        ).test(text);
+        if (classified) continue;
+        findings.push({
+          check: "runbook_command_touches_state",
+          between: [runbook, manifest],
+          detail:
+            `${runbook} tells the factory to run \`npm run ${h.script}\`, and ${manifest} shows that ` +
+            `${describeHazard(h)}. The factory runs this on every verification, unattended, including ` +
+            `on pull requests that generated the change being applied. Either give the factory a ` +
+            `command without the side effect, or point it at a throwaway target and say so here.`,
+        });
+      }
+    }
+  }
+
   return findings;
+}
+
+/** Escape a string for use inside a RegExp. */
+function escapeRe(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function safe<T>(fn: () => T): T | null {

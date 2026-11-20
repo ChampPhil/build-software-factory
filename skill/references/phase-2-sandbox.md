@@ -44,9 +44,36 @@ So:
 - **Classify the repo's commands rather than copying them.** Record which
   touch persistent state, and keep those out of the build path. The runbook
   records `build` and `migrate` as separate commands, with `migrate` marked.
+
+  Do not do this by reading the manifest and judging. Run it:
+
+  ```sh
+  bsf consistency --root . --json
+  ```
+
+  `runbook_command_touches_state` findings are the ones that matter here. The
+  check walks each script's chain, `pre`/`post` hooks included, and knows the
+  difference between `drizzle-kit generate` (codegen, harmless) and
+  `drizzle-kit migrate` (applies SQL). It fires only on scripts whose names
+  promise they are safe to re-run — `build`, `test`, `verify`, `start` and
+  their kin — because `npm run deploy` deploying is that script doing its job.
+
+  When it fires, there are two fixes and the user picks:
+
+  1. **Give the factory the inner command.** `next build` instead of
+     `npm run build`. Right when the side effect is not part of verifying.
+  2. **Point it at a throwaway target and record that in the runbook.** Right
+     when the app genuinely cannot start without a migrated database.
+
+  Writing the reason in the runbook clears the finding, which is the point:
+  the check enforces that the decision was made, not which way it went.
 - **Test for it.** Run the build and test commands with no credentials present
   and watch for one that wanted something real. The user will not know this
-  about their own repo; most people do not.
+  about their own repo; most people do not — and a user who does know may have
+  written the coupling down as expected, which it is for them, by hand, on
+  their own machine. That note is about them running it. It says nothing about
+  an agent running it on every pull request, which is the case you are here to
+  make safe.
 
 This matters beyond tidiness. The factory's safety rests on the worst case
 being a draft PR nobody has to merge. A live credential in the sandbox changes

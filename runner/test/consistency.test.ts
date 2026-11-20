@@ -277,3 +277,46 @@ describe("test files", () => {
     }
   });
 });
+
+describe("runbook_command_touches_state", () => {
+  const pkg = JSON.stringify({
+    scripts: { build: "npm run db:migrate && next build", "db:migrate": "drizzle-kit migrate" },
+  });
+
+  it("fires when the runbook runs a build that migrates a database", () => {
+    const found = repo({
+      "package.json": pkg,
+      "context/runbook.md": "## Verify\n\n```sh\nnpm run build\n```\n",
+    });
+    const hit = found.filter((f) => f.check === "runbook_command_touches_state");
+    expect(hit).toHaveLength(1);
+    expect(hit[0]?.detail).toContain("applies database migrations");
+    expect(hit[0]?.detail).toContain("via build → db:migrate");
+    expect(hit[0]?.between).toEqual(["context/runbook.md", "package.json"]);
+  });
+
+  it("stays quiet once the runbook says what the command does", () => {
+    // The check enforces a promise, so keeping the promise clears it.
+    const found = repo({
+      "package.json": pkg,
+      "context/runbook.md":
+        "## Verify\n\n```sh\nnpm run build\n```\n\n" +
+        "Note: `drizzle-kit migrate` here touches persistent state — this points at a throwaway database.\n",
+    });
+    expect(found.filter((f) => f.check === "runbook_command_touches_state")).toEqual([]);
+  });
+
+  it("stays quiet when the runbook does not run the hazardous script", () => {
+    const found = repo({
+      "package.json": pkg,
+      "context/runbook.md": "## Verify\n\n```sh\nnpx next build\n```\n",
+    });
+    expect(found.filter((f) => f.check === "runbook_command_touches_state")).toEqual([]);
+  });
+
+  it("reports nothing on a repo with no runbook", () => {
+    // No factory, no claim to contradict. A repo's own build is its business.
+    const found = repo({ "package.json": pkg });
+    expect(found.filter((f) => f.check === "runbook_command_touches_state")).toEqual([]);
+  });
+});
