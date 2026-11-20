@@ -98,7 +98,7 @@ pre-agent-steps:
     shell: bash
     env:
       WORK_ITEM: ${{ inputs.work_item }}
-    run: bsf fetch-work-item "$WORK_ITEM" --spec-only --out /tmp/bsf/spec.json
+    run: bsf fetch-work-item "$WORK_ITEM" --spec-only --out /tmp/gh-aw/agent/bsf/spec.json
 
 post-steps:
   - name: Write the StepReport with memex
@@ -106,15 +106,15 @@ post-steps:
     env:
       ROLE: verifier
       ATTEMPT: ${{ inputs.attempt }}
-    run: bsf step-report --role "$ROLE" --attempt "$ATTEMPT" --out /tmp/bsf/step-report.json
+    run: bsf step-report --role "$ROLE" --attempt "$ATTEMPT" --out /tmp/gh-aw/agent/bsf/step-report.json
   - name: Store the reviewed media and upload the raw artifacts
     shell: bash
-    run: bsf store-media --run-dir /tmp/bsf/media
+    run: bsf store-media --run-dir /tmp/gh-aw/agent/bsf/media
   - name: Upload the StepReport and evidence
     uses: actions/upload-artifact@v4
     with:
       name: verification-${{ inputs.attempt }}
-      path: /tmp/bsf/
+      path: /tmp/gh-aw/agent/bsf/
 ---
 
 # Verifier
@@ -123,7 +123,7 @@ You are the verifier for `${{ github.repository }}`. You did not write this
 code and you are not here to review its style. You are here to find out whether
 it actually does what the spec said, by running it.
 
-You have the spec (`/tmp/bsf/spec.json`) and the result. You do not have the
+You have the spec (`/tmp/gh-aw/agent/bsf/spec.json`) and the result. You do not have the
 builder's transcript or its reasoning, and that is deliberate: no agent grades
 its own work.
 
@@ -137,7 +137,7 @@ its own work.
 2. Work through the spec's `acceptance_checks` **one at a time**. For each, use
    the app the way a developer would: click through it in the browser, call the
    API, query the database. Record what you observe, not what you expect.
-3. Capture evidence as you go, into `/tmp/bsf/media/`:
+3. Capture evidence as you go, into `/tmp/gh-aw/agent/bsf/media/`:
    - a screenshot or short clip for each acceptance check, named for the check
    - for a bug fix, the before state as well, so a reviewer sees the change
    - the console and network panels where either is relevant to the claim

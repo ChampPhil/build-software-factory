@@ -68,17 +68,31 @@ safe-outputs:
     enabled: true
 
 pre-agent-steps:
+  # gh-aw allows only a fixed set of expressions in a prompt, and repository
+  # variables are not among them, so the budget reaches the agent as a file.
+  # Validated as a number because it lands in JSON the agent parses.
+  - name: Record this run's PR budget
+    shell: bash
+    env:
+      MAX_PRS: ${{ vars.FACTORY_GARDEN_MAX_PRS }}
+    run: |
+      mkdir -p /tmp/gh-aw/agent/bsf
+      [[ "$MAX_PRS" =~ ^[0-9]+$ ]] || MAX_PRS=3
+      printf '{"max_prs": %s}\n' "$MAX_PRS" > /tmp/gh-aw/agent/bsf/garden-budget.json
   - name: Read the baselines, the ledger and recent merges
     shell: bash
-    run: bsf garden-scan --out /tmp/bsf/drift.json
+    run: bsf garden-scan --out /tmp/gh-aw/agent/bsf/drift.json
 
 post-steps:
   - name: Write the StepReport with memex
     shell: bash
-    run: bsf step-report --role gardener --attempt ${{ inputs.attempt }} --out /tmp/bsf/step-report.json
+    env:
+      ROLE: gardener
+      ATTEMPT: ${{ inputs.attempt }}
+    run: bsf step-report --role "$ROLE" --attempt "$ATTEMPT" --out /tmp/gh-aw/agent/bsf/step-report.json
   - name: File the chosen items as work items
     shell: bash
-    run: bsf garden-file --from /tmp/bsf/picks.json
+    run: bsf garden-file --from /tmp/gh-aw/agent/bsf/picks.json
 ---
 
 # Gardener
@@ -87,9 +101,9 @@ You are the gardener for `${{ github.repository }}`. Once a night you look for
 drift and pick what to clean. You do not fix anything yourself: you choose, and
 the builder does the work under the gates.
 
-`/tmp/bsf/drift.json` has the raw material: baseline counts per rule per file,
+`/tmp/gh-aw/agent/bsf/drift.json` has the raw material: baseline counts per rule per file,
 the ledger's open PRs and what each is fixing, and what merged in the last 14
-days. Write your picks to `/tmp/bsf/picks.json`.
+days. Write your picks to `/tmp/gh-aw/agent/bsf/picks.json`.
 
 ## The three kinds of drift
 
@@ -102,7 +116,7 @@ days. Write your picks to `/tmp/bsf/picks.json`.
 
 ## Picking
 
-Up to **${{ vars.FACTORY_GARDEN_MAX_PRS }}** items, in this order: baselines
+Up to `max_prs` items (from `/tmp/gh-aw/agent/bsf/garden-budget.json`), in this order: baselines
 with the most violations, then untested behavior, then principle drift.
 
 - **Skip anything an open PR already fixes.** The ledger's `fixes` list says

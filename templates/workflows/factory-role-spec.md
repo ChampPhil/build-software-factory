@@ -74,17 +74,20 @@ pre-agent-steps:
     shell: bash
     env:
       WORK_ITEM: ${{ inputs.work_item }}
-    run: bsf fetch-work-item "$WORK_ITEM" --with-triage --out /tmp/bsf/work-item.json
+    run: bsf fetch-work-item "$WORK_ITEM" --with-triage --out /tmp/gh-aw/agent/bsf/work-item.json
 
 post-steps:
   - name: Write the StepReport with memex
     shell: bash
-    run: bsf step-report --role spec --attempt ${{ inputs.attempt }} --out /tmp/bsf/step-report.json
+    env:
+      ROLE: spec
+      ATTEMPT: ${{ inputs.attempt }}
+    run: bsf step-report --role "$ROLE" --attempt "$ATTEMPT" --out /tmp/gh-aw/agent/bsf/step-report.json
   - name: Write the spec back onto the work item
     shell: bash
     env:
       WORK_ITEM: ${{ inputs.work_item }}
-    run: bsf write-spec "$WORK_ITEM" --from /tmp/bsf/spec.json
+    run: bsf write-spec "$WORK_ITEM" --from /tmp/gh-aw/agent/bsf/spec.json
 ---
 
 # Spec
@@ -94,7 +97,7 @@ item into a plan precise enough that the builder has nothing left to decide and
 the verifier has something concrete to check.
 
 Read `.factory/definition/context/feature-map.md`, `fundamentals.md` and
-`history.md`. Write your plan to `/tmp/bsf/spec.json`.
+`history.md`. Write your plan to `/tmp/gh-aw/agent/bsf/spec.json`.
 
 ## The plan
 

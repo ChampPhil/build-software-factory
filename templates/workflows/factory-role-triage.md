@@ -83,15 +83,18 @@ pre-agent-steps:
     shell: bash
     env:
       WORK_ITEM: ${{ inputs.work_item }}
-    run: bsf fetch-work-item "$WORK_ITEM" --with-shortlist --out /tmp/bsf/work-item.json
+    run: bsf fetch-work-item "$WORK_ITEM" --with-shortlist --out /tmp/gh-aw/agent/bsf/work-item.json
 
 post-steps:
   - name: Write the StepReport with memex
     shell: bash
-    run: bsf step-report --role triage --attempt ${{ inputs.attempt }} --out /tmp/bsf/step-report.json
+    env:
+      ROLE: triage
+      ATTEMPT: ${{ inputs.attempt }}
+    run: bsf step-report --role "$ROLE" --attempt "$ATTEMPT" --out /tmp/gh-aw/agent/bsf/step-report.json
   - name: Store any before-screenshots
     shell: bash
-    run: bsf store-media --run-dir /tmp/bsf/media
+    run: bsf store-media --run-dir /tmp/gh-aw/agent/bsf/media
 ---
 
 # Triage
@@ -100,7 +103,7 @@ You are triage for `${{ github.repository }}`. You decide whether this work
 item is real, understood and worth starting — before anyone spends a model
 budget on building it.
 
-The work item is in `/tmp/bsf/work-item.json`. Read
+The work item is in `/tmp/gh-aw/agent/bsf/work-item.json`. Read
 `.factory/definition/context/feature-map.md` and `runbook.md` first.
 
 ## What to do
@@ -108,7 +111,7 @@ The work item is in `/tmp/bsf/work-item.json`. Read
 1. **Understand the request.** What would be true, in the running app, if this
    were done? Say it in one sentence.
 2. **For a bug, reproduce it.** Start the app per the runbook and try. Capture
-   a "before" screenshot into `/tmp/bsf/media/` — the reviewer will compare it
+   a "before" screenshot into `/tmp/gh-aw/agent/bsf/media/` — the reviewer will compare it
    with the verifier's "after". If you cannot reproduce it, that is an outcome,
    not a failure: say exactly what you tried.
 3. **Check the duplicate shortlist.** The shortlist in the work item comes from

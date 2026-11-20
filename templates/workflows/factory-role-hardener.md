@@ -90,12 +90,15 @@ pre-agent-steps:
     shell: bash
     env:
       WORK_ITEM: ${{ inputs.work_item }}
-    run: bsf harden-context "$WORK_ITEM" --out /tmp/bsf/harden.json
+    run: bsf harden-context "$WORK_ITEM" --out /tmp/gh-aw/agent/bsf/harden.json
 
 post-steps:
   - name: Write the StepReport with memex
     shell: bash
-    run: bsf step-report --role hardener --attempt ${{ inputs.attempt }} --out /tmp/bsf/step-report.json
+    env:
+      ROLE: hardener
+      ATTEMPT: ${{ inputs.attempt }}
+    run: bsf step-report --role "$ROLE" --attempt "$ATTEMPT" --out /tmp/gh-aw/agent/bsf/step-report.json
 ---
 
 # Hardener
@@ -104,7 +107,7 @@ You are the hardener for `${{ github.repository }}`. Someone corrected the
 factory, or the same failure happened three times. Your job is to make that
 whole *class* of mistake impossible, not to fix the one instance.
 
-`/tmp/bsf/harden.json` has the correction or failure, the existing
+`/tmp/gh-aw/agent/bsf/harden.json` has the correction or failure, the existing
 `candidates.json`, and the ledger. Read `fundamentals.md` and `history.md`.
 
 ## 1. Generalize

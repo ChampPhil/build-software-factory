@@ -409,7 +409,7 @@ Every adapter returns this report for every agent step; cost tracking, the run f
   "tokens": { "in": 182000, "out": 9400, "cached": 120000 },
   "cost_usd": 0.94,
   "files_changed": ["src/export/download.ts", "src/export/download.test.ts"],
-  "transcript": "/tmp/bsf/run_…/builder-2.jsonl"
+  "transcript": "/tmp/gh-aw/agent/bsf/run_…/builder-2.jsonl"
 }
 ```
 

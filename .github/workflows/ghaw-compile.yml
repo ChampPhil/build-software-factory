@@ -45,7 +45,12 @@ jobs:
           git init -q && git config user.email ci@example.com && git config user.name ci
           git add -A && git commit -qm scratch
           # --strict so warnings the runtime would later trip on fail here.
-          gh aw compile --strict --verbose 2>&1 | tee /tmp/compile.log
+          #
+          # --approve because this scratch repo has no earlier lock file, so
+          # gh-aw's safe-update mode sees every secret as newly added. In a
+          # user's repo that check stays on: a recompile that introduces a
+          # secret the last one did not have is exactly what it should flag.
+          gh aw compile --strict --approve --verbose 2>&1 | tee /tmp/compile.log
 
       - name: Keep the compiled output and the log
         if: always()

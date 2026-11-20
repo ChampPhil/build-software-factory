@@ -123,13 +123,13 @@ pre-agent-steps:
     shell: bash
     env:
       WORK_ITEM: ${{ inputs.work_item }}
-    run: bsf fetch-work-item "$WORK_ITEM" --out /tmp/bsf/work-item.json
+    run: bsf fetch-work-item "$WORK_ITEM" --out /tmp/gh-aw/agent/bsf/work-item.json
   - name: Fetch the previous attempt's gate failures, if any
     if: inputs.attempt > 1
     shell: bash
     env:
       GATE_FAILURES: ${{ inputs.gate_failures }}
-    run: bsf fetch-artifact "$GATE_FAILURES" --out /tmp/bsf/gate-failures.json
+    run: bsf fetch-artifact "$GATE_FAILURES" --out /tmp/gh-aw/agent/bsf/gate-failures.json
 
 post-steps:
   # memex reads the harness's own session log for tokens and cost. The log is
@@ -140,19 +140,19 @@ post-steps:
     env:
       ROLE: builder
       ATTEMPT: ${{ inputs.attempt }}
-    run: bsf step-report --role "$ROLE" --attempt "$ATTEMPT" --out /tmp/bsf/step-report.json
+    run: bsf step-report --role "$ROLE" --attempt "$ATTEMPT" --out /tmp/gh-aw/agent/bsf/step-report.json
   - name: Upload the StepReport
     uses: actions/upload-artifact@v4
     with:
       name: step-report-builder-${{ inputs.attempt }}
-      path: /tmp/bsf/step-report.json
+      path: /tmp/gh-aw/agent/bsf/step-report.json
 ---
 
 # Builder
 
 You are the builder for `${{ github.repository }}`.
 
-Implement the spec in `/tmp/bsf/work-item.json` with the **smallest correct
+Implement the spec in `/tmp/gh-aw/agent/bsf/work-item.json` with the **smallest correct
 change**, plus tests for new behavior.
 
 ## Read first
@@ -175,14 +175,13 @@ change**, plus tests for new behavior.
 5. Keep the change minimal. Unrequested refactors, new dependencies and new
    markdown files all fail review.
 
-{{#if attempt_gt_1}}
-## This is attempt ${{ inputs.attempt }}
+## If this is a retry
 
-`/tmp/bsf/gate-failures.json` holds what the gates rejected last time. Fix
-exactly those failures. Do not take the opportunity to change anything else:
-each gate allows 3 attempts per work item, and the third failure escalates to a
-human.
-{{/if}}
+If `/tmp/gh-aw/agent/bsf/gate-failures.json` exists, the gates rejected the last
+attempt and that file says why. Fix exactly those failures. Do not take the
+opportunity to change anything else: each gate allows 3 attempts per work item,
+and the third failure escalates to a human.
+
 
 ## Do not
 

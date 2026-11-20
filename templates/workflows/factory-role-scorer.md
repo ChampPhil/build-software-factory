@@ -70,15 +70,18 @@ safe-outputs:
 pre-agent-steps:
   - name: Collect the runs since the last review, with their rubrics
     shell: bash
-    run: bsf review-collect --out /tmp/bsf/to-score.json
+    run: bsf review-collect --out /tmp/gh-aw/agent/bsf/to-score.json
 
 post-steps:
   - name: Write the StepReport with memex
     shell: bash
-    run: bsf step-report --role scorer --attempt ${{ inputs.attempt }} --out /tmp/bsf/step-report.json
+    env:
+      ROLE: scorer
+      ATTEMPT: ${{ inputs.attempt }}
+    run: bsf step-report --role "$ROLE" --attempt "$ATTEMPT" --out /tmp/gh-aw/agent/bsf/step-report.json
   - name: Write the scores into the review report
     shell: bash
-    run: bsf review-write --scores /tmp/bsf/scores.json
+    run: bsf review-write --scores /tmp/gh-aw/agent/bsf/scores.json
 ---
 
 # Scorer
@@ -86,9 +89,9 @@ post-steps:
 You are a scorer for `${{ github.repository }}`. Every few days you grade the
 factory's recent work so its failures become work rather than folklore.
 
-`/tmp/bsf/to-score.json` has the runs since the last review, each with its
+`/tmp/gh-aw/agent/bsf/to-score.json` has the runs since the last review, each with its
 diff, its spec, its evidence and its gate history, plus the rubric for its
-pipeline and the shared rubric. Write your scores to `/tmp/bsf/scores.json`.
+pipeline and the shared rubric. Write your scores to `/tmp/gh-aw/agent/bsf/scores.json`.
 
 ## How to score
 

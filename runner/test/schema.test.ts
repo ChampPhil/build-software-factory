@@ -106,7 +106,7 @@ const valid: Record<SchemaName, unknown> = {
   "step-report": {
     schema: "step-report/1", harness: "kilo-code", role: "builder", model: "m", exit: "ok",
     duration_sec: 512, tokens: { in: 182000, out: 9400, cached: 120000 }, cost_usd: 0.94,
-    files_changed: ["src/export/download.ts"], transcript: "/tmp/bsf/run/builder-2.jsonl",
+    files_changed: ["src/export/download.ts"], transcript: "/tmp/gh-aw/agent/bsf/run/builder-2.jsonl",
   },
   factory: {
     schema: "factory/1", harness: "claude-code",
