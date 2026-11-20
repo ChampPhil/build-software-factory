@@ -170,7 +170,7 @@ export class DataRefStore implements Loader {
     }
 
     try {
-      await this.gh.send("PATCH", `${this.base}/git/${this.shortRef}`, {
+      await this.gh.send("PATCH", `${this.base}/git/refs/${this.shortRef}`, {
         sha: commit.sha,
         force: false,
       });
@@ -236,7 +236,7 @@ export class DataRefStore implements Loader {
       tree: newTree.sha,
       parents: [],
     });
-    await this.gh.send("PATCH", `${this.base}/git/${this.shortRef}`, {
+    await this.gh.send("PATCH", `${this.base}/git/refs/${this.shortRef}`, {
       sha: commit.sha,
       force: true,
     });
