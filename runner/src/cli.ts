@@ -199,6 +199,8 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
       problems are added — what the skill's update mode needs, since one the
       user already rejected must not be offered again.
 
+  bsf recompile-prepare
+      Apply the frozen sandbox's research hosts to the spec role's network, ready for gh aw compile.
   bsf practice add TEXT
       Declare a practice every agent follows from now on. Opens a PR adding it to
       practices.md, and a rule where one can enforce it. Same as commenting
@@ -422,6 +424,8 @@ async function main(argv: readonly string[]): Promise<number> {
       return sandboxCommandCli(second, args);
     case "practice":
       return practiceCommand(second, command.slice(2));
+    case "recompile-prepare":
+      return recompilePrepareCommand();
 
     case "dashboard":
       return dashboardCommand(args);
@@ -1143,6 +1147,25 @@ async function auditCommand(args: Args): Promise<number> {
  * `bsf practice add TEXT` — the CLI form of a `/practice` comment. Dispatching
  * factory-intake needs write access, so it is trusted by construction.
  */
+async function recompilePrepareCommand(): Promise<number> {
+  const { parseHosts, addAllowedHosts } = await import("./commands/recompile.js");
+  const root = process.cwd();
+  const domainsFile = join(root, ".factory/sandbox/research-domains.txt");
+  const spec = join(root, ".github/workflows/factory-role-spec.md");
+  if (!existsSync(domainsFile) || !existsSync(spec)) {
+    process.stdout.write("nothing to apply: no research hosts, or no spec role\n");
+    setOutput("changed", "false");
+    return 0;
+  }
+  const { hosts, rejected } = parseHosts(readFileSync(domainsFile, "utf8"));
+  for (const r of rejected) process.stderr.write(`ignored, not a hostname: ${r}\n`);
+  const { text, added } = addAllowedHosts(readFileSync(spec, "utf8"), hosts);
+  if (added.length > 0) writeFileSync(spec, text);
+  process.stdout.write(added.length > 0 ? `spec may now research: ${added.join(", ")}\n` : "every research host is already allowed\n");
+  setOutput("changed", String(added.length > 0));
+  return 0;
+}
+
 async function practiceCommand(second: string | undefined, rest: readonly string[]): Promise<number> {
   const text = rest.join(" ").trim();
   if (second !== "add" || text === "") die('usage: bsf practice add "use longer, descriptive identifier names"');

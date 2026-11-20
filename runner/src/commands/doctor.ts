@@ -266,9 +266,24 @@ export async function runDoctor(opts: DoctorOptions): Promise<DoctorReport> {
     const loaded = loadManifest(opts.root);
     return loaded.kind === "ok" && loaded.manifest.env.some((v) => v.secret !== undefined);
   })();
-  const fromWorkflows = referenced.secrets.filter((s) => s !== "FACTORY_SANDBOX_ENV" || needsSandboxSecret);
+  // The recompiler App is optional; its credentials are needed only once
+  // factory.yaml turns it on. Its workflow checks for them and stands down.
+  const recompilerOn = (() => {
+    try {
+      const doc = parseYaml(readFileSync(join(opts.root, ".factory/definition/factory.yaml"), "utf8")) as {
+        recompiler?: { enabled?: boolean };
+      };
+      return doc.recompiler?.enabled === true;
+    } catch {
+      return false;
+    }
+  })();
+  const optional = (name: string): boolean =>
+    (name === "FACTORY_SANDBOX_ENV" && !needsSandboxSecret) || (name.startsWith("RECOMPILER_APP_") && !recompilerOn);
+  const fromWorkflows = referenced.secrets.filter((s) => !optional(s));
   const REQUIRED_SECRETS = fromWorkflows.length > 0 ? fromWorkflows : FALLBACK_SECRETS;
-  const REQUIRED_VARS = referenced.vars.length > 0 ? referenced.vars : FALLBACK_VARS;
+  const requiredVars = referenced.vars.filter((v) => !optional(v));
+  const REQUIRED_VARS = requiredVars.length > 0 ? requiredVars : FALLBACK_VARS;
 
   did("secrets");
   const secretNames = await names(opts.gh, "actions/secrets", (r) => r.secrets);

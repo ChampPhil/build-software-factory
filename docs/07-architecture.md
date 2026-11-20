@@ -104,7 +104,7 @@ Setup adds four things to the user's repo: a `.factory/` folder, factory workflo
 
 ## Runtime model
 
-Thirteen deterministic workflows run the factory, each a thin trigger file that calls `bsf`. Agents run in eight more: one **gh-aw workflow per role** (`factory-role-<role>.md`, compiled by `gh aw compile` into `factory-role-<role>.lock.yml`), started by `factory-run`, plus the setup agent (`factory-setup-agent.md`), started by `factory-setup`. The compiled roles ship with the skill, so a user needs gh-aw only for a non-default engine or network.
+Fourteen deterministic workflows run the factory, each a thin trigger file that calls `bsf`. Agents run in eight more: one **gh-aw workflow per role** (`factory-role-<role>.md`, compiled by `gh aw compile` into `factory-role-<role>.lock.yml`), started by `factory-run`, plus the setup agent (`factory-setup-agent.md`), started by `factory-setup`. The compiled roles ship with the skill, so a user needs gh-aw only for a non-default engine or network.
 
 | Workflow | Triggered by | Calls | What it does |
 | --- | --- | --- | --- |
@@ -121,6 +121,7 @@ Thirteen deterministic workflows run the factory, each a thin trigger file that 
 | `factory-audit` | Push to main | `bsf audit` | Re-runs gates on the pushed commit; flags anything that bypassed them |
 | `factory-sync` | Push to main that changes `factory.yaml` | `bsf sync-settings` | Applies branch protection, rulesets and repo settings from config |
 | `factory-setup` | `workflow_dispatch` once the bootstrap PR is merged; again with an inadequacy report to amend the sandbox | `bsf models`, `bsf sandbox freeze` | Phase 2 as an episode: up to three rounds of the setup agent writing a complete candidate (context files, sandbox manifest, stubs) and a trial measuring the tier it reaches; freezes the best measured round into the setup PR |
+| `factory-recompile` | Push to the default branch changing the sandbox's research hosts or a role's source; `workflow_dispatch` | `bsf recompile-prepare` | With the optional recompiler App: applies the frozen sandbox's choices to the role sources (today, the spec role's research hosts), runs `gh aw compile --strict` and opens a PR. Without it, does nothing and says so |
 | `factory-setup-trial` | `workflow_call` from `factory-setup`, once per round | `bsf sandbox trial` | Brings up exactly what a candidate manifest declares on the runner, where Docker is, runs each command, starts the app and screenshots it, and records the tier actually reached with every step's output |
 
 **Concurrency and limits**

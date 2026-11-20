@@ -309,8 +309,8 @@ describe("requirements are read from the installed workflows", () => {
     // with them.
     // beforeEach has installed the templates into root.
     const r = referencedInWorkflows(root);
-    expect(r.secrets).toEqual(["ANTHROPIC_API_KEY", "FACTORY_APP_PRIVATE_KEY", "FACTORY_SANDBOX_ENV"]);
-    expect(r.vars).toEqual(["FACTORY_APP_CLIENT_ID"]);
+    expect(r.secrets).toEqual(["ANTHROPIC_API_KEY", "FACTORY_APP_PRIVATE_KEY", "FACTORY_SANDBOX_ENV", "RECOMPILER_APP_PRIVATE_KEY"]);
+    expect(r.vars).toEqual(["FACTORY_APP_CLIENT_ID", "RECOMPILER_APP_CLIENT_ID"]);
     expect(r.optionalVars).toEqual([]);
   });
 
