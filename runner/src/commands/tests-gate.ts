@@ -24,6 +24,11 @@ export interface TestsGateOptions {
   /** The command to run when there is no check to read, or it never arrives. */
   readonly command: string | null;
   readonly root: string;
+  /**
+   * The environment to run the command in: the sandbox's closed environment.
+   * Absent only in tests; the CLI always passes it.
+   */
+  readonly env?: Record<string, string>;
   readonly waitMs?: number;
   readonly pollMs?: number;
   /** Injected in tests. */
@@ -105,12 +110,14 @@ async function readExistingCheck(opts: TestsGateOptions): Promise<TestsGateResul
 
 async function runCommand(opts: TestsGateOptions): Promise<TestsGateResult> {
   const command = opts.command as string;
-  const [bin, ...args] = command.split(/\s+/);
   try {
-    const { stdout, stderr } = await exec(bin!, args, {
+    // Through a shell, as the manifest's other commands are: a test command
+    // is often `npm ci && npm test` or carries a variable, and splitting it
+    // on spaces ran the first word with the rest as its arguments.
+    const { stdout, stderr } = await exec("bash", ["-c", command], {
       cwd: opts.root,
       maxBuffer: 64 * 1024 * 1024,
-      env: { ...process.env, CI: "true", NO_COLOR: "1" },
+      env: { ...(opts.env ?? process.env), CI: "true", NO_COLOR: "1" },
     });
     return {
       conclusion: "success",

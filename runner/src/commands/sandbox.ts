@@ -71,6 +71,27 @@ export function loadManifestAt(path: string): LoadedManifest {
 }
 
 /** Parse a dotenv blob. Used for the one secret that carries test-mode keys. */
+/** What a shell needs to find tools, and nothing else from the runner. */
+export function shellBase(): Record<string, string> {
+  const base: Record<string, string> = {};
+  for (const k of ["PATH", "HOME", "TMPDIR", "LANG", "CI", "RUNNER_TEMP"]) {
+    const v = process.env[k];
+    if (v !== undefined) base[k] = v;
+  }
+  return base;
+}
+
+/**
+ * The environment a gate runs the app's own commands in: the sandbox's
+ * closed environment, as `bsf sandbox start` wrote it, over the shell base.
+ * Null when the sandbox was not started here, so the caller can say so.
+ */
+export function closedEnv(workspace: string): Record<string, string> | null {
+  const file = join(workspace, RUNTIME_ENV);
+  if (!existsSync(file)) return null;
+  return { ...shellBase(), ...parseDotenv(readFileSync(file, "utf8")) };
+}
+
 export function parseDotenv(text: string): Record<string, string> {
   const out: Record<string, string> = {};
   for (const line of text.split("\n")) {
@@ -183,11 +204,7 @@ export async function startSandbox(opts: {
     // Only the manifest's variables, plus what a shell needs to find tools.
     // Nothing else from the runner's environment, so a missed variable is
     // absent rather than inherited.
-    const base: Record<string, string> = {};
-    for (const k of ["PATH", "HOME", "TMPDIR", "LANG", "CI", "RUNNER_TEMP"]) {
-      const v = process.env[k];
-      if (v !== undefined) base[k] = v;
-    }
+    const base = shellBase();
     const r = spawnSync("bash", ["-c", m.commands.install], {
       cwd: opts.workspace,
       env: { ...base, ...env },
@@ -288,12 +305,7 @@ export async function trialSandbox(opts: {
   const steps: StepOutcome[] = [];
 
   const { env, missing } = sandboxEnv(m, opts.secretBlob);
-  const base: Record<string, string> = {};
-  for (const k of ["PATH", "HOME", "TMPDIR", "LANG", "CI", "RUNNER_TEMP"]) {
-    const v = process.env[k];
-    if (v !== undefined) base[k] = v;
-  }
-  const runEnv = { ...base, ...env };
+  const runEnv = { ...shellBase(), ...env };
 
   const run = (step: StepOutcome["step"], command: string | null): boolean => {
     if (command === null) {

@@ -340,7 +340,7 @@ describe("the tests gate", () => {
       gh: ghWithCheck([]),
       commit: "abc",
       existingCheck: null,
-      command: "node -e process.exit(3)",
+      command: "node -e 'process.exit(3)'",
       root: process.cwd(),
     });
     expect(r.conclusion).toBe("failure");

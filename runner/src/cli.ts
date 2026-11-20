@@ -1884,12 +1884,28 @@ async function gatesTests(args: Args): Promise<number> {
     return 1;
   }
 
+  let env: Record<string, string> | undefined;
+  if (test.kind === "command") {
+    const { closedEnv } = await import("./commands/sandbox.js");
+    const closed = closedEnv(process.env["GITHUB_WORKSPACE"] ?? process.cwd());
+    if (closed === null && existingCheck === null) {
+      const summary =
+        "The sandbox was not started before the tests gate, so the tests would run without their dependencies " +
+        "or their environment. The gate workflow runs `bsf sandbox start` first; a workflow that does not was edited.";
+      process.stdout.write(`${summary}\n`);
+      await maybeReportCheck(args, "failure", "Sandbox not started", summary, "factory/gate-tests");
+      setOutput("tests_source", "no_sandbox");
+      return 1;
+    }
+    if (closed !== null) env = closed;
+  }
   const result = await runTestsGate({
     gh,
     commit: headSha(),
     existingCheck,
     command: test.kind === "command" ? test.command : null,
     root: process.cwd(),
+    ...(env === undefined ? {} : { env }),
   });
   process.stdout.write(`${result.summary}\n`);
   await maybeReportCheck(
