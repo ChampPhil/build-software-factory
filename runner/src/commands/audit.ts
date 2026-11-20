@@ -187,7 +187,12 @@ export async function staleLockFiles(root: string, dir: string): Promise<readonl
     const wantFrontmatter = hashes.extractHashFromLockFile(lockText);
     const wantBody = hashes.extractBodyHashFromLockFile(lockText);
 
-    if (wantFrontmatter === null || wantFrontmatter === undefined || wantBody === null || wantBody === undefined) {
+    // gh-aw's extractor returns an empty string, not null, for a lock file
+    // with no metadata comment. Checking only for null let that case fall
+    // through to the hash comparison, which reported it as drift — true, but
+    // it hid the clearer reason: the file was compiled by a gh-aw older than
+    // this check understands.
+    if (isBlank(wantFrontmatter) || isBlank(wantBody)) {
       findings.push({
         kind: "lock_file_stale",
         detail:
@@ -219,6 +224,10 @@ interface Hasher {
   computeBodyHash(path: string, opts: object): Promise<string>;
   extractHashFromLockFile(text: string): string | null | undefined;
   extractBodyHashFromLockFile(text: string): string | null | undefined;
+}
+
+function isBlank(value: string | null | undefined): boolean {
+  return value === null || value === undefined || value.trim() === "";
 }
 
 /** gh-aw's own hash implementation, vendored. See vendor/gh-aw/README.md. */

@@ -146,3 +146,21 @@ describe("the App-rename check", () => {
     expect(r.findings.filter((f) => f.kind === "app_login_stale")).toHaveLength(0);
   });
 });
+
+describe("a lock file with no gh-aw metadata", () => {
+  it("is named as uncompiled-by-an-older-gh-aw, not reported as drift", async () => {
+    // The extractor returns "" rather than null for a lock file with no
+    // metadata comment, so a null-only check fell through to the hash
+    // comparison. Both verdicts are "do not trust this lock file", but only
+    // one of them tells the user why.
+    const dir = mkdtempSync(join(tmpdir(), "bsf-lock-"));
+    const wf = join(dir, ".github/workflows");
+    mkdirSync(wf, { recursive: true });
+    writeFileSync(join(wf, "factory-role-spec.md"), "---\non: issues\n---\n\nA prompt.\n");
+    writeFileSync(join(wf, "factory-role-spec.lock.yml"), "name: x\non: {}\njobs: {}\n");
+    const findings = await staleLockFiles(dir, ".github/workflows");
+    expect(findings).toHaveLength(1);
+    expect(findings[0]?.detail).toContain("no gh-aw-metadata hashes");
+    rmSync(dir, { recursive: true, force: true });
+  });
+});

@@ -80,6 +80,10 @@ The goal is to catch every past correction and turn the recurring ones into guar
 
 Teammates can later run `bsf contribute-corrections` on their own machines to add their sessions; after setup, the session hooks capture new corrections automatically for developers who opted in, wherever transcripts can be stored privately.
 
+`bsf contribute-corrections` is deliberately two steps, because a candidate carries the teammate's own words — `problem_class` is a sentence they typed at an agent. The first command mines and writes a file on their disk, prints exactly what would be shared, and submits nothing; they delete anything they would rather not share, then run it again with `--submit`, which opens a PR adding what is left. Consent to read a session is not consent to publish from it.
+
+The submitted PR merges rather than replaces. A problem already pending becomes more evidence for that one candidate instead of a second entry for the same thing; one that is already accepted, rejected or installed is left alone and reported as skipped, so nobody is asked to judge the same thing twice and a rejection is never quietly reopened. Each added candidate records `contributed_by`, because the quote came from someone's private session and they are the person to ask about it.
+
 ## Phase 2: Make it runnable
 
 The skill produces a reproducible, isolated sandbox where an agent can build the app, run its tests and verify it at runtime with real dev tools.

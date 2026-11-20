@@ -1,7 +1,74 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import { spawn } from "node:child_process";
 
-const exec = promisify(execFile);
+/**
+ * Run a command with something on its stdin.
+ *
+ * `promisify(execFile)` has no `input` option — only the *Sync* variants and
+ * `spawn` do. Passing one is silently ignored, so `gh api --input -` sat
+ * waiting on a stdin that was never written and the proxy eventually returned
+ * "Reading the request body timed out". Every POST, PATCH and PUT with a body
+ * went out empty, `reportCheck` included, which is how every gate tells
+ * GitHub its verdict. A cast on the options object had hidden the type error.
+ */
+function execWithInput(
+  file: string,
+  args: readonly string[],
+  opts: {
+    readonly env: NodeJS.ProcessEnv;
+    /** Written to the child's stdin, which is then closed. */
+    readonly input: string;
+    readonly maxBuffer: number;
+    /** Killed after this long. Default fifteen minutes. */
+    readonly timeoutMs?: number;
+  },
+): Promise<{ stdout: string }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(file, [...args], { env: opts.env, stdio: ["pipe", "pipe", "pipe"] });
+    // A child that waits on stdin forever would hold a workflow job open
+    // until the job's own limit, which is the whole budget rather than one
+    // request. Nothing here reads stdin after the body.
+    let killed = false;
+    const timer = setTimeout(
+      () => {
+        killed = true;
+        child.kill("SIGKILL");
+        // Rejected here rather than waiting for `close`: that fires only once
+        // every stdio pipe is closed, and a killed shell can leave a child
+        // holding one open, which would make the timeout itself hang.
+        reject(new Error(`${file} did not finish in time and was killed`));
+      },
+      opts.timeoutMs ?? 15 * 60 * 1000,
+    );
+    let stdout = "";
+    let stderr = "";
+    let overflow = false;
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (d: string) => {
+      if (stdout.length + d.length > opts.maxBuffer) overflow = true;
+      else stdout += d;
+    });
+    child.stderr.on("data", (d: string) => {
+      stderr += d.slice(0, 8192);
+    });
+    child.on("error", (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      // Already rejected by the timeout; a settled promise ignores this.
+      if (killed) return;
+      if (overflow) reject(new Error(`output exceeded ${opts.maxBuffer} bytes`));
+      else if (code === 0) resolve({ stdout });
+      else reject(Object.assign(new Error(stderr.trim() || `${file} exited ${String(code)}`), { stderr }));
+    });
+    // EPIPE if the child exits before reading it all, which is not an error
+    // here: it already has what it needs, or it failed for its own reasons.
+    child.stdin.on("error", () => undefined);
+    child.stdin.end(opts.input);
+  });
+}
 
 /**
  * A thin GitHub REST client, run through the `gh` CLI so it inherits whatever
@@ -14,6 +81,8 @@ const exec = promisify(execFile);
  */
 
 export interface GitHubOptions {
+  /** How long a single `gh` call may take. Default fifteen minutes. */
+  readonly timeoutMs?: number;
   readonly repo: string; // owner/name
   readonly token?: string;
 }
@@ -47,10 +116,11 @@ export class GitHub {
     const args = ["api", path];
     if (paginate) args.push("--paginate", "--slurp");
     try {
-      const { stdout } = await exec("gh", args, {
+      const { stdout } = await execWithInput("gh", args, {
         env: this.env(),
-        encoding: "utf8",
+        input: "",
         maxBuffer: 64 * 1024 * 1024,
+        ...(this.opts.timeoutMs === undefined ? {} : { timeoutMs: this.opts.timeoutMs }),
       });
       const parsed = JSON.parse(String(stdout)) as unknown;
       // --slurp wraps each page in an array; flatten one level.
@@ -70,12 +140,12 @@ export class GitHub {
     try {
       // The body goes in on stdin rather than as -f pairs, so a value
       // containing a newline or a quote survives intact.
-      const { stdout } = await exec("gh", args, {
+      const { stdout } = await execWithInput("gh", args, {
         env: this.env(),
-        encoding: "utf8",
+        input: body === undefined ? "" : JSON.stringify(body),
         maxBuffer: 16 * 1024 * 1024,
-        ...(body === undefined ? {} : { input: JSON.stringify(body) }),
-      } as Parameters<typeof exec>[2]);
+        ...(this.opts.timeoutMs === undefined ? {} : { timeoutMs: this.opts.timeoutMs }),
+      });
       const text = String(stdout).trim();
       return (text === "" ? {} : JSON.parse(text)) as T;
     } catch (err) {
@@ -151,6 +221,30 @@ export class GitHub {
   async defaultBranch(): Promise<string> {
     const r = await this.get<{ default_branch: string }>(this.base);
     return r.default_branch;
+  }
+
+  async openPull(opts: {
+    readonly title: string;
+    readonly head: string;
+    readonly base: string;
+    readonly body: string;
+  }): Promise<{ readonly number: number; readonly html_url: string }> {
+    return this.send<{ number: number; html_url: string }>(`POST`, `${this.base}/pulls`, {
+      title: opts.title,
+      head: opts.head,
+      base: opts.base,
+      body: opts.body,
+    });
+  }
+
+  /** The signed-in user, for recording who contributed. */
+  async viewer(): Promise<string | null> {
+    try {
+      const r = await this.get<{ login?: string }>("user");
+      return r.login ?? null;
+    } catch {
+      return null;
+    }
   }
 }
 

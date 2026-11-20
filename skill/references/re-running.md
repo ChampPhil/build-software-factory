@@ -3,6 +3,17 @@
 The skill is safe to run again. It detects an existing factory —
 `.factory/definition/factory.yaml` — and switches to update mode.
 
+## First: find out which mode you are in
+
+```
+bsf doctor --repo OWNER/REPO
+```
+
+It changes nothing. `installed=false` means plain setup. `installed=true` with
+nothing broken means update mode. `installed=true` with broken findings means
+repair mode, and the findings are the diagnosis to show the user before
+touching anything.
+
 ## Update mode
 
 **Keep what the user has changed.** Their `factory.yaml`, their `policy.yaml`,
@@ -21,7 +32,17 @@ So:
   lowering is not re-recorded at today's count: that would undo the work.
 - **Data refs** are left alone entirely.
 - **Candidates** are re-mined, but only new corrections are shown. One the user
-  already rejected is not offered again.
+  already rejected is not offered again:
+
+  ```
+  bsf mine-corrections --merge-into .factory/guardrails/candidates.json
+  ```
+
+  It keeps every existing candidate and its status, folds a problem that is
+  already pending into that candidate's occurrence count, and leaves anything
+  accepted, rejected or installed alone. It reports the three numbers, so the
+  user can see that re-mining found four new problems rather than re-offering
+  forty old ones.
 
 Everything still arrives as one PR, and the diff is the point: the user should
 be able to see exactly what an update changed.
@@ -33,8 +54,12 @@ stale for gh-aw to run, a missing secret, a ref that was deleted.
 
 1. **Diagnose first and say what is wrong**, before changing anything. A repair
    that silently fixes three things teaches the user nothing about their
-   factory.
-2. Fix only what is broken.
+   factory. `bsf doctor --repo OWNER/REPO` is the diagnosis; show the user its
+   findings, each with what would put it right, and agree what to fix.
+2. Fix only what is broken. A finding whose `repair` is `null` is one only the
+   user can deal with — a secret's value must never pass through the runner,
+   and a definition file holds their own choices, so overwriting it with a
+   template would discard them.
 3. **Recompile the lock files** if gh-aw's version check is failing them. This
    is the path for a user who declined the recompiler App.
 

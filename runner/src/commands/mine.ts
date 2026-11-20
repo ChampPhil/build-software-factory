@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { candidateId } from "../lib/ids.js";
-import type { Harness } from "../lib/types.js";
+import type { Harness, Candidate, CandidateSource } from "../lib/types.js";
 
 const exec = promisify(execFile);
 
@@ -381,7 +381,7 @@ export interface CorrectionCluster {
   readonly occurrences: number;
 }
 
-const NOISE = new Set([
+export const NOISE = new Set([
   "that", "this", "the", "and", "you", "your", "for", "with", "not", "dont", "don", "should",
   "would", "could", "have", "has", "was", "were", "are", "but", "its", "it", "all", "any",
   "use", "using", "used", "just", "like", "please", "can", "will", "did", "does", "about",
@@ -467,20 +467,12 @@ export function clusterCorrections(corrections: readonly Correction[]): readonly
 
 /* --------------------------------------------------------- guardrail candidates */
 
-export interface Candidate {
-  readonly id: string;
-  readonly problem_class: string;
-  readonly occurrences: number;
-  readonly first_seen?: string;
-  readonly last_seen?: string;
-  readonly sources: readonly {
-    readonly kind: "agent_chat";
-    readonly harness?: Harness;
-    readonly session?: string;
-    readonly quote?: string;
-    readonly at?: string;
-  }[];
-  readonly proposed_fix: "api_change" | "static_rule" | "verification" | "context";
+/**
+ * What mining produces: always `agent_chat` sources and always `pending`.
+ * The shared file's wider type is `Candidate` in lib/types.
+ */
+export interface MinedCandidate extends Candidate {
+  readonly sources: readonly (CandidateSource & { readonly kind: "agent_chat" })[];
   readonly status: "pending";
 }
 
@@ -525,7 +517,7 @@ export function proposedFix(text: string): Candidate["proposed_fix"] {
 export function candidatesFrom(
   clusters: readonly CorrectionCluster[],
   now: string,
-): readonly Candidate[] {
+): readonly MinedCandidate[] {
   return clusters.map((cl, i) => {
     const times = cl.corrections.map((c) => c.at).filter((a): a is string => a !== null).sort();
     const quotes = cl.corrections.slice(0, 5);

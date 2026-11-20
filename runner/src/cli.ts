@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-import { createRequire } from "node:module";
 import { GitHub } from "./lib/github.js";
 import {
   DiskLoader, RefLoader, loadPolicy, loadBaselines, loadCoverage, changedFilesSince,
@@ -16,6 +15,14 @@ import { runConflictsCommand } from "./commands/conflicts.js";
 import { runSyncCommand } from "./commands/sync-settings.js";
 import { runAuditCommand } from "./commands/audit.js";
 import { byFileOf } from "./commands/gates.js";
+import { parseYaml } from "./lib/yaml.js";
+import type { CandidatesFile } from "./lib/types.js";
+import { runDoctor, formatReport } from "./commands/doctor.js";
+import {
+  submitContribution,
+  mergeContribution,
+  type Contribution,
+} from "./commands/contribute.js";
 import {
   surfaceForDirectory,
   compareSurface,
@@ -173,9 +180,31 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
       are their private conversations.
 
   bsf mine-corrections [--exclude ID,ID] [--out PATH] [--source NAME]
+                       [--merge-into PATH]
       Read the sessions the user did not exclude and find the moments they
       corrected an agent. Each one is a rule they already wanted. Writes
       guardrail candidates; reports and continues if memex is not installed.
+      With --merge-into, the existing list is kept and only genuinely new
+      problems are added — what the skill's update mode needs, since one the
+      user already rejected must not be offered again.
+
+  bsf doctor [--root PATH] [--repo OWNER/REPO] [--json]
+      What is wrong with an installed factory: missing definition, role or
+      context files, a guardrail file that no longer validates, a missing
+      workflow, a lock file too stale for gh-aw to run, and — with --repo — a
+      missing secret or variable and whether the data ref exists. Changes
+      nothing: the skill's repair mode diagnoses before it touches anything.
+
+  bsf contribute-corrections [--repo-path PATH] [--exclude ID,ID] [--out PATH]
+      For a teammate: mine the corrections on *your* machine and write them to
+      a file. Submits nothing. The quotes come from your own agent sessions, so
+      you read the file, delete anything you would rather not share, and then:
+
+  bsf contribute-corrections --submit [--from PATH] [--repo OWNER/REPO]
+      Open a PR adding what is left in that file to the factory's candidate
+      list. Merges rather than replaces, folds a problem already on the list
+      into its existing candidate, and leaves a candidate someone has already
+      accepted or rejected alone.
 
   bsf score --runs PATH --out PATH [--repeat N]
       Grade runs against their pipeline's rubric and the shared one, on
@@ -290,7 +319,7 @@ async function main(argv: readonly string[]): Promise<number> {
         die(`unknown schema ${name}. Run \`bsf schemas\` for the list.`);
       }
       const text = readFileSync(file, "utf8");
-      const doc: unknown = file.endsWith(".json") ? JSON.parse(text) : parseYamlLazy(text);
+      const doc: unknown = file.endsWith(".json") ? JSON.parse(text) : parseYaml(text);
       try {
         assertValid(name as SchemaName, doc);
         process.stdout.write(`${file} is a valid ${name}\n`);
@@ -332,6 +361,12 @@ async function main(argv: readonly string[]): Promise<number> {
 
     case "audit":
       return auditCommand(args);
+
+    case "doctor":
+      return doctorCommand(args);
+
+    case "contribute-corrections":
+      return contributeCorrectionsCommand(args);
 
     case "schema-surface":
       return schemaSurfaceCommand(args);
@@ -922,6 +957,115 @@ async function auditCommand(args: Args): Promise<number> {
   return 1;
 }
 
+async function doctorCommand(args: Args): Promise<number> {
+  const root = typeof args["root"] === "string" ? args["root"] : process.cwd();
+  const repo = typeof args["repo"] === "string" ? args["repo"] : undefined;
+
+  const report = await runDoctor({
+    root,
+    ...(repo === undefined ? {} : { gh: new GitHub({ repo }) }),
+  });
+
+  if (args["json"] === true) {
+    process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+  } else {
+    process.stdout.write(`${formatReport(report)}\n`);
+  }
+
+  const broken = report.findings.filter((f) => f.severity === "broken").length;
+  setOutput("broken", String(broken));
+  setOutput("installed", String(report.installed));
+  // A factory that is simply not installed is not a failure to report: the
+  // skill calls this to find out which mode it is in.
+  return broken > 0 ? 1 : 0;
+}
+
+async function contributeCorrectionsCommand(args: Args): Promise<number> {
+  const file =
+    typeof args["from"] === "string"
+      ? args["from"]
+      : typeof args["out"] === "string"
+        ? args["out"]
+        : "factory-contribution.json";
+
+  if (args["submit"] === true) {
+    if (!existsSync(file)) {
+      die(`${file} does not exist. Run \`bsf contribute-corrections\` first, read it, then --submit.`);
+    }
+    const contribution = JSON.parse(readFileSync(file, "utf8")) as Contribution;
+    if (contribution.schema !== "contribution/1") {
+      die(`${file} is not a contribution file`);
+    }
+    if (contribution.candidates.length === 0) {
+      process.stdout.write("that file has no candidates left in it; nothing submitted\n");
+      return 0;
+    }
+
+    const repo = typeof args["repo"] === "string" ? args["repo"] : contribution.repo;
+    const gh = new GitHub({ repo });
+    const res = await submitContribution({
+      gh,
+      contribution,
+      candidatesPath: ".factory/guardrails/candidates.json",
+      repoPath: typeof args["repo-path"] === "string" ? args["repo-path"] : process.cwd(),
+    });
+    if ("nothing" in res) {
+      process.stdout.write(`${res.nothing}\n`);
+      return 0;
+    }
+    process.stdout.write(
+      `${res.merge.added.length} new, ${res.merge.folded.length} folded into existing, ` +
+        `${res.merge.skipped.length} already decided\n` +
+        `PR #${res.pull}  ${res.url}\n`,
+    );
+    setOutput("pull", String(res.pull));
+    return 0;
+  }
+
+  // Mining half: identical to what setup does, writing a file for the person
+  // to read instead of the factory's candidate list.
+  const repoPath = typeof args["repo-path"] === "string" ? args["repo-path"] : process.cwd();
+  const exclude =
+    typeof args["exclude"] === "string"
+      ? args["exclude"].split(",").map((x) => x.trim()).filter((x) => x !== "")
+      : undefined;
+
+  const report = await mineCorrections({
+    repoPath,
+    ...(exclude === undefined ? {} : { excludeSessions: exclude }),
+  });
+  process.stdout.write(`${report.note}\n`);
+
+  if (report.corrections.length === 0) {
+    // Deliberately not mining the repository's own history here: setup
+    // already did that, and it is the same for everyone. Only what is on this
+    // machine is new.
+    process.stdout.write("nothing found in the sessions on this machine\n");
+    return 0;
+  }
+
+  const candidates = candidatesFrom(clusterCorrections(report.corrections), nowIso());
+  const doc: Contribution = {
+    schema: "contribution/1",
+    repo: typeof args["repo"] === "string" ? args["repo"] : repoPath,
+    mined_at: nowIso(),
+    candidates,
+  };
+  writeFileSync(file, `${JSON.stringify(doc, null, 2)}\n`);
+
+  process.stdout.write(`\n${candidates.length} candidate(s), written to ${file}:\n\n`);
+  for (const c of candidates) {
+    process.stdout.write(`  ${String(c.occurrences).padStart(3)}x  ${c.problem_class.replace(/\s+/g, " ")}\n`);
+  }
+  process.stdout.write(
+    `\nThat text is from your own sessions and would be visible to everyone with\n` +
+      `access to the repo. Open ${file}, delete any candidate you would rather not\n` +
+      `share, then run:\n\n  bsf contribute-corrections --submit --from ${file}\n`,
+  );
+  setOutput("mined", String(candidates.length));
+  return 0;
+}
+
 function schemaSurfaceCommand(args: Args): number {
   const frozenPath = join(SCHEMA_DIR, "SURFACE.json");
   const live = surfaceForDirectory(SCHEMA_DIR);
@@ -1243,19 +1387,45 @@ async function mineCommand(args: Args): Promise<number> {
   }
 
   const clusters = clusterCorrections(all);
-  const candidates = candidatesFrom(clusters, nowIso());
-  const doc = { schema: "candidates/1", candidates };
-  assertValid("candidates", doc);
+  const mined = candidatesFrom(clusters, nowIso());
 
-  for (const c of clusters.slice(0, 10)) {
-    process.stdout.write(`  ${c.occurrences}x  ${c.theme.slice(0, 90)}\n`);
+  const mergeInto = typeof args["merge-into"] === "string" ? args["merge-into"] : undefined;
+  let doc: CandidatesFile = { schema: "candidates/1", candidates: mined };
+  let added = mined.length;
+
+  if (mergeInto !== undefined) {
+    // Update mode. The existing list holds decisions — accepted, rejected,
+    // installed — and re-mining must not undo any of them, or re-offer
+    // something the user has already turned down.
+    const existing: CandidatesFile = existsSync(mergeInto)
+      ? (JSON.parse(readFileSync(mergeInto, "utf8")) as CandidatesFile)
+      : { schema: "candidates/1", candidates: [] };
+    const merge = mergeContribution(existing, mined, null);
+    doc = merge.merged;
+    added = merge.added.length;
+    process.stdout.write(
+      `${merge.added.length} new, ${merge.folded.length} already pending (counts raised), ` +
+        `${merge.skipped.length} already decided and not re-offered\n`,
+    );
+    for (const c of merge.added.slice(0, 10)) {
+      process.stdout.write(`  ${c.occurrences}x  ${c.problem_class.slice(0, 90)}\n`);
+    }
+  } else {
+    for (const c of clusters.slice(0, 10)) {
+      process.stdout.write(`  ${c.occurrences}x  ${c.theme.slice(0, 90)}\n`);
+    }
   }
 
-  const out = typeof args["out"] === "string" ? args["out"] : ".factory/guardrails/candidates.json";
+  assertValid("candidates", doc);
+
+  const out =
+    typeof args["out"] === "string"
+      ? args["out"]
+      : (mergeInto ?? ".factory/guardrails/candidates.json");
   mkdirSync(dirname(out), { recursive: true });
   writeFileSync(out, `${JSON.stringify(doc, null, 2)}\n`);
-  process.stdout.write(`${candidates.length} candidate(s) -> ${out}\n`);
-  setOutput("mined", String(candidates.length));
+  process.stdout.write(`${doc.candidates.length} candidate(s) in ${out}\n`);
+  setOutput("mined", String(added));
   return 0;
 }
 
@@ -1382,15 +1552,6 @@ function readTasks(dir: string): readonly BenchmarkTask[] {
     .filter((f) => f.endsWith(".json"))
     .map((f) => JSON.parse(readFileSync(join(dir, f), "utf8")) as BenchmarkTask)
     .filter((t) => t.schema === "benchmark-task/1");
-}
-
-function parseYamlLazy(text: string): unknown {
-  // This file is ESM, so there is no bare `require`. The yaml package is
-  // CommonJS, and it is only needed for the yaml paths, so it is required
-  // through createRequire rather than imported at the top.
-  const require_ = createRequire(import.meta.url);
-  const { parse } = require_("yaml") as typeof import("yaml");
-  return parse(text);
 }
 
 main(process.argv.slice(2))

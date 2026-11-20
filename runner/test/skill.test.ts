@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { execFileSync } from "node:child_process";
-import { readFileSync, readdirSync, existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
@@ -355,4 +355,72 @@ describe("the App script across platforms", () => {
     for (const p of ["darwin", "win32"]) expect(src).toContain(p);
     expect(src).toContain("xdg-open");
   });
+});
+
+describe("mine-corrections --merge-into (the skill's update mode)", () => {
+  /** A repo with rule-like prose and a revert, so mining finds something. */
+  function repoWithCorrections(): string {
+    const dir = mkdtempSync(join(tmpdir(), "bsf-remine-"));
+    const git = (...args: string[]) =>
+      execFileSync("git", args, { cwd: dir, stdio: "pipe", encoding: "utf8" });
+    git("init", "--quiet", "-b", "main");
+    git("config", "user.email", "t@t");
+    git("config", "user.name", "t");
+    writeFileSync(
+      join(dir, "CONTRIBUTING.md"),
+      [
+        "# Contributing",
+        "",
+        "Always route network calls through the apiClient wrapper rather than calling fetch directly.",
+        "",
+        "Never store money amounts as floating point numbers; use integer cents everywhere.",
+        "",
+      ].join("\n"),
+    );
+    git("add", "-A");
+    git("commit", "--quiet", "-m", "Add contributing guide");
+    return dir;
+  }
+
+  it("adds what is new and leaves a rejected candidate rejected", () => {
+    const dir = repoWithCorrections();
+    const list = join(dir, "candidates.json");
+
+    // First pass: whatever the repo's own prose yields.
+    const first = execFileSync(
+      "node",
+      [join(SCRIPTS, "../../runner/dist/cli.js"), "mine-corrections", "--repo-path", dir, "--merge-into", list],
+      { encoding: "utf8", stdio: "pipe" },
+    );
+    expect(first).toContain("new");
+    const after = JSON.parse(readFileSync(list, "utf8")) as {
+      candidates: { problem_class: string; status: string; occurrences: number }[];
+    };
+    expect(after.candidates.length).toBeGreaterThan(0);
+
+    // Reject one, then re-mine the same repo.
+    const rejected = after.candidates[0]!.problem_class;
+    writeFileSync(
+      list,
+      JSON.stringify(
+        { schema: "candidates/1", candidates: after.candidates.map((c) => ({ ...c, status: "rejected" })) },
+        null,
+        2,
+      ),
+    );
+    const second = execFileSync(
+      "node",
+      [join(SCRIPTS, "../../runner/dist/cli.js"), "mine-corrections", "--repo-path", dir, "--merge-into", list],
+      { encoding: "utf8", stdio: "pipe" },
+    );
+
+    // The whole point of update mode: nothing the user turned down comes back.
+    expect(second).toContain("already decided and not re-offered");
+    const final = JSON.parse(readFileSync(list, "utf8")) as {
+      candidates: { problem_class: string; status: string }[];
+    };
+    expect(final.candidates.filter((c) => c.problem_class === rejected)).toHaveLength(1);
+    expect(final.candidates.every((c) => c.status === "rejected")).toBe(true);
+    rmSync(dir, { recursive: true, force: true });
+  }, 120_000);
 });

@@ -98,3 +98,51 @@ export interface PullRequestFacts {
   /** The work item's spec, for the declared-test-edit check. */
   readonly declared_test_edits?: readonly string[];
 }
+
+/**
+ * A guardrail candidate as `candidates.json` holds it — wider than what
+ * mining produces, because the shared file also carries candidates from the
+ * repository's own history, from reviews and from escalations, and carries
+ * the status a human gave them.
+ */
+export type CandidateSourceKind =
+  | "agent_chat"
+  | "review_comment"
+  | "revert"
+  | "fix_commit"
+  | "bug"
+  | "prose_rule"
+  | "escalation"
+  | "review_failure";
+
+export interface CandidateSource {
+  readonly kind: CandidateSourceKind;
+  readonly harness?: Harness;
+  readonly session?: string;
+  readonly quote?: string;
+  readonly pr?: number;
+  readonly commit?: string;
+  readonly issue?: number;
+  readonly path?: string;
+  readonly at?: string;
+}
+
+export interface Candidate {
+  readonly id: string;
+  readonly problem_class: string;
+  readonly occurrences: number;
+  readonly first_seen?: string;
+  readonly last_seen?: string;
+  readonly sources: readonly CandidateSource[];
+  readonly proposed_fix: "api_change" | "static_rule" | "verification" | "context";
+  readonly status: "pending" | "accepted" | "rejected" | "installed";
+  readonly installed_as?: string | null;
+  readonly critical_logic?: boolean;
+  /** Who submitted it with `bsf contribute-corrections`; absent if setup mined it. */
+  readonly contributed_by?: string | null;
+}
+
+export interface CandidatesFile {
+  readonly schema: "candidates/1";
+  readonly candidates: readonly Candidate[];
+}

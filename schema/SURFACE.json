@@ -301,6 +301,7 @@
       "/properties/candidates/items": {
         "type": "object",
         "properties": [
+          "contributed_by",
           "critical_logic",
           "first_seen",
           "id",
@@ -421,6 +422,9 @@
       },
       "/properties/candidates/items/properties/critical_logic": {
         "type": "boolean"
+      },
+      "/properties/candidates/items/properties/contributed_by": {
+        "type": "null|string"
       }
     },
     "coverage.json": {
