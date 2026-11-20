@@ -1,106 +1,103 @@
 # Phase 2 — Make it runnable
 
-Produce a sandbox where an agent can build the app, run its tests, and verify
-it at runtime with real tools. This phase is the one most likely to fail, and
-the one it is most important not to fake.
+Produce a sandbox where agents can build the app, run its tests, and see it
+running — for this repo, whatever its language, framework or services — and
+prove it. Nothing here runs on the user's machine.
 
-**Done when the app starts in the sandbox and a screenshot shows it working.**
-If you cannot get there, stop and show the user the failing step. Do not
-continue. A factory that cannot verify anything still produces confident PRs,
-which is worse than no factory.
+**Done when the setup PR is open with a frozen sandbox manifest.** Its `tier`
+says how far verification can go, measured rather than claimed.
 
-## Steps
+## How it works
 
-1. **Reuse first.** An existing devcontainer, Dockerfile or setup script
-   becomes the base. Describe the result as a standard `devcontainer.json` so
-   any devcontainer tool can open it.
-2. **Otherwise generate one** from the assessment: language runtimes, package
-   install, the services the app needs as sidecars, and a headless browser for
-   runtime verification.
-3. **Write the runbook** (`context/runbook.md`): build, run, test, verify and
-   seed-data commands. Test every one of them.
-4. **Prove it works.** Build the sandbox with Docker, run the tests, start the
-   app, and have a verifier agent open it in a browser through Playwright, with
-   Playwright taking the screenshot.
-5. **List the secrets the app needs to run**, store them as repo secrets, and
-   have the sandbox read them from the environment.
+1. **Bootstrap.** `node scripts/install-factory.mjs --into <checkout>` on a
+   branch: the packed runner (`.factory/bin`), the definition templates, the
+   guardrail files, and every workflow, precompiled. Write the user's product
+   answers into `practices.md` and `fundamentals.md`'s product intent. Open
+   the bootstrap PR. It changes protected paths, so the user's merge is the
+   approval.
+2. **Dispatch `factory-setup`.** It runs unattended:
+   - **Design.** The setup agent reads the repo and writes a complete
+     candidate: the four context files, `manifest.json`, any stub servers, and
+     the documentation hosts of the repo's stack.
+   - **Trial.** `bsf sandbox trial`, on the runner where Docker is, brings up
+     exactly what the candidate declares, runs install, build and test,
+     starts the app, waits for `app_url`, and screenshots it. It records the
+     tier actually reached and the last lines of every step's output.
+   - **Again, if it fell short.** The next design round reads the failing
+     step's output and changes the smallest thing that explains it. Three
+     rounds at most.
+   - **Freeze.** `bsf sandbox freeze` takes the best measured round and
+     writes its manifest at the tier the trial reached, with every round on
+     the record. The job opens the setup PR.
+3. **The user merges it.** The factory exists from that commit.
 
-## The thing that will bite you
+## Why it is built this way
 
-**Never let the sandbox inherit real credentials.**
+The first version reused the repo's deployment logic — its Dockerfile, its
+commands, the secrets the app needs — and then warned against inheriting real
+credentials. Deployment logic exists to reach production; reusing it and
+spotting the dangerous parts is a denylist, and it holds only until the
+hazard takes a shape nobody listed: an `ENTRYPOINT` that runs a release
+script, a config file that loads `.env.local` on import, a build that chains
+a migration.
 
-A repo's documented build command is not safe to run just because it is
-documented. `npm run build` that chains a database migration will migrate
-whatever `DATABASE_URL` points at, and on a developer's machine that is their
-real database. Config files load `.env` files without being asked:
-`drizzle.config.ts` calling `config({ path: ".env.local" })` is normal, and it
-means a build inherits whatever that file holds.
+A rule-based generator was tried next and failed on the first real repo: it
+pointed `SITE_URL` — the app's own origin — at a host that cannot resolve,
+which broke sign-in and with it every page. No rule can tell the app's own
+origin from a third party's URL by its name. Reading the code can.
 
-So:
+So the agent chooses every value, by reading, and three properties make that
+safe whatever it chooses:
 
-- Build the sandbox's environment from **an explicit list of throwaway
-  values**. A positive list, not a denylist — `.env.local` is only today's
-  example.
-- **Classify the repo's commands rather than copying them.** Record which
-  touch persistent state, and keep those out of the build path. The runbook
-  records `build` and `migrate` as separate commands, with `migrate` marked.
+- **The environment is closed.** The sandbox gives the app exactly the
+  manifest's variables and nothing from the runner. A variable the agent
+  missed is absent, so the app fails loudly instead of quietly reaching
+  something real. A test sets a variable on the runner and asserts it never
+  arrives.
+- **No credential of the user's is in it.** A value is the app's own correct
+  configuration, a throwaway service, a local stub, or a named test-mode
+  secret from `FACTORY_SANDBOX_ENV`. Never a production key.
+- **The claim is measured.** The trial, not the agent, decides the tier.
 
-  Do not do this by reading the manifest and judging. Run it:
+## Variable kinds
 
-  ```sh
-  bsf consistency --root . --json
-  ```
+| Kind | For | Value |
+| --- | --- | --- |
+| `self` | The app's own configuration | Its correct value: `http://localhost:3000`, the real domain allowlist |
+| `service` | Something the sandbox can run | Points at a throwaway service on `127.0.0.1` |
+| `stub` | A third party it cannot run | A local server answering in the real API's shapes, with provenance |
+| `test_mode` | A provider's real test mode | The name of a secret in `FACTORY_SANDBOX_ENV`, never a value |
+| `inert` | Last resort, so the app starts | Listed under `capabilities.not_exercised` |
 
-  `runbook_command_touches_state` findings are the ones that matter here. The
-  check walks each script's chain, `pre`/`post` hooks included, and knows the
-  difference between `drizzle-kit generate` (codegen, harmless) and
-  `drizzle-kit migrate` (applies SQL). It fires only on scripts whose names
-  promise they are safe to re-run — `build`, `test`, `verify`, `start` and
-  their kin — because `npm run deploy` deploying is that script doing its job.
+## What the roles get
 
-  When it fires, there are two fixes and the user picks:
+The roles bring the frozen sandbox up with `bsf sandbox start`, which reads
+the manifest from the default branch — never from the change being judged —
+starts its services, writes the closed environment to
+`.factory/sandbox/.runtime.env` (excluded from every commit), and runs its
+install. The builder and verifier source that file, start the app with the
+manifest's `run` command, and use the browser at `app_url`.
 
-  1. **Give the factory the inner command.** `next build` instead of
-     `npm run build`. Right when the side effect is not part of verifying.
-  2. **Point it at a throwaway target and record that in the runbook.** Right
-     when the app genuinely cannot start without a migrated database.
+## When the sandbox is not enough
 
-  Writing the reason in the runbook clears the finding, which is the point:
-  the check enforces that the decision was made, not which way it went.
-- **Test for it.** Run the build and test commands with no credentials present
-  and watch for one that wanted something real. The user will not know this
-  about their own repo; most people do not — and a user who does know may have
-  written the coupling down as expected, which it is for them, by hand, on
-  their own machine. That note is about them running it. It says nothing about
-  an agent running it on every pull request, which is the case you are here to
-  make safe.
+A builder or verifier that cannot exercise what a change needs writes a
+structured report: what it needed, which paths, why. That report dispatches
+`factory-setup` with `amend` set; the next episode starts from the current
+manifest, extends it, and opens an amendment PR. That is the only way the
+sandbox changes after setup.
 
-This matters beyond tidiness. The factory's safety rests on the worst case
-being a draft PR nobody has to merge. A live credential in the sandbox changes
-the ceiling on a prompt injection from "bad code in a reviewable diff" to
-"dropped a table", and none of the gates sit where they would catch it.
+## Commands with side effects
 
-## Sidecar services and the sandbox posture
+`bsf consistency` reports, as `runbook_command_touches_state`, a command the
+runbook runs whose chain applies migrations, deploys or publishes. Under the
+sandbox it acts on a throwaway target; the finding exists so the runbook says
+so.
 
-An agent runs inside gh-aw's AWF sandbox. Reaching a published GitHub Actions
-`services:` port from in there requires `sandbox.agent.runtime:
-docker-sudo-iptables`, which runs AWF with host privileges — every other
-profile refuses published service connectivity.
+## Sidecars and the agent's network
 
-So:
-
-- **Try the cheaper thing first.** Start the dependency inside the agent's own
-  network from `pre-agent-steps`, with a `docker run`, rather than as an
-  Actions service. If that works, the default profile is enough.
-- **If it needs the weaker profile, say so.** Tell the user their repo gets a
-  measurably weaker isolation level than one whose app needs no database, and
-  why. Do not bury it.
-- The posture is a **compile-time** literal: gh-aw takes no expression for it.
-  Decide here; phase 6 writes it in before compiling. Changing it later needs a
-  recompile.
-
-## The devcontainer is the app's environment, not the agent's
-
-The agent runs in AWF's own container. The devcontainer holds the app, and the
-agent reaches it from the sandbox, with `sandbox.agent.mounts` exposing the
-workspace. Do not try to make the devcontainer image the agent's image.
+Services run on the runner, published on `127.0.0.1`. An agent inside AWF
+reaching a published port needs `sandbox.agent.runtime:
+docker-sudo-iptables`, a weaker isolation profile, so the default compiled
+roles do not assume it. A repo whose sandbox has services is recompiled at
+setup with that posture; tell the user it gets a measurably weaker isolation
+level than a repo with none, and why.

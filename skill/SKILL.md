@@ -5,8 +5,9 @@ description: Turn an existing GitHub repo into a running software factory — gu
 
 # Build Software Factory — setup
 
-You are setting up a software factory on the user's repo. One session, one
-setup PR, and as little asked of them as possible.
+You are setting up a software factory on the user's repo. Everything the user
+does happens at the start and takes minutes; then it runs unattended and ends
+in a pull request they merge.
 
 Work through the phases in order. Each has a reference file with the detail —
 read it when you start that phase, not before.
@@ -19,23 +20,29 @@ reads as a hang.
 
 | They do | You do |
 | --- | --- |
-| Approve reading past agent sessions, and exclude any they want to | Mine every past correction you can find |
 | Click **Create**, then **Install** on GitHub's App pages | Everything around it, via `scripts/create-app.mjs` |
 | Paste a model API key once | Store it as a repo secret |
-| Accept or reject guardrail candidates in one list | Turn the accepted ones into rules, tests or context |
-| Confirm a monthly budget | Estimate it from the repo's last 90 days |
-| Merge the setup PR | Everything else |
+| Answer a few questions about the product | Turn the answers into its intent and its first practices |
+| Merge the bootstrap PR | Install the runner, the definition and the workflows in it |
+| Merge the setup PR | Everything between the two: the setup episode runs on its own |
 
 Nothing else is theirs. If you find yourself about to ask for something not on
 that list, you are about to do their job for them — work it out instead, say
 what you decided, and move on.
 
+Nothing runs on their machine. The sandbox is designed and proved in their
+GitHub Actions, so they need no Docker and no toolchain.
+
+**Later, what they can say whenever they like:** `/practice <anything>` as a
+comment on any issue or PR adds a standing instruction every agent follows,
+through a PR they approve.
+
 ## Before you start
 
 Run `node scripts/preflight.mjs` and stop on anything it reports. It checks:
 a git repo on GitHub, `gh` signed in with admin rights, a clean tree on the
-default branch, a supported language, Docker for phase 2, and the repo's plan
-and visibility.
+default branch, and the repo's plan and visibility. Not Docker, and not any
+language toolchain: nothing of phase 2 runs here.
 
 Plan and visibility decide enforcement, so say which applies up front:
 
@@ -63,23 +70,27 @@ Output: `assessment.md` on the setup branch, and the first `candidates.json`.
 
 `references/phase-2-sandbox.md`
 
-Produce a sandbox where an agent can build the app, run its tests and verify
-it in a browser. Reuse an existing devcontainer or Dockerfile if there is one.
+Install the factory's own files with `scripts/install-factory.mjs` on a
+branch, write the product answers into `practices.md` and the product-intent
+section of `fundamentals.md`, and open the **bootstrap PR**. When it is
+merged, dispatch `factory-setup`. From there it runs on its own:
 
-**Done when the app starts in the sandbox and a screenshot shows it working.**
-If you cannot get there, stop and show the failing step. A factory that cannot
-verify anything is worse than no factory, because it produces confident
-unverified PRs.
+- the setup agent reads the repo and writes a complete candidate — every
+  context file, and a sandbox manifest whose values it chose by reading what
+  the code does with each one;
+- the runner brings up exactly that candidate and measures the tier it
+  reaches: the app renders and is screenshotted, or it builds and its tests
+  pass, or neither;
+- up to three rounds while the measured tier falls short of the claim, then
+  the best round is frozen into the **setup PR**.
 
-Two things to get right here, both of which have bitten:
+Tell the user the tier it reached and, below `renders`, what stopped it — the
+manifest records why. A repo that can only reach `build_and_test` still gets a
+factory; its gates claim no more than that tier allows.
 
-- **Never let the sandbox inherit real credentials.** Build its environment
-  from an explicit list of throwaway values. Not the developer's environment,
-  and not any `.env` file. A documented build command that runs a migration
-  will migrate whatever `DATABASE_URL` points at, and on a developer's machine
-  that is their real database.
-- **Classify the repo's commands, don't copy them.** Record which touch
-  persistent state and keep those out of the build path.
+You do not design the sandbox yourself, and you do not hand it any credential
+of the user's. The agent decides the values; the closed environment and the
+trial make that safe.
 
 ## Phase 3 — Install guardrails
 
