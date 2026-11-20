@@ -49,8 +49,11 @@ permissions:
   issues: read
 
 network:
-  # The spec reads the web, so its firewall is open to it. It writes nothing
-  # but a plan; everything else it could do is read-only by its tools.
+  # The spec researches beyond the repo, so it reaches package registries and
+  # their documentation, GitHub, and general references. Not a bare wildcard:
+  # an agent that can fetch any page is one any page can try to steer. Setup
+  # adds the documentation hosts of this repo's own stack here, chosen by
+  # reading the repo, before it recompiles — reviewable in the setup PR.
   allowed:
     - api.anthropic.com
     - defaults
@@ -62,7 +65,14 @@ network:
     - java
     - dotnet
     - github
-    - "*"
+    - developer.mozilla.org
+    - stackoverflow.com
+    - en.wikipedia.org
+    - pkg.go.dev
+    - docs.rs
+    - docs.python.org
+    - nodejs.org
+    - learn.microsoft.com
 
 sandbox:
   agent:
