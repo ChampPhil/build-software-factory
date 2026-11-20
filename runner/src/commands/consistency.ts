@@ -1,6 +1,7 @@
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { scriptHazards, describeHazard } from "../lib/script_hazards.js";
+import { outcome, notApplicable, allFindings, type CheckOutcome } from "../lib/applicability.js";
 
 /**
  * Cross-artifact consistency — the twelfth analysis kind (doc 01).
@@ -65,6 +66,19 @@ export function envVarsUsed(source: string): readonly string[] {
     /os\.Getenv\(\s*"([A-Z][A-Z0-9_]{2,})"/g,
     // The ${{ secrets.<name> }} and ${{ vars.<name> }} forms in workflows
     /\$\{\{\s*(?:secrets|vars)\.([A-Z][A-Z0-9_]{2,})\s*\}\}/g,
+    // Java and Kotlin: System.getenv("<name>")
+    /System\.getenv\(\s*"([A-Z][A-Z0-9_]{2,})"/g,
+    // C#: Environment.GetEnvironmentVariable("<name>")
+    /Environment\.GetEnvironmentVariable\(\s*"([A-Z][A-Z0-9_]{2,})"/g,
+    // Rust: env::var("<name>"), std::env::var_os("<name>")
+    /env::var(?:_os)?\(\s*"([A-Z][A-Z0-9_]{2,})"/g,
+    // Ruby: ENV["<name>"], ENV.fetch("<name>")
+    /ENV(?:\.fetch\(|\[)\s*["']([A-Z][A-Z0-9_]{2,})["']/g,
+    // PHP: getenv('<name>'), $_ENV['<name>'], $_SERVER['<name>']
+    /getenv\(\s*["']([A-Z][A-Z0-9_]{2,})["']/g,
+    /\$_(?:ENV|SERVER)\[\s*["']([A-Z][A-Z0-9_]{2,})["']/g,
+    // Elixir: System.get_env("<name>"), System.fetch_env!("<name>")
+    /System\.(?:get_env|fetch_env!?)\(\s*"([A-Z][A-Z0-9_]{2,})"/g,
   ];
   for (const re of patterns) {
     for (const m of source.matchAll(re)) {
@@ -130,7 +144,61 @@ export function isTestPath(path: string): boolean {
   );
 }
 
+/** Extensions of the languages `envVarsUsed` reads. */
+export const ENV_LANGUAGES = /\.(ts|tsx|js|jsx|mjs|cjs|py|go|java|kt|kts|cs|rs|rb|php|ex|exs|ya?ml)$/;
+
+/** Just the findings, for callers that only act on problems. */
 export function checkConsistency(input: ConsistencyInput): readonly ConsistencyFinding[] {
+  return allFindings(checkConsistencyOutcomes(input));
+}
+
+/**
+ * Every check, each saying whether it found something, found nothing, or
+ * could not apply here — and why. An empty list used to mean all three.
+ */
+export function checkConsistencyOutcomes(input: ConsistencyInput): readonly CheckOutcome<ConsistencyFinding>[] {
+  const exists = (p: string): boolean =>
+    input.read === undefined ? existsSync(join(input.root, p)) : safe(() => input.read?.(p)) !== null;
+  const findings = findConsistency(input);
+  const of = (check: ConsistencyFinding["check"]): readonly ConsistencyFinding[] => findings.filter((f) => f.check === check);
+
+  const sources = input.files.filter((f) => ENV_LANGUAGES.test(f) && !isTestPath(f));
+  const example = [".env.example", ".env.sample", ".env.template"].find(exists);
+  const readme = ["README.md", "readme.md", "Readme.md"].find(exists);
+  const hasPkg = exists("package.json");
+  const out: CheckOutcome<ConsistencyFinding>[] = [];
+
+  if (sources.length === 0) {
+    const why = "no source in a language this check reads (JS/TS, Python, Go, Java, Kotlin, C#, Rust, Ruby, PHP, Elixir)";
+    out.push(notApplicable("env_no_example", why), notApplicable("env_undocumented", why), notApplicable("env_unused", why));
+  } else {
+    out.push(outcome("env_no_example", of("env_no_example")));
+    if (example === undefined) {
+      const why = "there is no .env.example to compare the code against";
+      out.push(notApplicable("env_undocumented", why), notApplicable("env_unused", why));
+    } else {
+      out.push(outcome("env_undocumented", of("env_undocumented")), outcome("env_unused", of("env_unused")));
+    }
+  }
+
+  if (!hasPkg) out.push(notApplicable("documented_script_missing", "it compares a README with npm scripts, and there is no package.json"));
+  else if (readme === undefined) out.push(notApplicable("documented_script_missing", "there is no README to read commands from"));
+  else out.push(outcome("documented_script_missing", of("documented_script_missing")));
+
+  if (!hasPkg) out.push(notApplicable("dependency_unlocked", "it compares package.json with package-lock.json, and there is no package.json"));
+  else if (!exists("package-lock.json")) {
+    out.push(notApplicable("dependency_unlocked", "it reads package-lock.json; this repo's lockfile, if any, is another format"));
+  } else out.push(outcome("dependency_unlocked", of("dependency_unlocked")));
+
+  const runbook = ["context/runbook.md", "context/RUNBOOK.md"].find(exists);
+  if (runbook === undefined) out.push(notApplicable("runbook_command_touches_state", "there is no factory runbook here to check"));
+  else if (!hasPkg) out.push(notApplicable("runbook_command_touches_state", "it reads npm script chains, and there is no package.json"));
+  else out.push(outcome("runbook_command_touches_state", of("runbook_command_touches_state")));
+
+  return out;
+}
+
+function findConsistency(input: ConsistencyInput): readonly ConsistencyFinding[] {
   const read = input.read ?? ((p: string) => readFileSync(join(input.root, p), "utf8"));
   const exists = (p: string): boolean =>
     input.read === undefined ? existsSync(join(input.root, p)) : safe(() => input.read?.(p)) !== null;

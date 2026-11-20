@@ -21,7 +21,8 @@ import { benchmarkResultPath, FactoryStore, json } from "./lib/store.js";
 import type { CandidatesFile } from "./lib/types.js";
 import { runDoctor, formatReport } from "./commands/doctor.js";
 import { findDashboard, serveDashboard } from "./commands/serve.js";
-import { checkConsistency } from "./commands/consistency.js";
+import { checkConsistencyOutcomes } from "./commands/consistency.js";
+import { allFindings, describeOutcomes } from "./lib/applicability.js";
 import {
   submitContribution,
   mergeContribution,
@@ -57,7 +58,7 @@ import {
   type BenchmarkTask,
 } from "./commands/benchmark.js";
 import { runBenchmarkTask, type BenchmarkTaskInput } from "./commands/benchmark-run.js";
-import { readFileSync, appendFileSync, writeFileSync, mkdirSync, existsSync, readdirSync } from "node:fs";
+import { readFileSync, appendFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -1233,30 +1234,51 @@ async function modelsCommand(): Promise<number> {
 async function consistencyCommand(args: Args): Promise<number> {
   const root = typeof args["root"] === "string" ? args["root"] : process.cwd();
 
-  // The files git knows about, so node_modules and build output are out
-  // without a list of directories to ignore going stale.
-  const tracked = await trackedFiles(root);
-  const files = tracked.filter((f) =>
-    /\.(ts|tsx|js|jsx|mjs|cjs|py|go|rb|rs|cs|java|ya?ml)$/.test(f),
-  );
-
-  const findings = checkConsistency({ root, files });
+  // Every tracked text file, rather than a list of extensions: a list left a
+  // C++ or Swift repo invisible. git knows what is generated and vendored.
+  const files = textFiles(root, await trackedFiles(root));
+  const outcomes = checkConsistencyOutcomes({ root, files });
+  const findings = allFindings(outcomes);
 
   if (args["json"] === true) {
-    process.stdout.write(`${JSON.stringify({ files: files.length, findings }, null, 2)}\n`);
-  } else if (findings.length === 0) {
-    process.stdout.write(`nothing inconsistent across ${files.length} file(s)\n`);
+    process.stdout.write(`${JSON.stringify({ files: files.length, outcomes, findings }, null, 2)}\n`);
   } else {
+    process.stdout.write(`${describeOutcomes(outcomes)}\n\n`);
     for (const f of findings) {
       process.stdout.write(`${f.check}\n  ${f.detail}\n  between ${f.between[0]} and ${f.between[1]}\n`);
     }
-    process.stdout.write(`\n${findings.length} inconsistency(ies)\n`);
+    const applied = outcomes.filter((o) => o.state !== "not_applicable").length;
+    process.stdout.write(
+      `${findings.length} inconsistency(ies) across ${files.length} file(s); ${applied} of ${outcomes.length} checks applied here\n`,
+    );
   }
 
   setOutput("inconsistencies", String(findings.length));
+  setOutput("checks_applied", String(outcomes.filter((o) => o.state !== "not_applicable").length));
   // Reported, not failed: every one of these needs a person to say which of
   // the two artifacts is the one that is wrong.
   return 0;
+}
+
+/**
+ * Tracked files that are text and not huge. Content-sniffed rather than
+ * matched by extension, so every language counts.
+ */
+function textFiles(root: string, tracked: readonly string[]): string[] {
+  const out: string[] = [];
+  for (const f of tracked) {
+    try {
+      const full = join(root, f);
+      const size = statSync(full).size;
+      if (size === 0 || size > 1_000_000) continue;
+      const head = readFileSync(full).subarray(0, 8000);
+      if (head.includes(0)) continue; // binary
+      out.push(f);
+    } catch {
+      /* deleted or unreadable: skip */
+    }
+  }
+  return out;
 }
 
 async function trackedFiles(root: string): Promise<readonly string[]> {
