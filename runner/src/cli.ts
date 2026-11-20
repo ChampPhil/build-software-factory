@@ -22,6 +22,7 @@ import type { CandidatesFile } from "./lib/types.js";
 import { runDoctor, formatReport } from "./commands/doctor.js";
 import { findDashboard, serveDashboard } from "./commands/serve.js";
 import { checkConsistency } from "./commands/consistency.js";
+import { planSandbox, formatPlan } from "./commands/sandbox-plan.js";
 import {
   submitContribution,
   mergeContribution,
@@ -197,6 +198,7 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
       user already rejected must not be offered again.
 
   bsf consistency [--root PATH] [--json]
+  bsf sandbox-plan [--root PATH] [--json]
       Compare the artifacts that are supposed to agree: environment variables
       the code reads against the example file, commands the README tells
       people to run against the manifest's scripts, declared dependencies
@@ -391,6 +393,8 @@ async function main(argv: readonly string[]): Promise<number> {
 
     case "consistency":
       return consistencyCommand(args);
+    case "sandbox-plan":
+      return sandboxPlanCommand(args);
 
     case "dashboard":
       return dashboardCommand(args);
@@ -988,6 +992,28 @@ async function auditCommand(args: Args): Promise<number> {
   for (const f of report.findings) process.stderr.write(`${f.kind}: ${f.detail}\n`);
   setOutput("findings", String(report.findings.length));
   return 1;
+}
+
+async function sandboxPlanCommand(args: Args): Promise<number> {
+  const root = typeof args["root"] === "string" ? args["root"] : process.cwd();
+
+  const tracked = await trackedFiles(root);
+  const files = tracked.filter((f) =>
+    /\.(ts|tsx|js|jsx|mjs|cjs|py|go|rb|rs|cs|java|ya?ml)$/.test(f),
+  );
+
+  const plan = planSandbox({ root, files });
+
+  if (args["json"] === true) {
+    process.stdout.write(`${JSON.stringify(plan, null, 2)}\n`);
+  } else {
+    process.stdout.write(`${formatPlan(plan)}\n`);
+  }
+
+  setOutput("sandbox_inert_vars", String(plan.env.filter((v) => v.kind === "inert").length));
+  setOutput("sandbox_side_effects", String(plan.sideEffects.length));
+  // A plan, not a verdict. Phase 2 decides what to do with it.
+  return 0;
 }
 
 async function consistencyCommand(args: Args): Promise<number> {

@@ -4,43 +4,93 @@ Produce a sandbox where an agent can build the app, run its tests, and verify
 it at runtime with real tools. This phase is the one most likely to fail, and
 the one it is most important not to fake.
 
-**Done when the app starts in the sandbox and a screenshot shows it working.**
-If you cannot get there, stop and show the user the failing step. Do not
-continue. A factory that cannot verify anything still produces confident PRs,
-which is worse than no factory.
+**Done when the app starts in the sandbox, a screenshot shows it working, and
+the containment checks pass.** If you cannot get there, stop and show the user
+the failing step. Do not continue. A factory that cannot verify anything still
+produces confident PRs, which is worse than no factory.
 
 ## Steps
 
-1. **Reuse first.** An existing devcontainer, Dockerfile or setup script
-   becomes the base. Describe the result as a standard `devcontainer.json` so
-   any devcontainer tool can open it.
-2. **Otherwise generate one** from the assessment: language runtimes, package
-   install, the services the app needs as sidecars, and a headless browser for
-   runtime verification.
-3. **Write the runbook** (`context/runbook.md`): build, run, test, verify and
-   seed-data commands. Test every one of them.
-4. **Prove it works.** Build the sandbox with Docker, run the tests, start the
-   app, and have a verifier agent open it in a browser through Playwright, with
-   Playwright taking the screenshot.
-5. **List the secrets the app needs to run**, store them as repo secrets, and
-   have the sandbox read them from the environment.
+1. **Derive, do not inherit.** Run `bsf sandbox-plan --root .`. It reads the
+   repo for what the app *needs installed* and synthesizes everything the app
+   *reads*, so the sandbox is the same whichever agent builds it and the user
+   can read what it will contain before it runs.
 
-## The thing that will bite you
+   An existing devcontainer or Dockerfile is an input to this, not the base.
+   `bsf sandbox-plan` takes its runtimes and system packages and deliberately
+   drops its `ENTRYPOINT`, `CMD`, `HEALTHCHECK`, `EXPOSE` and `VOLUME`,
+   reporting each drop. Those describe what the *production* image does, and
+   inheriting them is how a sandbox ends up running the deployment path it was
+   built to avoid.
+2. **Add the sidecars the plan asks for** — Postgres, Redis, MinIO — plus a
+   headless browser for runtime verification. The plan's `usable` variables
+   already point at them.
+3. **Write the runbook** (`context/runbook.md`) from the plan's output: build,
+   run, test, verify and seed-data commands, the synthesized environment, the
+   egress allowlist, and the plan's "cannot establish" list. Test every command.
+4. **Prove it works, and prove it is contained.** Build the sandbox with
+   Docker, run the tests, start the app, and have a verifier agent open it in a
+   browser through Playwright, with Playwright taking the screenshot. Then run
+   the containment checks below. A sandbox that only passes the happy path has
+   not been shown to be a sandbox.
+5. **Give the sandbox no secret of the user's.** Not one. The environment is
+   exactly what `bsf sandbox-plan` synthesized and nothing else.
 
-**Never let the sandbox inherit real credentials.**
+## Why this phase is built the way it is
 
-A repo's documented build command is not safe to run just because it is
-documented. `npm run build` that chains a database migration will migrate
-whatever `DATABASE_URL` points at, and on a developer's machine that is their
-real database. Config files load `.env` files without being asked:
-`drizzle.config.ts` calling `config({ path: ".env.local" })` is normal, and it
-means a build inherits whatever that file holds.
+The first version of this phase said to reuse the repo's devcontainer or
+Dockerfile as the base, record the repo's own commands, and give the sandbox
+the secrets the app needs to run — and then warned, thirty lines later, never
+to let the sandbox inherit real credentials. Both were prose addressed to an
+agent, and they contradicted each other, so whichever an agent read more
+literally won.
+
+The deeper mistake was the premise. **Deployment logic exists in order to reach
+production.** Reusing it and then trying to spot the dangerous parts is a
+denylist, and it holds only until the hazard takes a shape nobody enumerated:
+
+- a Dockerfile `ENTRYPOINT` that runs a release script;
+- a compose service pointed at a real host;
+- a config file that loads `.env.local` on import — `drizzle.config.ts` calling
+  `config({ path: ".env.local" })` is normal, and it means a build inherits
+  whatever that file holds;
+- a `postinstall` hook, a Makefile target, a framework instrumentation file
+  that opens a connection on boot;
+- a variable read through a helper, so no scan of `process.env.NAME` finds it.
+
+Enumerating those is useful and never finishes. So the safety here does not
+come from which commands the sandbox avoids running. It comes from **what the
+sandbox cannot reach**:
+
+- Every variable the app reads is **synthesized**. No credential of the user's
+  is present, so there is nothing for a command to misuse.
+- Anything the app would dial points at `blocked.sandbox.invalid`. `.invalid`
+  is reserved by RFC 2606 and cannot resolve, so a request aimed at production
+  fails at DNS rather than at whatever happens to answer.
+- Egress is refused except for package registries. Not the app's own provider
+  domains: an app that cannot build without reaching its production API has a
+  build coupled to production, and the response is to say so, not to open the
+  hole.
+- The environment is **closed, not additive**. The sandbox receives exactly the
+  synthesized variables. This is the load-bearing part, because no static scan
+  can prove it found every variable an app reads — so a variable the scan
+  missed must be *absent*, making the app fail loudly on boot, rather than
+  *inherited*, making it work against whatever the host held.
+
+Under this, `npm run build` chaining `drizzle-kit migrate` stops being a hazard
+to detect and becomes a command that migrates a throwaway database, because the
+only connection string in the sandbox points at one.
+
+The command-level check (`runbook_command_touches_state`, below) stays, demoted
+to what it should always have been: a diagnostic that explains a failure and
+records which verification steps have side effects — not the thing standing
+between an agent and production.
 
 So:
 
-- Build the sandbox's environment from **an explicit list of throwaway
-  values**. A positive list, not a denylist — `.env.local` is only today's
-  example.
+- Build the sandbox's environment from **`bsf sandbox-plan`'s output and
+  nothing else**. A positive list, not a denylist — `.env.local` is only
+  today's example.
 - **Classify the repo's commands rather than copying them.** Record which
   touch persistent state, and keep those out of the build path. The runbook
   records `build` and `migrate` as separate commands, with `migrate` marked.
@@ -74,6 +124,46 @@ So:
   their own machine. That note is about them running it. It says nothing about
   an agent running it on every pull request, which is the case you are here to
   make safe.
+
+## Containment checks
+
+Step 4 is not done until these pass. Each one tries to do the thing the sandbox
+is supposed to prevent, because a sandbox that has only been shown to run the
+happy path has not been shown to be a sandbox.
+
+1. **DNS fails closed.** From inside the app container:
+
+   ```sh
+   getent hosts blocked.sandbox.invalid && echo FAIL || echo ok
+   ```
+
+   Must print `ok`. If this resolves, every inert URL in the plan is pointed at
+   something that answers.
+
+2. **Egress is refused.** Pick a host that is not on the allowlist and not the
+   app's own, and confirm the connection fails rather than hanging or
+   succeeding. A hang is a fail: the verifier will time out and someone will
+   "fix" it by widening the allowlist.
+
+3. **No host value reached the container.** Dump the container's environment and
+   diff the variable *values* against the plan. Every value must be local, end
+   in `.invalid`, carry the `sandbox-fake` sentinel, or be the generated key.
+   Anything else came from the host, and the sentinel exists so this diff is
+   mechanical rather than a judgement call.
+
+4. **The side-effecting command hits the throwaway.** Run the recorded build
+   with the synthesized environment, then confirm the migration landed in the
+   sandbox's own Postgres. This is the positive half of check 1: it proves the
+   command ran, rather than proving only that nothing broke.
+
+5. **A missed variable fails loudly.** Remove one variable from the synthesized
+   set and start the app. It must fail on boot. If it starts anyway, something
+   is supplying a default from the host and the closed-environment guarantee
+   does not hold for this repo.
+
+Record each result in the runbook. When check 5 cannot be made to fail, say so
+in the runbook and in what you tell the user: that repo's sandbox is weaker
+than this phase claims, and the user should know which claim is reduced.
 
 This matters beyond tidiness. The factory's safety rests on the worst case
 being a draft PR nobody has to merge. A live credential in the sandbox changes

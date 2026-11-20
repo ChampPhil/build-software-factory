@@ -102,7 +102,8 @@ export function documentedScripts(markdown: string, runner: "npm" | "yarn" | "pn
   return [...scripts].sort();
 }
 
-const IGNORED_ENV = new Set([
+/** Set by the platform, so no project synthesizes or documents these. */
+export const IGNORED_ENV = new Set([
   // Set by the platform, never written down by a project.
   "NODE_ENV", "CI", "HOME", "PATH", "PWD", "USER", "SHELL", "TZ", "LANG", "TERM",
   "PORT", "HOSTNAME", "DEBUG", "NODE_OPTIONS", "GITHUB_TOKEN", "GITHUB_OUTPUT",

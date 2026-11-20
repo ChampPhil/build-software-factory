@@ -113,6 +113,21 @@ repository token, and everything it produces leaves through gh-aw's safe
 outputs after threat detection. The network inside the sandbox is on an
 allowlist of the harness's own provider domains.
 
+**Two containers, and only one of them was covered.** The sentence above is
+about the *agent's* container. The *app's* container — the devcontainer where
+the repo's build, test and verify commands actually run — is a different
+container, and this review originally said nothing about it while phase 2 told
+the agent to give it the secrets the app needs to run. That was the gap: a
+build command chaining `drizzle-kit migrate` would have run with a real
+connection string and unreviewed, agent-authored SQL.
+
+It is now closed by construction rather than by review: `bsf sandbox-plan`
+synthesizes every variable the app reads, the app container is given exactly
+those and nothing else, dialable values point at a name reserved never to
+resolve, and egress is refused except to package registries. Phase 2's
+containment checks try to break each of those before the phase is allowed to
+pass. See `skill/references/phase-2-sandbox.md`.
+
 ## 7. Redaction
 
 **Checked:** `redact` in `mine.ts`, and its tests.
