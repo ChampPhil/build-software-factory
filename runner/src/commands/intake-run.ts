@@ -295,7 +295,7 @@ export async function runIntakeCommand(opts: IntakeRunOptions): Promise<IntakeRu
   const dispatched: string[] = [];
   if (opts.plan !== true) {
     for (const id of decision.dispatch) {
-      await opts.gh.dispatchWorkflow(opts.runWorkflow ?? "factory-run.yml", opts.ref ?? "main", {
+      await opts.gh.dispatchWorkflow(opts.runWorkflow ?? "factory-run.yml", opts.ref, {
         work_item: id,
       });
       dispatched.push(id);

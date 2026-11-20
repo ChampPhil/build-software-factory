@@ -335,7 +335,7 @@ export async function runReviewRoute(
       // Definition changes are benchmark-gated and a human approves them, so
       // they are queued rather than started here.
       if (f.destination === "definition") continue;
-      await opts.gh.dispatchWorkflow("factory-run.yml", opts.ref ?? "main", { work_item: f.work_item });
+      await opts.gh.dispatchWorkflow("factory-run.yml", opts.ref, { work_item: f.work_item });
       dispatched.push(f.work_item);
     }
   }

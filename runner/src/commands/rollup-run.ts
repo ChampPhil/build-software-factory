@@ -148,7 +148,7 @@ export async function runRollupCommand(opts: RollupOptions): Promise<RollupRepor
   const dispatched: string[] = [];
   if (opts.plan !== true) {
     for (const id of result.dispatch) {
-      await opts.gh.dispatchWorkflow(opts.runWorkflow ?? "factory-run.yml", opts.ref ?? "main", {
+      await opts.gh.dispatchWorkflow(opts.runWorkflow ?? "factory-run.yml", opts.ref, {
         work_item: id,
       });
       dispatched.push(id);

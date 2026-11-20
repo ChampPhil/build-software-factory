@@ -199,8 +199,15 @@ export class GitHub {
 
   /* ---------------------------------------------------------------- dispatches */
 
-  async dispatchWorkflow(workflow: string, ref: string, inputs: Record<string, string>): Promise<void> {
-    await this.send("POST", `${this.base}/actions/workflows/${workflow}/dispatches`, { ref, inputs });
+  /**
+   * Start a workflow. With no ref, it runs on the repository's default branch.
+   *
+   * Seven callers used to pass a literal "main", so on any repository whose
+   * default branch is anything else every dispatch the factory made failed.
+   */
+  async dispatchWorkflow(workflow: string, ref: string | undefined, inputs: Record<string, string>): Promise<void> {
+    const on = ref ?? (await this.defaultBranch());
+    await this.send("POST", `${this.base}/actions/workflows/${workflow}/dispatches`, { ref: on, inputs });
   }
 
   /* ------------------------------------------------------------------ contents */

@@ -16061,8 +16061,15 @@ var GitHub = class {
     });
   }
   /* ---------------------------------------------------------------- dispatches */
+  /**
+   * Start a workflow. With no ref, it runs on the repository's default branch.
+   *
+   * Seven callers used to pass a literal "main", so on any repository whose
+   * default branch is anything else every dispatch the factory made failed.
+   */
   async dispatchWorkflow(workflow, ref, inputs) {
-    await this.send("POST", `${this.base}/actions/workflows/${workflow}/dispatches`, { ref, inputs });
+    const on = ref ?? await this.defaultBranch();
+    await this.send("POST", `${this.base}/actions/workflows/${workflow}/dispatches`, { ref: on, inputs });
   }
   /* ------------------------------------------------------------------ contents */
   /** Read a file at a ref. The gates read policy.yaml from the default branch. */
@@ -20122,7 +20129,7 @@ async function runIntakeCommand(opts) {
   const dispatched = [];
   if (opts.plan !== true) {
     for (const id of decision.dispatch) {
-      await opts.gh.dispatchWorkflow(opts.runWorkflow ?? "factory-run.yml", opts.ref ?? "main", {
+      await opts.gh.dispatchWorkflow(opts.runWorkflow ?? "factory-run.yml", opts.ref, {
         work_item: id
       });
       dispatched.push(id);
@@ -20336,7 +20343,7 @@ async function runRollupCommand(opts) {
   const dispatched = [];
   if (opts.plan !== true) {
     for (const id of result.dispatch) {
-      await opts.gh.dispatchWorkflow(opts.runWorkflow ?? "factory-run.yml", opts.ref ?? "main", {
+      await opts.gh.dispatchWorkflow(opts.runWorkflow ?? "factory-run.yml", opts.ref, {
         work_item: id
       });
       dispatched.push(id);
@@ -20598,7 +20605,7 @@ async function apply(opts, action, candidates) {
     case "not_eligible":
       return null;
     case "resolve_conflict":
-      await opts.gh.dispatchWorkflow("factory-run.yml", "main", {
+      await opts.gh.dispatchWorkflow("factory-run.yml", void 0, {
         work_item: head.work_item,
         reason: "conflict"
       });
@@ -20609,7 +20616,7 @@ async function apply(opts, action, candidates) {
       });
       return `updated #${action.pr} from main`;
     case "recheck":
-      await opts.gh.dispatchWorkflow("factory-gates.yml", "main", { pr: String(action.pr) });
+      await opts.gh.dispatchWorkflow("factory-gates.yml", void 0, { pr: String(action.pr) });
       return `re-ran the gates on #${action.pr}`;
     case "merge": {
       if (opts.nativeQueue) {
@@ -20774,7 +20781,7 @@ ${item.files.map((f) => `- ${f}`).join("\n")}`,
   const dispatched = [];
   if (opts.plan !== true) {
     for (const id of filed.slice(0, Math.max(0, slots))) {
-      await opts.gh.dispatchWorkflow("factory-run.yml", opts.ref ?? "main", { work_item: id });
+      await opts.gh.dispatchWorkflow("factory-run.yml", opts.ref, { work_item: id });
       dispatched.push(id);
     }
   }
@@ -20800,7 +20807,7 @@ async function runConflictsCommand(opts) {
   const dispatched = [];
   if (opts.dispatch !== false) {
     for (const c of conflicting) {
-      await opts.gh.dispatchWorkflow("factory-run.yml", opts.ref ?? "main", {
+      await opts.gh.dispatchWorkflow("factory-run.yml", opts.ref, {
         work_item: c.work_item,
         reason: "conflict"
       });
@@ -22712,7 +22719,7 @@ ${p.runs.map((r) => `- ${r}`).join("\n")}`,
   if (opts.plan !== true) {
     for (const f of filed) {
       if (f.destination === "definition") continue;
-      await opts.gh.dispatchWorkflow("factory-run.yml", opts.ref ?? "main", { work_item: f.work_item });
+      await opts.gh.dispatchWorkflow("factory-run.yml", opts.ref, { work_item: f.work_item });
       dispatched.push(f.work_item);
     }
   }
@@ -24728,6 +24735,7 @@ roles: ${plan.roles.join(" -> ") || "(none)"}
     setOutput("roles", plan.roles.join(","));
     setOutput("needs_triage", String(plan.roles.includes("triage")));
     setOutput("needs_hardener", String(plan.roles.includes("hardener")));
+    setOutput("needs_gardener", String(plan.roles.includes("gardener")));
     setOutput("needs_spec", String(plan.roles.includes("spec")));
     setOutput("protected_files_policy", protectedFilesPolicy);
     setOutput("proceed", String(!plan.escalate));

@@ -48,7 +48,7 @@ export async function runConflictsCommand(opts: ConflictsOptions): Promise<Confl
   const dispatched: string[] = [];
   if (opts.dispatch !== false) {
     for (const c of conflicting) {
-      await opts.gh.dispatchWorkflow("factory-run.yml", opts.ref ?? "main", {
+      await opts.gh.dispatchWorkflow("factory-run.yml", opts.ref, {
         work_item: c.work_item,
         reason: "conflict",
       });

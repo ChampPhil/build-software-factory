@@ -42,9 +42,6 @@ jobs:
           rm -rf .factory-trusted
           echo "$RUNNER_TEMP/bsf" >> "$GITHUB_PATH"
           "$RUNNER_TEMP/bsf/bsf" --version
-      - name: Read each role's model from factory.yaml
-        id: models
-        run: bsf models
       - name: Mint a token
         id: token
         uses: actions/create-github-app-token@v1
@@ -60,19 +57,13 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
         run: bsf budget check --pipeline gardening
+      # Files each item and dispatches factory-run for it, into free slots.
+      # factory-run then runs the gardening pipeline: gardener, builder,
+      # verifier. There was also a job here calling the gardener directly, left
+      # from an earlier design; it read outputs this job never set, so the
+      # gardener would have started with no work item.
       - name: Pick tonight's cleanup and file it as work items
         if: steps.budget.outputs.paused != 'true'
         env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
         run: bsf garden
-
-  gardener:
-    needs: garden
-    if: needs.garden.result == 'success'
-    uses: ./.github/workflows/factory-role-gardener.lock.yml
-    with:
-      model: ${{ needs.garden.outputs.model_gardener }}
-      max_prs: ${{ fromJSON(needs.garden.outputs.garden_max_prs) }}
-      work_item: ${{ needs.garden.outputs.work_item }}
-      pipeline: gardening
-    secrets: inherit

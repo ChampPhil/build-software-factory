@@ -107,10 +107,6 @@ jobs:
     needs: plan
     if: needs.plan.outputs.tests == 'true'
     runs-on: ubuntu-latest
-    # The app's own dependencies. Where a sidecar service is declared here,
-    # setup sets sandbox.agent.runtime to docker-sudo-iptables, because every
-    # other AWF profile rejects published service connectivity (spike §4a).
-    services: {}
     steps:
       - uses: actions/checkout@v4
         with:

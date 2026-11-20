@@ -210,14 +210,7 @@ describe("what only the API can tell us", () => {
         if (path.includes("actions/variables")) {
           return (
             over["variables"] ?? {
-              // Everything the installed templates bind to configuration. The
-              // gardener's PR budget is absent on purpose: its step defaults it.
-              variables: [
-                "FACTORY_APP_CLIENT_ID",
-                ...["BUILDER", "GARDENER", "HARDENER", "SCORER", "SPEC", "TRIAGE", "VERIFIER"].map(
-                  (r) => `FACTORY_MODEL_${r}`,
-                ),
-              ].map((name) => ({ name })),
+              variables: [{ name: "FACTORY_APP_CLIENT_ID" }],
             }
           );
         }
@@ -247,10 +240,9 @@ describe("what only the API can tell us", () => {
   it("catches a missing variable", async () => {
     const r = await runDoctor({ root, gh: fakeGh({ variables: { variables: [] } }) as never });
     expect(broken(r).map((f) => f.detail).join(" ")).toContain("FACTORY_APP_CLIENT_ID");
-    // A role's model is configuration: empty is wrong, not defaulted.
-    expect(broken(r).map((f) => f.detail).join(" ")).toContain("FACTORY_MODEL_BUILDER");
-    // Read only into a step's env, which supplies its own default.
-    expect(broken(r).map((f) => f.detail).join(" ")).not.toContain("FACTORY_GARDEN_MAX_PRS");
+    // Models are inputs read from factory.yaml now, not variables, so a repo
+    // with no FACTORY_MODEL_* variables is not broken.
+    expect(broken(r).map((f) => f.detail).join(" ")).not.toContain("FACTORY_MODEL");
   });
 
   it("calls an absent data ref degraded, since the first run creates it", async () => {
@@ -315,9 +307,8 @@ describe("requirements are read from the installed workflows", () => {
     // beforeEach has installed the templates into root.
     const r = referencedInWorkflows(root);
     expect(r.secrets).toEqual(["ANTHROPIC_API_KEY", "FACTORY_APP_PRIVATE_KEY"]);
-    expect(r.vars).toContain("FACTORY_APP_CLIENT_ID");
-    expect(r.vars).toContain("FACTORY_MODEL_SPEC");
-    expect(r.optionalVars).toEqual(["FACTORY_GARDEN_MAX_PRS"]);
+    expect(r.vars).toEqual(["FACTORY_APP_CLIENT_ID"]);
+    expect(r.optionalVars).toEqual([]);
   });
 
   it("follows an engine swap without a map of engines to key names", () => {
@@ -325,5 +316,27 @@ describe("requirements are read from the installed workflows", () => {
     const md = join(root, ".github/workflows/factory-role-spec.md");
     writeFileSync(md, readFileSync(md, "utf8").replace(/ANTHROPIC_API_KEY/g, "CURSOR_API_KEY"));
     expect(referencedInWorkflows(root).secrets).toContain("CURSOR_API_KEY");
+  });
+});
+
+describe("variable classification", () => {
+  it("treats a variable bound only to an env name as optional, anywhere else as required", () => {
+    const dir = mkdtempSync(join(tmpdir(), "bsf-vars-"));
+    mkdirSync(join(dir, ".github/workflows"), { recursive: true });
+    writeFileSync(
+      join(dir, ".github/workflows/factory-x.yml"),
+      [
+        "jobs:",
+        "  a:",
+        "    steps:",
+        "      - env:",
+        "          LIMIT: ${{ vars.SOME_LIMIT }}",
+        "      - with:",
+        "          app-id: ${{ vars.SOME_APP }}",
+      ].join("\n"),
+    );
+    const r = referencedInWorkflows(dir);
+    expect(r.vars).toEqual(["SOME_APP"]);
+    expect(r.optionalVars).toEqual(["SOME_LIMIT"]);
   });
 });

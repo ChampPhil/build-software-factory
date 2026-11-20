@@ -243,7 +243,7 @@ export async function runGardenCommand(opts: GardenOptions): Promise<GardenRepor
   const dispatched: string[] = [];
   if (opts.plan !== true) {
     for (const id of filed.slice(0, Math.max(0, slots))) {
-      await opts.gh.dispatchWorkflow("factory-run.yml", opts.ref ?? "main", { work_item: id });
+      await opts.gh.dispatchWorkflow("factory-run.yml", opts.ref, { work_item: id });
       dispatched.push(id);
     }
   }

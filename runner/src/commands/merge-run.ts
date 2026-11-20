@@ -217,7 +217,7 @@ async function apply(
     case "resolve_conflict":
       // The conflict pipeline rebases and re-clears; dispatching it here is
       // what makes a conflicting PR recover without anyone watching.
-      await opts.gh.dispatchWorkflow("factory-run.yml", "main", {
+      await opts.gh.dispatchWorkflow("factory-run.yml", undefined, {
         work_item: head.work_item,
         reason: "conflict",
       });
@@ -230,7 +230,7 @@ async function apply(
       return `updated #${action.pr} from main`;
 
     case "recheck":
-      await opts.gh.dispatchWorkflow("factory-gates.yml", "main", { pr: String(action.pr) });
+      await opts.gh.dispatchWorkflow("factory-gates.yml", undefined, { pr: String(action.pr) });
       return `re-ran the gates on #${action.pr}`;
 
     case "merge": {

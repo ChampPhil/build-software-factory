@@ -828,6 +828,7 @@ async function runCommand(second: string | undefined, args: Args, third?: string
     setOutput("roles", plan.roles.join(","));
     setOutput("needs_triage", String(plan.roles.includes("triage")));
     setOutput("needs_hardener", String(plan.roles.includes("hardener")));
+    setOutput("needs_gardener", String(plan.roles.includes("gardener")));
     setOutput("needs_spec", String(plan.roles.includes("spec")));
     setOutput("protected_files_policy", protectedFilesPolicy);
     setOutput("proceed", String(!plan.escalate));

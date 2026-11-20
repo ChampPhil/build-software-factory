@@ -62,12 +62,7 @@ jobs:
         id: scan
         env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
+        # Files a conflict work item per PR and dispatches factory-run for it.
+        # A job here also called factory-run as a reusable workflow, which it
+        # is not, so that path could never start.
         run: bsf conflicts scan
-
-  resolve:
-    needs: find
-    if: needs.find.outputs.conflicts != '0'
-    uses: ./.github/workflows/factory-run.yml
-    with:
-      work_item: ${{ needs.find.outputs.work_item }}
-    secrets: inherit
