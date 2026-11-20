@@ -136,7 +136,7 @@ export async function gardenFile(opts: {
     root: opts.root,
     // The measured kinds were already handed to the agent; what comes back is
     // its picks, so nothing is re-scanned here.
-    baselines: { schema: "baselines/1", rules: {} } as Baselines,
+    baselines: { schema: "baselines/1", rules: {} },
     maxPrs: opts.maxPrs,
     extra: accepted,
     ...(opts.freeSlots === undefined ? {} : { freeSlots: opts.freeSlots }),

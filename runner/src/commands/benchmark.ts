@@ -1,4 +1,4 @@
-import { writeFileSync, mkdirSync, readFileSync, existsSync } from "node:fs";
+import { writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { benchmarkTaskId } from "../lib/ids.js";
 import { admitDefinitionChange, type BenchmarkComparison, type AdmissionResult } from "./review.js";

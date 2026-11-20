@@ -200,7 +200,7 @@ export function readScores(output: unknown): {
       continue;
     }
 
-    const run = typeof r.vars?.["run"] === "string" ? (r.vars["run"] as string) : (r.description ?? "unknown");
+    const run = typeof r.vars?.["run"] === "string" ? (r.vars["run"]) : (r.description ?? "unknown");
     for (const comp of components) {
       const metric = comp.assertion?.metric;
       if (metric === undefined) continue;

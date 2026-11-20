@@ -6,6 +6,7 @@ import type { Change } from "../lib/dataref.js";
 import type { Baselines } from "../lib/types.js";
 import { fingerprint, sourceKind } from "./intake.js";
 import { workItemId } from "../lib/ids.js";
+import { byFileOf } from "./gates.js";
 
 const exec = promisify(execFile);
 
@@ -39,9 +40,12 @@ export interface ScanResult {
 /** Rules whose count is above zero, worst first. */
 export function baselinedDrift(baselines: Baselines): readonly DriftItem[] {
   const byRule = new Map<string, { count: number; files: string[] }>();
-  for (const [rule, perFile] of Object.entries(baselines.rules ?? {})) {
-    for (const [file, count] of Object.entries(perFile)) {
-      if (count <= 0) continue;
+  for (const [rule, entry] of Object.entries(baselines.rules ?? {})) {
+    // A retired rule was deliberately set aside; filing it as drift would
+    // undo that decision every night.
+    if (entry.retired === true) continue;
+    for (const [file, count] of Object.entries(byFileOf(entry))) {
+      if (count <= 0 || file === "") continue;
       const e = byRule.get(rule) ?? { count: 0, files: [] };
       e.count += count;
       e.files.push(file);

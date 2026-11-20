@@ -1,0 +1,55 @@
+name: ci
+
+# The factory's own repo had no CI, which is how a bare `require()` reached
+# main three times and how a baseline entry got read as a per-file map in two
+# places. These are the checks the factory would put on a repo like this one.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      # Types first: it is the cheapest check and the one most likely to fail
+      # on a bad merge. It covers test files too, which for a long time nothing
+      # type-checked at all.
+      - name: typecheck
+        run: npm run typecheck
+
+      - name: typecheck the pieces outside the workspaces
+        run: |
+          npx tsc -p worker/tsconfig.json
+          npx tsc -p adapters/tsconfig.json
+
+      - name: lint
+        run: npm run lint
+
+      - name: test
+        run: npm test
+
+      # The schema freeze. An additive change passes; a change that would stop
+      # already-written data validating fails here, and doc 09 asks for a major
+      # bump with a migration in `bsf migrate` instead.
+      - name: schema surface
+        run: |
+          npm -w @bsf/runner run build
+          npm run schema-check

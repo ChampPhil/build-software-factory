@@ -13,7 +13,7 @@
  */
 
 const { execFile } = require("node:child_process");
-const { mkdtempSync, existsSync, readFileSync, rmSync } = require("node:fs");
+const { mkdtempSync, existsSync, rmSync } = require("node:fs");
 const { tmpdir } = require("node:os");
 const { join } = require("node:path");
 

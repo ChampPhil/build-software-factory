@@ -1,13 +1,24 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import { GitHubClient, GitHubHttpError, decodeBase64 } from "../lib/github.js";
 
 /** A fetch stand-in, so the client is tested without the network. */
+/**
+ * The request body as the JSON string the client always sends. Asserting on
+ * `String(body)` instead would quietly pass for any object, since that is
+ * "[object Object]" and `toContain` would simply fail — or worse, match.
+ */
+function bodyOf(call: { init?: RequestInit } | undefined): string {
+  const body = call?.init?.body;
+  if (typeof body !== "string") throw new Error(`expected a JSON string body, got ${typeof body}`);
+  return body;
+}
+
 function stubFetch(
   routes: Record<string, { status?: number; body?: unknown; headers?: Record<string, string> }>,
 ): { fetch: typeof fetch; calls: { url: string; init?: RequestInit }[] } {
   const calls: { url: string; init?: RequestInit }[] = [];
-  const impl = (async (input: string | URL | Request, init?: RequestInit) => {
-    const url = String(input);
+  const impl = async (input: string | URL | Request, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
     calls.push({ url, ...(init === undefined ? {} : { init }) });
     const key = Object.keys(routes).find((k) => url.includes(k));
     const route = key === undefined ? { status: 404, body: { message: "Not Found" } } : routes[key]!;
@@ -16,7 +27,7 @@ function stubFetch(
       status,
       headers: { "content-type": "application/json", ...(route.headers ?? {}) },
     });
-  }) as unknown as typeof fetch;
+  };
   return { fetch: impl, calls };
 }
 
@@ -136,14 +147,14 @@ describe("the GitHub client", () => {
     const issue = await c.createIssue("Export is empty", "steps…");
     expect(issue.number).toBe(7);
     expect(calls[0]?.init?.method).toBe("POST");
-    expect(String(calls[0]?.init?.body)).toContain("Export is empty");
+    expect(bodyOf(calls[0])).toContain("Export is empty");
   });
 
   it("approves a pull request with the APPROVE event", async () => {
     const { fetch, calls } = stubFetch({ "pulls/311/reviews": { body: {} } });
     const c = new GitHubClient(auth, fetch);
     await c.approvePull(311);
-    expect(String(calls[0]?.init?.body)).toContain("APPROVE");
+    expect(bodyOf(calls[0])).toContain("APPROVE");
   });
 });
 

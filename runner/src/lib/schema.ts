@@ -54,10 +54,22 @@ export const SCHEMA_MAJOR: Readonly<Record<SchemaName, number>> = Object.freeze(
   Object.fromEntries(SCHEMA_NAMES.map((n) => [n, 1])) as Record<SchemaName, number>,
 );
 
+/**
+ * Not a schema: the frozen shape of every schema at the current major, used
+ * by `bsf schema-surface --check`. It lives beside the schemas so that an
+ * author editing one sees it, which means every reader of this directory has
+ * to skip it by name.
+ */
+export const SURFACE_FILE = "SURFACE.json";
+
+export function isSchemaFile(file: string): boolean {
+  return file.endsWith(".json") && file !== SURFACE_FILE;
+}
+
 function buildAjv(): AjvInstance {
   const ajv = new Ajv2020({ allErrors: true, strict: true });
   addFormats(ajv);
-  const files = readdirSync(SCHEMA_DIR).filter((f) => f.endsWith(".json"));
+  const files = readdirSync(SCHEMA_DIR).filter(isSchemaFile);
   // Register every schema under both its relative filename and its $id, so
   // "_common.json#/$defs/x" style refs resolve without a network fetch.
   for (const file of files) {

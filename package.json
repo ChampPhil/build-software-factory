@@ -10,10 +10,13 @@
   "scripts": {
     "test": "npm -w @bsf/runner test && npm -w @bsf/dashboard test",
     "typecheck": "npm -w @bsf/runner run typecheck && npm -w @bsf/dashboard run typecheck",
-    "build": "npm -w @bsf/runner run build && npm -w @bsf/dashboard run build"
+    "build": "npm -w @bsf/runner run build && npm -w @bsf/dashboard run build",
+    "lint": "eslint .",
+    "schema-check": "node runner/dist/cli.js schema-surface --check"
   },
   "devDependencies": {
     "eslint": "^10.15.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
     "typescript-eslint": "^8.73.0"
   }
 }

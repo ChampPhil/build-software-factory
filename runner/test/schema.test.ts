@@ -4,6 +4,7 @@ import { join } from "node:path";
 import {
   validate, assertValid, checkSchemaTag, SchemaError,
   SCHEMA_NAMES, SCHEMA_DIR, type SchemaName,
+  isSchemaFile,
 } from "../src/lib/schema.js";
 
 /** Every doc-09 example, as a valid fixture per schema. */
@@ -209,8 +210,16 @@ describe("schema registry", () => {
     for (const n of SCHEMA_NAMES) expect(files.has(`${n}.json`), `${n}.json missing`).toBe(true);
   });
 
+  it("does not treat the frozen surface as a schema", () => {
+    // SURFACE.json sits beside the schemas on purpose, so every reader of
+    // the directory has to skip it; ajv would otherwise register it.
+    expect(isSchemaFile("SURFACE.json")).toBe(false);
+    expect(isSchemaFile("run.json")).toBe(true);
+    expect(isSchemaFile("README.md")).toBe(false);
+  });
+
   it("every schema file is itself valid JSON with an $id and a title", () => {
-    for (const f of readdirSync(SCHEMA_DIR).filter((x) => x.endsWith(".json"))) {
+    for (const f of readdirSync(SCHEMA_DIR).filter(isSchemaFile)) {
       const doc = JSON.parse(readFileSync(join(SCHEMA_DIR, f), "utf8")) as Record<string, unknown>;
       expect(doc["$id"], `${f} has no $id`).toBeTypeOf("string");
       expect(doc["title"], `${f} has no title`).toBeTypeOf("string");

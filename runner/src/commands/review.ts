@@ -259,7 +259,7 @@ export async function runReviewRoute(
   const filed: { work_item: string; destination: string }[] = [];
   const open = [...ledger.open];
 
-  for (const [n, p] of problems.entries()) {
+  for (const p of problems) {
     const pipeline: Pipeline = p.destination === "hardening" ? "hardening" : "definition";
     const id = workItemId(Date.parse(opts.now) || Date.now());
     const item = {

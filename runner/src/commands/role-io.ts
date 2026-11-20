@@ -119,7 +119,7 @@ interface StepReportLike {
 }
 
 /** Triage's own step report, which is the one report the spec role may read. */
-async function readTriageNotes(store: FactoryStore, item: WorkItemFile): Promise<unknown | null> {
+async function readTriageNotes(store: FactoryStore, item: WorkItemFile): Promise<unknown> {
   const runs = item.runs ?? [];
   const latest = runs[runs.length - 1];
   if (latest === undefined) return null;

@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { readSession, type Session } from "@/lib/session";
+import { readSession, clearSession, type Session } from "@/lib/session";
 import { useClient, useLedger } from "@/lib/data";
 import { SignIn } from "@/components/sign-in";
 
@@ -30,9 +30,13 @@ export function Shell({ children }: { children: ReactNode }) {
     setReady(true);
   }, []);
 
+  // Depending on the two fields keeps the identity of `auth` stable across a
+  // re-render that produced an equal session object.
+  const token = session?.token ?? null;
+  const repo = session?.repo ?? null;
   const auth = useMemo(
-    () => (session === null ? null : { token: session.token, repo: session.repo }),
-    [session?.token, session?.repo],
+    () => (token === null || repo === null ? null : { token, repo }),
+    [token, repo],
   );
   const client = useClient(auth);
   const ledger = useLedger(client);
@@ -94,7 +98,6 @@ export function Shell({ children }: { children: ReactNode }) {
             className="btn"
             style={{ marginTop: 10, padding: "4px 9px", fontSize: 13 }}
             onClick={() => {
-              const { clearSession } = require("@/lib/session") as typeof import("@/lib/session");
               clearSession();
               setSession(null);
             }}

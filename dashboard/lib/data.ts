@@ -22,9 +22,14 @@ export type Loaded<T> =
 
 export function useClient(auth: Auth | null): GitHubClient | null {
   const [client, setClient] = useState<GitHubClient | null>(null);
+  // The two fields rather than the object: a caller that rebuilds an equal
+  // `auth` on every render would otherwise make a new client each time, and
+  // every poller downstream would restart.
+  const token = auth?.token ?? null;
+  const repo = auth?.repo ?? null;
   useEffect(() => {
-    setClient(auth === null ? null : new GitHubClient(auth));
-  }, [auth?.token, auth?.repo]);
+    setClient(token === null || repo === null ? null : new GitHubClient({ token, repo }));
+  }, [token, repo]);
   return client;
 }
 

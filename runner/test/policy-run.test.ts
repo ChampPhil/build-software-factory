@@ -21,7 +21,7 @@ const ROOT = repoRoot();
 
 /** A GitHub stand-in, so the wiring is tested without the network. */
 function stubGitHub(opts: {
-  pull: Partial<PullResponse>;
+  pull?: Partial<PullResponse>;
   files?: PullFile[];
   reviews?: ReviewResponse[];
 }): GitHub {

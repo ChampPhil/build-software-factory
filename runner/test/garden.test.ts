@@ -6,8 +6,17 @@ import { join } from "node:path";
 import { baselinedDrift, untestedRecent, MAX_FILES_PER_PR } from "../src/commands/garden.js";
 import type { Baselines } from "../src/lib/types.js";
 
-const baselines = (rules: Record<string, Record<string, number>>): Baselines =>
-  ({ schema: "baselines/1", rules } as Baselines);
+/** A real Baselines from per-file counts, so the fixture is the shape the
+ * code reads rather than a cast that hid a missing `count`. */
+const baselines = (byFile: Record<string, Record<string, number>>): Baselines => ({
+  schema: "baselines/1",
+  rules: Object.fromEntries(
+    Object.entries(byFile).map(([rule, files]) => [
+      rule,
+      { count: Object.values(files).reduce((a, b) => a + b, 0), by_file: files },
+    ]),
+  ),
+});
 
 describe("baselinedDrift", () => {
   it("lists rules with counts above zero, worst first", () => {
@@ -21,6 +30,44 @@ describe("baselinedDrift", () => {
 
   it("ignores rules already at zero, which are nothing to clean", () => {
     expect(baselinedDrift(baselines({ "no-explicit-any": { "a.ts": 0 } }))).toHaveLength(0);
+  });
+
+  it("leaves a retired rule alone, which is what retiring it meant", () => {
+    const b: Baselines = {
+      schema: "baselines/1",
+      rules: {
+        "no-explicit-any": { count: 4, by_file: { "a.ts": 4 }, retired: true },
+        "no-floating-promises": { count: 1, by_file: { "b.ts": 1 } },
+      },
+    };
+    expect(baselinedDrift(b).map((i) => i.problem_class)).toEqual(["no-floating-promises"]);
+  });
+
+  it("reads a rule's own fields as fields, not as file names", () => {
+    // The entry's keys are `count`, `by_file`, `recorded_at` and so on. An
+    // earlier version walked those as if they were paths, and filed items
+    // asking an agent to clean a file called `count`.
+    const b: Baselines = {
+      schema: "baselines/1",
+      rules: {
+        "no-explicit-any": {
+          count: 3,
+          recorded_at: "2026-11-19T00:00:00Z",
+          native: ".eslint-baseline.json",
+          by_file: { "src/a.ts": 3 },
+        },
+      },
+    };
+    const item = baselinedDrift(b)[0];
+    expect(item?.files).toEqual(["src/a.ts"]);
+    expect(item?.occurrences).toBe(3);
+  });
+
+  it("files nothing to clean for a rule with a count and no per-file breakdown", () => {
+    // `byFileOf` keeps such a rule under the empty key so the ratchet has a
+    // number; there is no path to put in a PR, so there is no item.
+    const b: Baselines = { schema: "baselines/1", rules: { "no-explicit-any": { count: 5 } } };
+    expect(baselinedDrift(b)).toHaveLength(0);
   });
 
   it("caps an item at the per-PR file limit and says so", () => {

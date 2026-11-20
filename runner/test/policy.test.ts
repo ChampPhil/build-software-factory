@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { runPolicy, isTrustedActor, hasTrustedHumanApproval, appRequestedChanges, type PolicyContext } from "../src/commands/policy.js";
 import { toReview } from "../src/commands/policy-run.js";
 import type { Policy, PullRequestFacts, Review } from "../src/lib/types.js";
+import { withOverride, type Override } from "./helpers/override.js";
 
 const policy: Policy = {
   schema: "policy/1",
@@ -35,8 +36,8 @@ const policy: Policy = {
 
 const HEAD = "abc1234";
 
-function pr(over: Partial<PullRequestFacts> = {}): PullRequestFacts {
-  return {
+function pr(over: Override<PullRequestFacts> = {}): PullRequestFacts {
+  return withOverride<PullRequestFacts>({
     number: 311,
     head_sha: HEAD,
     base_ref: "main",
@@ -50,8 +51,7 @@ function pr(over: Partial<PullRequestFacts> = {}): PullRequestFacts {
     draft: true,
     pipeline: "product_work",
     declared_test_edits: [],
-    ...over,
-  };
+  }, over);
 }
 
 const humanApproval: Review = {
@@ -62,7 +62,7 @@ const humanApproval: Review = {
   commit_sha: HEAD,
 };
 
-function ctx(over: Partial<PullRequestFacts> = {}): PolicyContext {
+function ctx(over: Override<PullRequestFacts> = {}): PolicyContext {
   return { policy, pr: pr(over), appLogins: ["factory-app[bot]", "factory-recompiler[bot]"] };
 }
 
@@ -327,7 +327,7 @@ describe("the review mapper both commands share", () => {
       state: "APPROVED",
       submitted_at: "2026-11-19T00:00:00Z",
       commit_id: "oldsha",
-    } as never);
+    });
     expect(r.commit_sha).toBe("oldsha");
     expect(r).not.toHaveProperty("commit_id");
     expect(r.is_app).toBe(false);
@@ -356,7 +356,7 @@ describe("the review mapper both commands share", () => {
         state: "APPROVED",
         submitted_at: "t",
         commit_id: "old",
-      } as never),
+      }),
     ];
     const base = {
       policy,

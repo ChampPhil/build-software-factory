@@ -4,6 +4,7 @@ import {
   type IncomingEvent, type IntakeContext,
 } from "../src/commands/intake.js";
 import type { Policy } from "../src/lib/types.js";
+import { withOverride, type Override } from "./helpers/override.js";
 
 const policy: Policy = {
   schema: "policy/1",
@@ -30,13 +31,13 @@ function ctx(over: Partial<IntakeContext> = {}): IntakeContext {
   };
 }
 
-function ev(over: Partial<IncomingEvent> = {}): IncomingEvent {
-  return {
+function ev(over: Override<IncomingEvent> = {}): IncomingEvent {
+  return withOverride<IncomingEvent>({
     id: 1, kind: "issue_opened", at: "2026-11-19T10:00:00Z",
     actor: "philip", actor_association: "OWNER",
     title: "Export button downloads an empty file", body: "steps…", ref: "#142",
-    labels: [], ...over,
-  };
+    labels: [],
+  }, over);
 }
 
 describe("criterion: ten issues opened within one minute each become a work item; none is lost", () => {

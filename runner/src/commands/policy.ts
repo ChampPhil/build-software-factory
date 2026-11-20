@@ -1,4 +1,4 @@
-import type { Association, ChangeKind, Pipeline, Policy, PullRequestFacts, Review } from "../lib/types.js";
+import type { Association, ChangeKind, Policy, PullRequestFacts, Review } from "../lib/types.js";
 import { matchesAny, filesMatching } from "../lib/paths.js";
 
 /**

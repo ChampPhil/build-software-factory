@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeAll } from "vitest";
-import { existsSync, mkdtempSync, writeFileSync, rmSync, mkdirSync, cpSync } from "node:fs";
+import { describe, it, expect } from "vitest";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -7,7 +7,7 @@ import {
   runStaticGate, runCoverageGate, measuredCounts, withZeroBaselines,
   recordGateResult, readGateResults, alreadyChecked,
 } from "../src/commands/gates-run.js";
-import { runEslint, runRuff, readCoverage, diffCoverage, countSkips } from "../src/lib/tools.js";
+import { runEslint } from "../src/lib/tools.js";
 import type { Baselines, Coverage, Policy } from "../src/lib/types.js";
 
 function repoRoot(): string {
@@ -282,7 +282,7 @@ describe("commit-keyed gate results", () => {
       const at = new Date().toISOString();
       recordGateResult(dir, { commit: "c1", gate: "static", attempt: 1, result: "pass", recorded_at: at });
       recordGateResult(dir, { commit: "c1", gate: "verification", attempt: 1, result: "pass", recorded_at: at });
-      expect(alreadyChecked(dir, "c1").sort()).toEqual(["static", "verification"]);
+      expect([...alreadyChecked(dir, "c1")].sort()).toEqual(["static", "verification"]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

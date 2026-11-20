@@ -391,7 +391,7 @@ export interface SeriesPoint {
 
 export function series(daily: readonly DailyPoint[] | undefined, key: keyof DailyPoint): readonly SeriesPoint[] {
   return (daily ?? [])
-    .map((d) => ({ date: d.date, value: typeof d[key] === "number" ? (d[key] as number) : 0 }))
+    .map((d) => ({ date: d.date, value: typeof d[key] === "number" ? (d[key]) : 0 }))
     .sort((a, b) => a.date.localeCompare(b.date));
 }
 

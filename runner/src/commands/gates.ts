@@ -42,7 +42,14 @@ export function countsFromBaselines(b: Baselines): RuleCounts {
   return out;
 }
 
-function byFileOf(entry: BaselineRule): Record<string, number> {
+/**
+ * Per-file counts for one rule. A rule with no per-file breakdown is kept
+ * under the empty key, so the ratchet still has one number to compare.
+ * Exported because the gardener needs the same reading of a baseline entry —
+ * it had its own, which walked the entry's own keys as if they were file
+ * names and so reported `count` and `by_file` as files to clean.
+ */
+export function byFileOf(entry: BaselineRule): Record<string, number> {
   if (entry.by_file !== undefined && Object.keys(entry.by_file).length > 0) {
     return { ...entry.by_file };
   }

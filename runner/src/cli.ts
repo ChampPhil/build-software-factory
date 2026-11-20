@@ -7,7 +7,7 @@ import {
 import { runStaticGate, runCoverageGate, recordGateResult, alreadyChecked } from "./commands/gates-run.js";
 import { runPolicyCommand } from "./commands/policy-run.js";
 import { planGates } from "./commands/gates.js";
-import { SCHEMA_NAMES, assertValid, type SchemaName } from "./lib/schema.js";
+import { SCHEMA_NAMES, assertValid, type SchemaName, SCHEMA_DIR } from "./lib/schema.js";
 import { runIntakeCommand } from "./commands/intake-run.js";
 import { runRollupCommand, squashMedia } from "./commands/rollup-run.js";
 import { runMergeCommand } from "./commands/merge-run.js";
@@ -15,6 +15,20 @@ import { runGardenCommand } from "./commands/garden.js";
 import { runConflictsCommand } from "./commands/conflicts.js";
 import { runSyncCommand } from "./commands/sync-settings.js";
 import { runAuditCommand } from "./commands/audit.js";
+import { byFileOf } from "./commands/gates.js";
+import {
+  surfaceForDirectory,
+  compareSurface,
+  readFrozen,
+  writeFrozen,
+} from "./commands/schema-freeze.js";
+import {
+  planMigration,
+  applyMigration,
+  diskIo,
+  schemaSupport,
+  MIGRATIONS,
+} from "./commands/migrate.js";
 import { runReviewDue, runReviewRoute, type ScoredFailure } from "./commands/review.js";
 import { planRun, afterGates } from "./commands/run-plan.js";
 import { buildStepReport, writeStepReport, changedFilesFromGit, type Harness } from "./commands/step-report.js";
@@ -107,6 +121,18 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
   bsf audit [--commit SHA]
       After a push to main: did anything reach main without passing the gates,
       and is every compiled role workflow current with its source?
+
+  bsf schema-surface [--check] [--freeze]
+      Compare the schemas against the frozen shape in schema/SURFACE.json.
+      An additive change is reported and allowed; a change that would stop
+      already-written data validating fails, because doc 09 asks for a major
+      bump and a migration instead.
+
+  bsf migrate [PATHS...] [--apply] [--support]
+      Move stored data across a breaking schema change. Writes the new file
+      next to the old one and never over it, so a half-finished migration
+      leaves the data ref readable. --support prints what this runner reads
+      and writes, which the dashboard uses to warn about an old runner.
 
   bsf step-report --role R --out PATH [--usage PATH] [--session-dir PATH]
       Write one role's step report. Reads gh-aw's own session evidence first,
@@ -306,6 +332,12 @@ async function main(argv: readonly string[]): Promise<number> {
 
     case "audit":
       return auditCommand(args);
+
+    case "schema-surface":
+      return schemaSurfaceCommand(args);
+
+    case "migrate":
+      return migrateCommand(command.slice(1), args);
 
     case "step-report":
       return stepReportCommand(args);
@@ -553,7 +585,7 @@ interface FactoryConfig {
 
 async function factoryConfig(): Promise<FactoryConfig> {
   const doc = await loadFactory(new DiskLoader(process.cwd()));
-  return (doc ?? {}) as FactoryConfig;
+  return doc ?? {};
 }
 
 function nowIso(): string {
@@ -683,8 +715,11 @@ async function rollupCommand(args: Args): Promise<number> {
   const coverage = await lc(loader);
 
   const ruleCount = Object.keys(baselines.rules ?? {}).length;
+  // Each entry is a BaselineRule, not a per-file map: its own keys are
+  // `count`, `by_file` and so on. Summing those directly added `count` to the
+  // per-file numbers and concatenated the `by_file` object into the total.
   const baselined = Object.values(baselines.rules ?? {}).reduce(
-    (a, perFile) => a + Object.values(perFile).reduce((x, y) => x + y, 0),
+    (total, entry) => total + Object.values(byFileOf(entry)).reduce((x, y) => x + y, 0),
     0,
   );
 
@@ -885,6 +920,85 @@ async function auditCommand(args: Args): Promise<number> {
   for (const f of report.findings) process.stderr.write(`${f.kind}: ${f.detail}\n`);
   setOutput("findings", String(report.findings.length));
   return 1;
+}
+
+function schemaSurfaceCommand(args: Args): number {
+  const frozenPath = join(SCHEMA_DIR, "SURFACE.json");
+  const live = surfaceForDirectory(SCHEMA_DIR);
+
+  if (args["freeze"] === true) {
+    const at = new Date().toISOString().slice(0, 10);
+    writeFrozen(frozenPath, live, at);
+    const files = Object.keys(live).length;
+    process.stdout.write(`froze ${files} schema files at ${at}\n`);
+    return 0;
+  }
+
+  if (!existsSync(frozenPath)) {
+    die(`${frozenPath} does not exist; run bsf schema-surface --freeze once to record the frozen shape`);
+  }
+  const drift = compareSurface(readFrozen(frozenPath).surface, live);
+  const breaking = drift.filter((d) => d.kind === "breaking");
+  const widening = drift.filter((d) => d.kind === "widening");
+  const additive = drift.filter((d) => d.kind === "additive");
+
+  for (const d of additive) process.stdout.write(`additive  ${d.file}${d.pointer} ${d.what}\n`);
+  for (const d of widening) {
+    process.stdout.write(`widening  ${d.file}${d.pointer} ${d.what} (a reader on the frozen major rejects it)\n`);
+  }
+  for (const d of breaking) process.stderr.write(`BREAKING  ${d.file}${d.pointer} ${d.what}\n`);
+
+  if (breaking.length > 0) {
+    process.stderr.write(
+      `\n${breaking.length} breaking change(s). Either undo them, or bump the major and ship a ` +
+        `migration in bsf migrate, then re-freeze.\n`,
+    );
+    setOutput("breaking", String(breaking.length));
+    return 1;
+  }
+  if (drift.length === 0) process.stdout.write("the schemas match the frozen shape exactly\n");
+  return 0;
+}
+
+function migrateCommand(paths: readonly string[], args: Args): number {
+  if (args["support"] === true) {
+    for (const s of schemaSupport()) {
+      process.stdout.write(`${s.schema}: writes ${s.writes}, reads ${s.reads.join(", ")}\n`);
+    }
+    return 0;
+  }
+
+  if (paths.length === 0) {
+    die("usage: bsf migrate PATHS... [--apply]   (or --support)");
+  }
+
+  const files = paths.map((path) => ({ path, text: readFileSync(path, "utf8") }));
+  const plan = planMigration(files);
+
+  for (const p of plan.current) process.stdout.write(`current: ${p}\n`);
+  for (const u of plan.unknown) process.stderr.write(`skipped ${u.path}: ${u.why}\n`);
+
+  if (plan.items.length === 0) {
+    // Worth saying plainly: at schema 1.0 there is nothing to migrate, and
+    // that is a fact about the schemas, not a command that did nothing.
+    const why = MIGRATIONS.length === 0 ? " (this runner ships no migrations)" : "";
+    process.stdout.write(`nothing to migrate${why}\n`);
+    return plan.unknown.length > 0 ? 1 : 0;
+  }
+
+  for (const item of plan.items) {
+    process.stdout.write(`${item.path} ${item.schema}/${item.from} -> ${item.to}: ${item.summary}\n`);
+    process.stdout.write(`  would write ${item.writesTo}\n`);
+  }
+  if (args["apply"] !== true) {
+    process.stdout.write("nothing written (pass --apply)\n");
+    return 0;
+  }
+
+  const result = applyMigration(plan, diskIo);
+  for (const m of result.migrated) process.stdout.write(`wrote ${m.to}\n`);
+  for (const f of result.failed) process.stderr.write(`failed ${f.path}: ${f.why}\n`);
+  return result.failed.length > 0 ? 1 : 0;
 }
 
 function stepReportCommand(args: Args): number {
@@ -1247,7 +1361,9 @@ async function benchmarkRunCommand(args: Args): Promise<number> {
   if (typeof taskJson !== "string" || typeof definition !== "string") {
     die("usage: bsf benchmark-run --task JSON --definition PATH");
   }
-  const cfg = await factoryConfig().catch(() => ({}) as Awaited<ReturnType<typeof factoryConfig>>);
+  // Annotated rather than cast: the catch branch has to widen to the config
+  // type, and `eslint --fix` removes a cast in this position as redundant.
+  const cfg: FactoryConfig = await factoryConfig().catch(() => ({}));
   const report = await runBenchmarkTask({
     task: JSON.parse(taskJson) as BenchmarkTaskInput,
     definitionPath: definition,

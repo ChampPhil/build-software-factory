@@ -89,8 +89,8 @@ function buildValidator(): (doc: unknown) => { ok: boolean; errors: ErrorObject[
   const schema = JSON.parse(readFileSync(SCHEMA, "utf8")) as Record<string, unknown>;
   const validate = ajv.compile(schema);
   return (doc: unknown) => {
-    const ok = validate(doc) as boolean;
-    return { ok, errors: (validate.errors ?? []) as ErrorObject[] };
+    const ok = validate(doc);
+    return { ok, errors: (validate.errors ?? []) };
   };
 }
 

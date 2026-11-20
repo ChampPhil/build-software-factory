@@ -427,3 +427,31 @@ Schemas change only through versioned, additive steps, so a repo's data always s
 3. **Old data is never rewritten in place.** Migrations write new files next to old ones, and the dashboard reads both majors for at least 12 months.
 4. **Config migrations** (`factory.yaml`, `policy.yaml`) arrive as a definition PR opened by the factory after a runner upgrade, so a trusted human approves them. Runner upgrades themselves arrive as Dependabot PRs that change only the pinned SHA in the workflow files (see `runner_upgrades` in `policy.yaml`); the runner version a repo uses is read from those files, not from `factory.yaml`.
 5. **Every runner release lists** the schema versions it reads and writes; the dashboard shows a warning when a repo's runner is older than the oldest version the dashboard supports.
+
+### How this is enforced
+
+The five rules above are mechanical, so the build checks them rather than trusting review.
+
+**`schema/SURFACE.json`** records the shape of every schema at the frozen major: for each node, by JSON pointer, its type, property names, required list, `additionalProperties`, enum members, pattern, `$ref` and bounds. Schema 1.0 was frozen on 2026-11-20.
+
+**`bsf schema-surface --check`** compares the live schemas against that file and sorts the differences into three kinds:
+
+| | Example | Result |
+|---|---|---|
+| additive | a new optional property; a required field becoming optional; a bound loosening | reported, allowed |
+| widening | a new enum member | reported separately, allowed |
+| breaking | a property removed; an optional field becoming required; a type, pattern or `$ref` change; an enum member removed; `additionalProperties` closing; a bound tightening | **fails** |
+
+Widening is called out on its own because rule 1 covers unknown *fields*, which a reader ignores — not unknown *values* of a field it already knows, which it rejects. Adding `unknown` to `step-report`'s `cost_source` was such a change.
+
+A breaking change is not forbidden; it is routed. The author bumps the major, adds a migration, and re-freezes in the same commit, which is exactly rule 2. `bsf schema-surface --freeze` rewrites the file. CI runs `--check` on every push, so a re-freeze cannot be forgotten.
+
+**`bsf migrate PATHS...`** applies the registry of migrations in `runner/src/commands/migrate.ts`. Each migration declares its schema, the major it moves from and to, a one-line summary, and a pure `up(doc)`. The command plans first — printing each file's chain and the path it would write — and writes only with `--apply`. Three details follow from rule 3:
+
+- A migrated file is written **next to** the original, as `<name>.v<major>.json`. The original is never touched, and a run that fails halfway leaves the data ref readable.
+- Writing refuses to overwrite an existing file, so a second run cannot clobber the first run's output.
+- Each migrated document is validated before it is written, so a migration that produces an invalid file fails loudly instead of writing something no reader accepts.
+
+A gap in the chain — major 1 present, no 1→2 migration, but a 2→3 — is reported rather than guessed across, because a skipped migration means the author, not the tool, has to decide what the data means.
+
+**`bsf migrate --support`** prints what the running runner reads and writes, one line per schema, which is rule 5. At 1.0 every line reads `writes 1, reads 1`, and the migration registry is empty — that is the freeze, not an unfinished feature.
