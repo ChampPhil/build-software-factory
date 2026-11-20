@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
-import { createRequire } from "node:module";
+import { parse as parseYamlDoc, stringify as stringifyYaml } from "yaml";
 import type { ScoredFailure } from "./review.js";
 
 const exec = promisify(execFile);
@@ -441,18 +441,14 @@ export async function runScorers(opts: RunScorersOptions): Promise<ScorersReport
 /** Load the rubrics from the definition. */
 export function loadRubrics(dir: string): readonly Rubric[] {
   if (!existsSync(dir)) return [];
-  const require_ = createRequire(import.meta.url);
-  const { parse } = require_("yaml") as typeof import("yaml");
   return readdirSync(dir)
     .filter((f) => f.endsWith(".yaml") || f.endsWith(".yml"))
-    .map((f) => parse(readFileSync(join(dir, f), "utf8")) as Rubric)
+    .map((f) => parseYamlDoc(readFileSync(join(dir, f), "utf8")) as Rubric)
     .filter((r) => Array.isArray(r.criteria));
 }
 
 function toYaml(doc: unknown): string {
-  const require_ = createRequire(import.meta.url);
-  const { stringify } = require_("yaml") as typeof import("yaml");
-  return stringify(doc);
+  return stringifyYaml(doc);
 }
 
 export { dirname };

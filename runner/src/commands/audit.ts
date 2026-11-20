@@ -233,9 +233,14 @@ function isBlank(value: string | null | undefined): boolean {
 /** gh-aw's own hash implementation, vendored. See vendor/gh-aw/README.md. */
 function loadHasher(): Hasher {
   const require_ = createRequire(import.meta.url);
-  // Resolved relative to this file, so it works from src under vitest and
-  // from dist in the Action.
-  for (const rel of ["../../vendor/gh-aw/frontmatter_hash_pure.cjs", "../vendor/gh-aw/frontmatter_hash_pure.cjs"]) {
+  // Resolved relative to this file: src under vitest, dist in this repo, and
+  // the single-file bundle vendored at .factory/bin/ in a user's repo, which
+  // ships the hasher beside it.
+  for (const rel of [
+    "../../vendor/gh-aw/frontmatter_hash_pure.cjs",
+    "../vendor/gh-aw/frontmatter_hash_pure.cjs",
+    "./vendor/gh-aw/frontmatter_hash_pure.cjs",
+  ]) {
     try {
       return require_(rel) as Hasher;
     } catch {

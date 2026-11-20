@@ -33,6 +33,15 @@ paths:
   protected:
     - ".github/workflows/**"
     - ".github/dependabot.yml"
+    # The vendored runner is the program every gate runs. Jobs take it from
+    # the default branch, so a PR cannot grade itself with a modified copy;
+    # this is the other half — a PR cannot put a modified copy ON the default
+    # branch without a trusted human approving it.
+    - ".factory/bin/**"
+    # The policy and the sandbox manifest decide what an agent may do and
+    # reach. Changing either is a change to the factory's own boundary.
+    - ".factory/definition/policy.yaml"
+    - ".factory/sandbox/**"
   # One-way for everyone: any pipeline may lower a count or raise the floor.
   baselines:
     - ".factory/guardrails/baselines.json"

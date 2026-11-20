@@ -1,15 +1,18 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createRequire } from "node:module";
-import type { ErrorObject, ValidateFunction, Options } from "ajv";
-import type { Ajv2020 as Ajv2020Type } from "ajv/dist/2020.js";
+import type { ErrorObject, ValidateFunction } from "ajv";
+import Ajv2020Module from "ajv/dist/2020.js";
+import addFormatsModule from "ajv-formats";
 
-// ajv and ajv-formats are CommonJS. require() them so this works the same
-// whether the runner is run from source (vitest) or from dist (the Action).
-const require_ = createRequire(import.meta.url);
-const Ajv2020 = require_("ajv/dist/2020.js") as { new (opts?: Options): Ajv2020Type };
-const addFormats = require_("ajv-formats") as (ajv: Ajv2020Type) => unknown;
+// ajv and ajv-formats are CommonJS. Static imports, so a bundler can follow
+// them; Node's interop puts the export on `default`, and some bundler shapes
+// nest it once more, so take whichever is a function.
+type Ajv2020Type = InstanceType<typeof Ajv2020Module.default>;
+const Ajv2020 = typeof Ajv2020Module === "function" ? Ajv2020Module : Ajv2020Module.default;
+const addFormats = (
+  typeof addFormatsModule === "function" ? addFormatsModule : (addFormatsModule as { default: unknown }).default
+) as (ajv: Ajv2020Type) => unknown;
 type AjvInstance = Ajv2020Type;
 
 /**

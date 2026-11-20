@@ -86,6 +86,26 @@ safe-outputs:
     enabled: true
 
 pre-agent-steps:
+  # The runner that judges a change must not come from the change. A pull
+  # request, a merge-group commit or an agent's workspace can all modify
+  # .factory/bin, so it is taken from the default branch and parked outside the
+  # workspace, which is the only directory the agent sandbox can write to.
+  - name: Fetch the factory runner from the default branch
+    uses: actions/checkout@v4
+    with:
+      ref: ${{ github.event.repository.default_branch }}
+      path: .factory-trusted
+      sparse-checkout: .factory/bin
+      sparse-checkout-cone-mode: false
+      persist-credentials: false
+  - name: Put the trusted runner on PATH
+    shell: bash
+    run: |
+      mkdir -p "$RUNNER_TEMP/bsf"
+      cp -R .factory-trusted/.factory/bin/. "$RUNNER_TEMP/bsf/"
+      rm -rf .factory-trusted
+      echo "$RUNNER_TEMP/bsf" >> "$GITHUB_PATH"
+      "$RUNNER_TEMP/bsf/bsf" --version
   - name: Start the devcontainer and any services the app needs
     shell: bash
     run: .factory/sandbox/start.sh

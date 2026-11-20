@@ -52,6 +52,26 @@ jobs:
       - name: schema surface
         run: npm run schema-check
 
+      # The skill ships a prebuilt runner that setup copies into a user's repo
+      # at .factory/bin. If it lags the source, every user runs code nobody here
+      # tested. Rebuilding is deterministic, so a byte difference means stale.
+      - name: the vendored runner matches the source
+        run: |
+          node runner/scripts/bundle.mjs /tmp/bundle-check
+          diff -r skill/runner /tmp/bundle-check || {
+            echo "::error::skill/runner is stale. Run: npm -w @bsf/runner run bundle"
+            exit 1
+          }
+
+      # And it runs on its own, with no node_modules and nothing of this repo
+      # beside it — which is how every user's runner meets it.
+      - name: the vendored runner works in isolation
+        run: |
+          mkdir -p /tmp/iso/.factory && cp -R skill/runner /tmp/iso/.factory/bin
+          cd /tmp/iso && git init -q
+          ./.factory/bin/bsf --version
+          ./.factory/bin/bsf schema-surface --check
+
   # The gates, run for real against the fixture repos and their actual tools.
   # Separate because it installs the fixtures, which the main job does not:
   # they are not workspaces, so `npm ci` at the root skips them. Without this

@@ -10,7 +10,8 @@
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
-    "pretest": "npm run build"
+    "pretest": "npm run build",
+    "bundle": "node scripts/bundle.mjs ../skill/runner"
   },
   "dependencies": {
     "ajv": "^8.17.1",
@@ -20,6 +21,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.10.1",
+    "esbuild": "^0.28.2",
     "promptfoo": "^0.126.0",
     "typescript": "^5.7.2",
     "vitest": "^5.1.1"

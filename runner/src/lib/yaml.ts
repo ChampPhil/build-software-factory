@@ -1,16 +1,15 @@
-import { createRequire } from "node:module";
+import { parse } from "yaml";
 
 /**
  * Parse YAML.
  *
- * This codebase is ESM and the `yaml` package is CommonJS, so it is loaded
- * through `createRequire` rather than imported at the top. It is in one place
- * because a bare `require()` in an ESM module throws only on the code path
- * that reaches it — two of them shipped that way, one of which broke
- * `bsf validate` on every YAML file.
+ * A static import. This used to load `yaml` through `createRequire`, because
+ * two bare require calls had shipped in this ESM codebase and broken on
+ * the code paths that reached them. A static import fixes that at the root —
+ * Node's CJS interop handles it, the type checker sees it — and, unlike a
+ * runtime require, a bundler can follow it, which is what lets the runner be
+ * vendored into a user's repo as one file.
  */
 export function parseYaml(text: string): unknown {
-  const require_ = createRequire(import.meta.url);
-  const { parse } = require_("yaml") as typeof import("yaml");
   return parse(text);
 }
