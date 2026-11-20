@@ -258,3 +258,116 @@ export class RuffRunner implements ToolRunner {
     }
   }
 }
+
+/* ------------------------------------------- the toolchain-native runners */
+
+/**
+ * Three languages whose linter ships with the toolchain, so a rule can be
+ * verified wherever the language itself is installed — no package registry,
+ * no separate linter to pin.
+ *
+ * Each had its own trap, and each trap is the reason these are tested by
+ * running the tool rather than by reading its documentation.
+ */
+
+/** clippy, for Rust. */
+export class ClippyRunner implements ToolRunner {
+  async violates(rule: RulePackRule, source: string): Promise<{ violates: boolean; detail: string }> {
+    const lint = rule.config["lint"] as string | undefined;
+    if (lint === undefined) throw new Error(`rule ${rule.id} has no \`lint\` for clippy`);
+
+    const dir = mkdtempSync(join(tmpdir(), `bsf-rule-${rule.id}-`));
+    try {
+      mkdirSync(join(dir, "src"), { recursive: true });
+      writeFileSync(
+        join(dir, "Cargo.toml"),
+        `[package]\nname = "probe"\nversion = "0.0.0"\nedition = "2021"\n`,
+      );
+      writeFileSync(join(dir, "src/lib.rs"), `#![warn(${lint})]\n${source}`, "utf8");
+
+      const out = await capture("cargo", ["clippy", "--quiet", "--message-format=json"], dir);
+
+      // JSON, not `--message-format=short`: the short form prints a lint's
+      // message and never its name, so matching a lint name against short
+      // output misses every time — which is what it did.
+      const codes: string[] = [];
+      for (const line of out.split("\n")) {
+        const t = line.trim();
+        if (!t.startsWith("{")) continue;
+        try {
+          const doc = JSON.parse(t) as { message?: { code?: { code?: string } } };
+          const code = doc.message?.code?.code;
+          if (code !== undefined) codes.push(code);
+        } catch {
+          /* cargo interleaves other JSON; only diagnostics matter */
+        }
+      }
+      return {
+        violates: codes.includes(lint),
+        detail: codes.length === 0 ? "(clippy reported nothing)" : [...new Set(codes)].join(", "),
+      };
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+}
+
+/** `go vet`, for Go. */
+export class GoVetRunner implements ToolRunner {
+  async violates(rule: RulePackRule, source: string): Promise<{ violates: boolean; detail: string }> {
+    const analyser = rule.config["analyser"] as string | undefined;
+    if (analyser === undefined) throw new Error(`rule ${rule.id} has no \`analyser\` for go vet`);
+
+    const dir = mkdtempSync(join(tmpdir(), `bsf-rule-${rule.id}-`));
+    try {
+      writeFileSync(join(dir, "go.mod"), "module probe\n\ngo 1.21\n");
+      writeFileSync(join(dir, "a.go"), source, "utf8");
+      const out = await capture("go", ["vet", "./..."], dir);
+      // vet does not print analyser names, so a non-empty report is the
+      // signal; the analyser is recorded in the rule so a count can be
+      // attributed to something a developer can run on its own.
+      const lines = out.split("\n").filter((l) => l.trim() !== "" && !l.startsWith("#"));
+      return { violates: lines.length > 0, detail: lines.slice(0, 3).join("\n") || "(vet reported nothing)" };
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+}
+
+/** `javac -Xlint`, for Java. */
+export class JavacLintRunner implements ToolRunner {
+  async violates(rule: RulePackRule, source: string): Promise<{ violates: boolean; detail: string }> {
+    const category = rule.config["category"] as string | undefined;
+    if (category === undefined) throw new Error(`rule ${rule.id} has no \`category\` for javac`);
+
+    const dir = mkdtempSync(join(tmpdir(), `bsf-rule-${rule.id}-`));
+    try {
+      const file = join(dir, "Probe.java");
+      writeFileSync(file, source, "utf8");
+      const out = await capture("javac", ["-Xlint:all", "-d", join(dir, "out"), file], dir);
+      // javac tags each warning with its category in brackets, which is the
+      // only reliable way to tell one rule's warning from another's.
+      return {
+        violates: out.includes(`[${category}]`),
+        detail: out.split("\n").filter((l) => l.includes("warning:")).slice(0, 3).join("\n") || "(javac reported nothing)",
+      };
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+}
+
+/** Both streams, whatever the exit code: these tools report on stderr. */
+async function capture(bin: string, args: readonly string[], cwd: string): Promise<string> {
+  try {
+    const { stdout, stderr } = await exec(bin, [...args], {
+      cwd,
+      encoding: "utf8",
+      maxBuffer: 32 * 1024 * 1024,
+    });
+    return `${String(stdout)}\n${String(stderr)}`;
+  } catch (err) {
+    const e = err as { stdout?: string; stderr?: string };
+    return `${e.stdout ?? ""}\n${e.stderr ?? ""}`;
+  }
+}

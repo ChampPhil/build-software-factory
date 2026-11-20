@@ -6,7 +6,7 @@ import { execFileSync } from "node:child_process";
 import { parse as parseYaml } from "yaml";
 import { validate } from "../src/lib/schema.js";
 import {
-  verifyRule, EslintRunner, RuffRunner,
+  verifyRule, EslintRunner, RuffRunner, ClippyRunner, GoVetRunner, JavacLintRunner,
   type RulePack, type RulePackRule, type ToolRunner,
 } from "../src/commands/rulepack.js";
 
@@ -36,7 +36,17 @@ function loadPack(name: string): RulePack {
   return parseYaml(readFileSync(join(RULES, `${name}.yaml`), "utf8")) as RulePack;
 }
 
-const PACKS = ["typescript", "javascript", "python"] as const;
+const PACKS = ["typescript", "javascript", "python", "go", "java", "rust", "ruby", "csharp"] as const;
+
+/**
+ * Packs whose tool could not be installed where they were written, so no rule
+ * has been run against it. They declare `verification: documented_not_run`,
+ * and phase 3 is what checks them for real — it runs every rule's two
+ * examples before installing it, and rejects one whose bad example does not
+ * fire. Saying so in the pack is the point: a rule nobody has run is not the
+ * same as a rule that works.
+ */
+const UNVERIFIED = new Set(["ruby", "csharp"]);
 
 function have(cmd: string, args: string[]): boolean {
   try {
@@ -49,6 +59,9 @@ function have(cmd: string, args: string[]): boolean {
 
 const HAVE_ESLINT = existsSync(join(ROOT, "node_modules/eslint/bin/eslint.js"));
 const HAVE_RUFF = have("ruff", ["--version"]);
+const HAVE_CARGO = have("cargo", ["--version"]);
+const HAVE_GO = have("go", ["env", "GOVERSION"]);
+const HAVE_JAVAC = have("javac", ["-version"]);
 
 describe("the rule packs", () => {
   it("there is a pack for each v0.1 language", () => {
@@ -176,4 +189,75 @@ describe("verifyRule", () => {
       expect(v.detail).toContain("tool exploded");
     }
   });
+});
+
+describe("the v1.0 languages", () => {
+  it("there is a pack for each of the eight languages v1.0 names", () => {
+    expect([...PACKS].sort()).toEqual([
+      "csharp", "go", "java", "javascript", "python", "ruby", "rust", "typescript",
+    ]);
+  });
+
+  it("a pack nobody could run says so in the file", () => {
+    for (const name of PACKS) {
+      const pack = loadPack(name) as RulePack & { verification?: string };
+      if (UNVERIFIED.has(name)) {
+        expect(pack.verification, `${name} does not declare itself unverified`).toBe(
+          "documented_not_run",
+        );
+        expect(readFileSync(join(RULES, `${name}.yaml`), "utf8")).toContain("UNVERIFIED");
+      } else {
+        expect(pack.verification, `${name} claims to be unverified`).toBeUndefined();
+      }
+    }
+  });
+
+  it("every rule in a verified pack is covered by a live check below", () => {
+    // A pack that is neither live-verified nor marked unverified would be one
+    // whose rules nobody has ever run, without saying so.
+    const liveTools = new Set(["eslint", "ruff", "clippy", "go-vet", "javac-lint"]);
+    for (const name of PACKS) {
+      if (UNVERIFIED.has(name)) continue;
+      const pack = loadPack(name);
+      for (const rule of pack.rules) {
+        expect(liveTools.has(rule.tool), `${name}: ${rule.id} runs on ${rule.tool}, which nothing verifies`).toBe(true);
+      }
+    }
+  });
+});
+
+describe.skipIf(!HAVE_CARGO)("clippy rules fail on bad and pass on good", () => {
+  const pack = loadPack("rust");
+  const runner: ToolRunner = new ClippyRunner();
+  for (const rule of pack.rules.filter((r) => r.tool === "clippy")) {
+    it(`rust: ${rule.id}`, async () => {
+      const verdict = await verifyRule(rule, runner);
+      if (!verdict.ok) throw new Error(`${verdict.reason}\n${verdict.detail}`);
+      expect(verdict.ok).toBe(true);
+    }, 180_000);
+  }
+});
+
+describe.skipIf(!HAVE_GO)("go vet rules fail on bad and pass on good", () => {
+  const pack = loadPack("go");
+  const runner: ToolRunner = new GoVetRunner();
+  for (const rule of pack.rules.filter((r) => r.tool === "go-vet")) {
+    it(`go: ${rule.id}`, async () => {
+      const verdict = await verifyRule(rule, runner);
+      if (!verdict.ok) throw new Error(`${verdict.reason}\n${verdict.detail}`);
+      expect(verdict.ok).toBe(true);
+    }, 120_000);
+  }
+});
+
+describe.skipIf(!HAVE_JAVAC)("javac lint rules fail on bad and pass on good", () => {
+  const pack = loadPack("java");
+  const runner: ToolRunner = new JavacLintRunner();
+  for (const rule of pack.rules.filter((r) => r.tool === "javac-lint")) {
+    it(`java: ${rule.id}`, async () => {
+      const verdict = await verifyRule(rule, runner);
+      if (!verdict.ok) throw new Error(`${verdict.reason}\n${verdict.detail}`);
+      expect(verdict.ok).toBe(true);
+    }, 120_000);
+  }
 });

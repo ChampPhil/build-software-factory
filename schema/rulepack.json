@@ -28,6 +28,13 @@
         "ruby"
       ]
     },
+    "verification": {
+      "type": "string",
+      "enum": [
+        "documented_not_run"
+      ],
+      "description": "Present only when this pack's tool could not be installed where the pack was written, so no rule's examples have been run against it. Absent means every rule was verified by running the tool. Phase 3 checks a pack either way before installing a rule."
+    },
     "extensions": {
       "type": "array",
       "items": {
