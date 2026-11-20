@@ -45,7 +45,7 @@ import { planRun, afterGates } from "./commands/run-plan.js";
 import { buildStepReport, writeStepReport, changedFilesFromGit, type Harness } from "./commands/step-report.js";
 import { pausedPipelines, type BudgetState } from "./commands/rollup.js";
 import { loadFactory } from "./lib/config.js";
-import { startSandbox, loadManifest, loadManifestAt } from "./commands/sandbox.js";
+import { startSandbox, loadManifest, loadManifestAt, trialSandbox, freezeManifest } from "./commands/sandbox.js";
 import { fetchWorkItem, writeSpec, fetchArtifact, storeMedia } from "./commands/role-io.js";
 import { gardenScan, gardenFile, hardenContext, reviewCollect, reviewWrite } from "./commands/role-steps.js";
 import { runTestsGate } from "./commands/tests-gate.js";
@@ -202,6 +202,10 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
       Bring up the frozen sandbox: its services, its closed environment, its install.
   bsf sandbox check [--file PATH]
       Validate a sandbox manifest.
+  bsf sandbox trial --candidate PATH --out PATH
+      Run a candidate manifest and record the tier it actually reaches.
+  bsf sandbox freeze --rounds CANDIDATE:TRIAL[,...] --out PATH
+      Write the manifest from the best measured round, at the tier it reached.
   bsf models
       Emit each role's model and the gardening budget from factory.yaml as step outputs.
   bsf consistency [--root PATH] [--json]
@@ -1152,7 +1156,42 @@ async function sandboxCommandCli(second: string | undefined, args: Args): Promis
     process.stderr.write(loaded.kind === "missing" ? "no sandbox manifest\n" : `invalid:\n  ${loaded.errors.join("\n  ")}\n`);
     return 1;
   }
-  die("usage: bsf sandbox start | check [--file PATH]");
+  if (second === "trial") {
+    const candidate = args["candidate"];
+    const out = args["out"];
+    if (typeof candidate !== "string" || typeof out !== "string") die("usage: bsf sandbox trial --candidate PATH --out PATH");
+    const r = await trialSandbox({
+      manifestPath: candidate,
+      workspace: process.env["GITHUB_WORKSPACE"] ?? process.cwd(),
+      out,
+      ...(process.env["FACTORY_SANDBOX_ENV"] === undefined ? {} : { secretBlob: process.env["FACTORY_SANDBOX_ENV"] }),
+    });
+    setOutput("reached", r.reached);
+    setOutput("claimed", r.claimed);
+    setOutput("met", String(r.reached === r.claimed));
+    // A trial that ran is a success even when it fell short: its report is
+    // the output, and the next design round reads it.
+    return 0;
+  }
+  if (second === "freeze") {
+    const out = args["out"];
+    // One comma-separated flag: the parser keeps only the last value of a
+    // repeated one, which would have dropped every round but the last.
+    const raw = args["rounds"];
+    const rounds = (typeof raw === "string" ? raw.split(",") : [])
+      .map((r) => r.trim().split(":"))
+      .filter((p) => p.length === 2)
+      .map(([candidate, trial]) => ({ candidate: candidate ?? "", trial: trial ?? "" }));
+    if (typeof out !== "string" || rounds.length === 0) die("usage: bsf sandbox freeze --rounds CANDIDATE:TRIAL[,CANDIDATE:TRIAL...] --out PATH");
+    const { manifest, chosen } = freezeManifest(rounds, nowIso());
+    writeFileSync(out, `${JSON.stringify(manifest, null, 2)}\n`);
+    process.stdout.write(`froze round ${chosen + 1} at tier ${String(manifest["tier"])} into ${out}\n`);
+    setOutput("tier", String(manifest["tier"]));
+    // 1-based, as the round artifacts are named.
+    setOutput("chosen", String(chosen + 1));
+    return 0;
+  }
+  die("usage: bsf sandbox start | check | trial | freeze");
 }
 
 async function modelsCommand(): Promise<number> {

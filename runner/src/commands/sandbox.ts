@@ -1,7 +1,7 @@
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { connect } from "node:net";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { resolveRead } from "../lib/config.js";
 import { validate } from "../lib/schema.js";
 
@@ -197,4 +197,251 @@ export async function startSandbox(opts: {
   }
 
   return { tier: m.tier, services: m.services.map((s) => s.name), envNames: Object.keys(env).sort(), envFile: RUNTIME_ENV };
+}
+
+/* ========================================================================== *
+ * Trial: run a candidate manifest and measure the tier it actually reaches
+ * ========================================================================== */
+
+export type Tier = "renders" | "build_and_test" | "static";
+
+const TIER_RANK: Record<Tier, number> = { static: 0, build_and_test: 1, renders: 2 };
+
+export function tierAtLeast(a: Tier, b: Tier): boolean {
+  return TIER_RANK[a] >= TIER_RANK[b];
+}
+
+export interface StepOutcome {
+  readonly step: "install" | "build" | "test" | "run" | "screenshot";
+  readonly command: string | null;
+  readonly ok: boolean;
+  readonly exit: number | null;
+  readonly seconds: number;
+  /** The last lines of output: what the agent reads to decide what to change. */
+  readonly tail: string;
+}
+
+export interface TrialReport {
+  readonly schema: "sandbox-trial/1";
+  readonly claimed: Tier;
+  readonly reached: Tier;
+  readonly steps: readonly StepOutcome[];
+  readonly app_url: string | null;
+  readonly app_status: number | null;
+  readonly screenshot: string | null;
+  /** One line for a person: what happened, in the order it happened. */
+  readonly summary: string;
+}
+
+/**
+ * The tier the measured steps support. Mechanical, so the agent's claim is
+ * checked rather than believed: build_and_test needs every declared install,
+ * build and test command to pass; renders needs that, plus the app answering
+ * at its URL and a screenshot of it.
+ */
+export function reachedTier(steps: readonly StepOutcome[], appOk: boolean, screenshot: boolean): Tier {
+  const failed = (s: StepOutcome["step"]): boolean => steps.some((x) => x.step === s && !x.ok);
+  const ran = (s: StepOutcome["step"]): boolean => steps.some((x) => x.step === s && x.command !== null);
+  if (failed("install") || failed("build") || failed("test")) return "static";
+  // Nothing to build or test still counts: a repo with no test suite can
+  // build_and_test when it builds, and a repo with neither is static.
+  if (!ran("build") && !ran("test") && !ran("install")) return "static";
+  if (appOk && screenshot) return "renders";
+  return "build_and_test";
+}
+
+function tailOf(buf: Buffer | string | null | undefined, lines = 40): string {
+  const text = (buf ?? "").toString();
+  return text.split("\n").slice(-lines).join("\n").slice(-6000);
+}
+
+async function httpStatus(url: string): Promise<number | null> {
+  try {
+    const r = await fetch(url, { redirect: "manual", signal: AbortSignal.timeout(5000) });
+    return r.status;
+  } catch {
+    return null;
+  }
+}
+
+export async function trialSandbox(opts: {
+  readonly manifestPath: string;
+  readonly workspace: string;
+  readonly out: string;
+  readonly secretBlob?: string;
+  readonly appWaitMs?: number;
+  readonly screenshot?: (url: string, file: string) => boolean;
+  readonly log?: (line: string) => void;
+}): Promise<TrialReport> {
+  const log = opts.log ?? ((l: string) => process.stdout.write(`${l}\n`));
+  const loaded = loadManifestAt(opts.manifestPath);
+  if (loaded.kind !== "ok") {
+    const why = loaded.kind === "missing" ? "the candidate manifest was not written" : `the candidate manifest is invalid: ${loaded.errors.join("; ")}`;
+    const report: TrialReport = {
+      schema: "sandbox-trial/1", claimed: "static", reached: "static", steps: [], app_url: null,
+      app_status: null, screenshot: null, summary: why,
+    };
+    writeFileSync(opts.out, `${JSON.stringify(report, null, 2)}\n`);
+    return report;
+  }
+  const m = loaded.manifest;
+  const steps: StepOutcome[] = [];
+
+  const { env, missing } = sandboxEnv(m, opts.secretBlob);
+  const base: Record<string, string> = {};
+  for (const k of ["PATH", "HOME", "TMPDIR", "LANG", "CI", "RUNNER_TEMP"]) {
+    const v = process.env[k];
+    if (v !== undefined) base[k] = v;
+  }
+  const runEnv = { ...base, ...env };
+
+  const run = (step: StepOutcome["step"], command: string | null): boolean => {
+    if (command === null) {
+      steps.push({ step, command: null, ok: true, exit: null, seconds: 0, tail: "" });
+      return true;
+    }
+    log(`trial ${step}: ${command}`);
+    const t0 = Date.now();
+    const r = spawnSync("bash", ["-c", command], {
+      cwd: opts.workspace, env: runEnv, encoding: "utf8", maxBuffer: 64 * 1024 * 1024, timeout: 30 * 60 * 1000,
+    });
+    const ok = r.status === 0;
+    steps.push({
+      step, command, ok, exit: r.status, seconds: Math.round((Date.now() - t0) / 1000),
+      tail: tailOf(`${r.stdout ?? ""}\n${r.stderr ?? ""}`),
+    });
+    return ok;
+  };
+
+  if (missing.length > 0) {
+    steps.push({ step: "install", command: null, ok: false, exit: null, seconds: 0, tail: `values not set: ${missing.join(", ")}` });
+  } else {
+    for (const svc of m.services) {
+      const args = ["run", "-d", "--rm", "--name", `bsf-${svc.name}`, "-p", `127.0.0.1:${svc.port}:${svc.port}`];
+      for (const [k, v] of Object.entries(svc.env ?? {})) args.push("-e", `${k}=${v}`);
+      args.push(svc.image);
+      const r = spawnSync("docker", args, { encoding: "utf8" });
+      let up = r.status === 0;
+      const deadline = Date.now() + 90_000;
+      while (up && !(await portOpen(svc.port))) {
+        if (Date.now() > deadline) { up = false; break; }
+        await new Promise((res) => setTimeout(res, 1000));
+      }
+      if (!up) {
+        steps.push({ step: "install", command: `docker run ${svc.image}`, ok: false, exit: r.status, seconds: 0,
+          tail: tailOf(`${r.stdout ?? ""}\n${r.stderr ?? ""}\n${svc.name} did not open port ${svc.port}`) });
+      }
+    }
+    if (steps.every((s) => s.ok) && run("install", m.commands.install) && run("build", m.commands.build)) {
+      run("test", m.commands.test);
+    }
+  }
+
+  // Start the app and see whether it answers.
+  let appStatus: number | null = null;
+  let shot: string | null = null;
+  const url = m.app_url ?? null;
+  if (steps.every((s) => s.ok) && m.commands.run !== null && url !== null) {
+    log(`trial run: ${m.commands.run}`);
+    const child = spawn("bash", ["-c", m.commands.run], { cwd: opts.workspace, env: runEnv, detached: true });
+    let output = "";
+    child.stdout?.on("data", (d: Buffer) => { output += d.toString(); });
+    child.stderr?.on("data", (d: Buffer) => { output += d.toString(); });
+    const t0 = Date.now();
+    const deadline = t0 + (opts.appWaitMs ?? 180_000);
+    while (Date.now() < deadline) {
+      appStatus = await httpStatus(url);
+      if (appStatus !== null && appStatus < 500) break;
+      if (child.exitCode !== null) break;
+      await new Promise((res) => setTimeout(res, 2000));
+    }
+    const answered = appStatus !== null && appStatus < 500;
+    steps.push({ step: "run", command: m.commands.run, ok: answered, exit: child.exitCode,
+      seconds: Math.round((Date.now() - t0) / 1000),
+      tail: tailOf(answered ? output : `${output}\n${url} answered ${appStatus ?? "nothing"}`) });
+    if (answered) {
+      const file = join(dirname(opts.out), "screenshot.png");
+      const took = (opts.screenshot ?? defaultScreenshot)(url, file);
+      steps.push({ step: "screenshot", command: null, ok: took, exit: null, seconds: 0, tail: took ? file : "the screenshot could not be taken" });
+      if (took) shot = file;
+    }
+    try { if (child.pid !== undefined) process.kill(-child.pid, "SIGTERM"); } catch { /* already gone */ }
+  }
+
+  const reached = reachedTier(steps, appStatus !== null && appStatus < 500, shot !== null);
+  const failedStep = steps.find((s) => !s.ok);
+  const summary =
+    failedStep === undefined
+      ? `reached ${reached}${reached === m.tier ? ", as claimed" : `; the manifest claimed ${m.tier}`}`
+      : `reached ${reached}: ${failedStep.step} failed${failedStep.command === null ? "" : ` (${failedStep.command})`}`;
+  const report: TrialReport = {
+    schema: "sandbox-trial/1", claimed: m.tier, reached, steps, app_url: url, app_status: appStatus,
+    screenshot: shot, summary,
+  };
+  writeFileSync(opts.out, `${JSON.stringify(report, null, 2)}\n`);
+  log(summary);
+  return report;
+}
+
+/** Playwright's own CLI, which every runner can fetch; no dependency of ours. */
+function defaultScreenshot(url: string, file: string): boolean {
+  const install = spawnSync("npx", ["-y", "playwright@1", "install", "--with-deps", "chromium"], { stdio: "inherit" });
+  if (install.status !== 0) return false;
+  const r = spawnSync("npx", ["-y", "playwright@1", "screenshot", "--full-page", "--wait-for-timeout", "2000", url, file], { stdio: "inherit" });
+  return r.status === 0 && existsSync(file);
+}
+
+/* ========================================================================== *
+ * Freeze: the manifest that lands, from the best measured round
+ * ========================================================================== */
+
+export interface Round {
+  readonly candidate: string;
+  readonly trial: string;
+}
+
+/**
+ * Pick the round whose trial reached the highest tier (the latest one on a
+ * tie, since later rounds had more to go on) and write its manifest with the
+ * tier the trial measured. The agent's claim is replaced by what happened.
+ */
+export function freezeManifest(rounds: readonly Round[], now: string): {
+  readonly manifest: Record<string, unknown>;
+  readonly chosen: number;
+} {
+  let best: { i: number; tier: Tier; m: Record<string, unknown>; t: TrialReport } | null = null;
+  const trials: TrialReport[] = [];
+  rounds.forEach((r, i) => {
+    let t: TrialReport;
+    try { t = JSON.parse(readFileSync(r.trial, "utf8")) as TrialReport; } catch { return; }
+    trials.push(t);
+    const loaded = loadManifestAt(r.candidate);
+    if (loaded.kind !== "ok") return;
+    if (best === null || TIER_RANK[t.reached] >= TIER_RANK[best.tier]) {
+      best = { i, tier: t.reached, m: JSON.parse(readFileSync(r.candidate, "utf8")) as Record<string, unknown>, t };
+    }
+  });
+  if (best === null) throw new Error("no round produced a valid candidate manifest");
+  const b: { i: number; tier: Tier; m: Record<string, unknown>; t: TrialReport } = best;
+  const agentEpisode = Array.isArray(b.m["episode"]) ? (b.m["episode"] as { attempt: number }[]) : [];
+  const next = agentEpisode.reduce((n, e) => Math.max(n, e.attempt), 0) + 1;
+  const manifest: Record<string, unknown> = {
+    ...b.m,
+    tier: b.tier,
+    tier_reason:
+      b.tier === "renders" ? null : b.t.claimed === b.tier ? (b.m["tier_reason"] ?? b.t.summary) : `measured: ${b.t.summary}`,
+    episode: [
+      ...agentEpisode,
+      ...trials.map((t, k) => ({
+        attempt: next + k,
+        tried: `trial of round ${k + 1}: ${t.steps.filter((s) => s.command !== null).map((s) => s.step).join(", ") || "nothing to run"}`,
+        observed: t.summary,
+        changed: null,
+      })),
+    ],
+    frozen_at: now,
+  };
+  const v = validate("sandbox", manifest);
+  if (!v.ok) throw new Error(`the frozen manifest is invalid: ${v.errors.map((e) => `${e.path} ${e.message}`).join("; ")}`);
+  return { manifest, chosen: b.i };
 }
