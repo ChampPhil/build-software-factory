@@ -1,0 +1,58 @@
+# Compiles every role and pipeline template with the real gh-aw compiler.
+#
+# Exists because the compiler had never run: the session that wrote the
+# templates could not install Go or gh-aw's binaries, so everything was read off
+# the schema. This is the check that the templates are what gh-aw accepts, and it
+# runs on every change to them so they cannot drift back into being unverified.
+name: gh-aw compile
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ["templates/workflows/**", ".github/workflows/ghaw-compile.yml"]
+  pull_request:
+    paths: ["templates/workflows/**", ".github/workflows/ghaw-compile.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  compile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install gh-aw
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh extension install github/gh-aw
+          gh aw version
+
+      # gh aw compile works on .github/workflows of the repo it runs in, so the
+      # templates are compiled inside a scratch repo rather than this one, where
+      # compiling would also pick up this repo's own CI.
+      - name: Compile the templates in a scratch repo
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -o pipefail
+          mkdir -p /tmp/scratch/.github/workflows
+          cp templates/workflows/*.md /tmp/scratch/.github/workflows/
+          cd /tmp/scratch
+          git init -q && git config user.email ci@example.com && git config user.name ci
+          git add -A && git commit -qm scratch
+          # --strict so warnings the runtime would later trip on fail here.
+          gh aw compile --strict --verbose 2>&1 | tee /tmp/compile.log
+
+      - name: Keep the compiled output and the log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ghaw-compiled
+          path: |
+            /tmp/scratch/.github/workflows/*.lock.yml
+            /tmp/compile.log
+          if-no-files-found: warn
