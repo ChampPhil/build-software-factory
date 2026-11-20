@@ -869,7 +869,7 @@ async function runCommand(second: string | undefined, args: Args, third?: string
     }
     if (pipeline === undefined) die("usage: bsf run plan WORK_ITEM [--attempt N] | --pipeline P");
     const attempt = typeof args["attempt"] === "string" ? Number(args["attempt"]) : 1;
-    const cfg = await factoryConfig().catch(() => ({}));
+    const cfg: FactoryConfig = await factoryConfig().catch((): FactoryConfig => ({}));
     const plan = planRun({
       pipeline: pipeline as Parameters<typeof planRun>[0]["pipeline"],
       attempt: Number.isInteger(attempt) && attempt > 0 ? attempt : 1,
@@ -926,7 +926,7 @@ async function runCommand(second: string | undefined, args: Args, third?: string
     const { finishRun } = await import("./commands/run-lifecycle.js");
     const runIdArg = args["run-id"];
     if (typeof runIdArg !== "string" || runIdArg === "") die("usage: bsf run after-gates WORK_ITEM --run-id R ...");
-    const cfg = await factoryConfig().catch(() => ({}));
+    const cfg: FactoryConfig = await factoryConfig().catch((): FactoryConfig => ({}));
     const attempt = typeof args["attempt"] === "string" ? Number(args["attempt"]) : 1;
     const pr = typeof args["pr"] === "string" ? Number(args["pr"]) : 0;
     const waitMin = typeof args["wait-min"] === "string" ? Number(args["wait-min"]) : 90;
