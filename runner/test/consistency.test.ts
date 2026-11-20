@@ -4,6 +4,7 @@ import {
   envVarsUsed,
   envVarsDeclared,
   documentedScripts,
+  isTestPath,
 } from "../src/commands/consistency.js";
 
 /** A repo as a map of path to contents, so no files are written. */
@@ -232,6 +233,47 @@ describe("every finding", () => {
       expect(finding.between[0], finding.check).not.toBe("");
       expect(finding.between[1], finding.check).not.toBe("");
       expect(finding.between[0]).not.toBe(finding.between[1]);
+    }
+  });
+});
+
+describe("test files", () => {
+  it("does not count a variable that appears only in a test", () => {
+    // Run against a repo with a real suite, this reported sixty-odd
+    // variables, most of them names invented inside test fixtures. A check
+    // that reports those teaches people to ignore the check.
+    const f = repo(
+      {
+        "test/thing.test.ts": "process.env.MADE_UP_A; process.env.MADE_UP_B; process.env.MADE_UP_C;",
+        "src/app.ts": "export const x = 1;",
+      },
+      ["test/thing.test.ts", "src/app.ts"],
+    );
+    expect(f).toEqual([]);
+  });
+
+  it("still counts one the application reads, even when tests mention others", () => {
+    const f = repo(
+      {
+        "test/thing.test.ts": "process.env.MADE_UP_A;",
+        "src/app.ts": "process.env.REAL_ONE; process.env.REAL_TWO; process.env.REAL_THREE;",
+      },
+      ["test/thing.test.ts", "src/app.ts"],
+    );
+    expect(f).toHaveLength(1);
+    expect(f[0]?.detail).toContain("REAL_ONE");
+    expect(f[0]?.detail).not.toContain("MADE_UP_A");
+  });
+
+  it("knows the shapes a test path takes", () => {
+    for (const p of [
+      "test/a.ts", "tests/a.py", "src/__tests__/a.ts", "spec/a_spec.rb",
+      "src/a.test.ts", "src/a.spec.tsx", "fixtures/x/a.ts", "tests/conftest.py",
+    ]) {
+      expect(isTestPath(p), p).toBe(true);
+    }
+    for (const p of ["src/app.ts", "lib/latest.ts", "app/contest.py", "src/testing-utils.ts"]) {
+      expect(isTestPath(p), p).toBe(false);
     }
   });
 });

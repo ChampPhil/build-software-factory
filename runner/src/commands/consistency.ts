@@ -45,16 +45,21 @@ export interface ConsistencyInput {
 /** Variables read from the environment, with where each was read. */
 export function envVarsUsed(source: string): readonly string[] {
   const found = new Set<string>();
+  // Written with lowercase placeholders on purpose. This function matches
+  // uppercase names anywhere in a file, comments included, so a comment
+  // spelling out an example in uppercase makes the scanner report its own
+  // documentation as a variable the project needs — which is exactly what
+  // happened when it was first run against this repository.
   const patterns = [
-    // process.env.NAME / process.env["NAME"]
+    // process.env.<name> and process.env["<name>"]
     /process\.env\.([A-Z][A-Z0-9_]{2,})/g,
     /process\.env\[\s*["'`]([A-Z][A-Z0-9_]{2,})["'`]\s*\]/g,
-    // os.environ["NAME"] / os.getenv("NAME") / os.environ.get("NAME")
+    // os.environ["<name>"], os.getenv("<name>"), os.environ.get("<name>")
     /os\.environ(?:\.get)?\[?\s*\(?\s*["']([A-Z][A-Z0-9_]{2,})["']/g,
     /os\.getenv\(\s*["']([A-Z][A-Z0-9_]{2,})["']/g,
-    // os.Getenv("NAME") in Go
+    // os.Getenv("<name>") in Go
     /os\.Getenv\(\s*"([A-Z][A-Z0-9_]{2,})"/g,
-    // ${{ secrets.NAME }} and ${{ vars.NAME }} in workflows
+    // The ${{ secrets.<name> }} and ${{ vars.<name> }} forms in workflows
     /\$\{\{\s*(?:secrets|vars)\.([A-Z][A-Z0-9_]{2,})\s*\}\}/g,
   ];
   for (const re of patterns) {
@@ -99,7 +104,27 @@ const IGNORED_ENV = new Set([
   "PORT", "HOSTNAME", "DEBUG", "NODE_OPTIONS", "GITHUB_TOKEN", "GITHUB_OUTPUT",
   "GITHUB_ENV", "GITHUB_REPOSITORY", "GITHUB_SHA", "GITHUB_REF", "GITHUB_ACTOR",
   "GITHUB_EVENT_NAME", "GITHUB_WORKSPACE", "RUNNER_OS", "RUNNER_TEMP",
+  "GITHUB_EVENT_PATH", "GITHUB_HEAD_SHA", "GITHUB_BASE_REF", "GITHUB_RUN_ID",
+  "GITHUB_API_URL", "GITHUB_SERVER_URL", "GITHUB_JOB", "GITHUB_REF_NAME",
+  "DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR", "SSH_AUTH_SOCK",
 ]);
+
+/**
+ * A path whose environment-variable mentions are test data rather than
+ * configuration.
+ *
+ * Run against a repo with a real test suite, the env check reported sixty-odd
+ * variables — most of them names invented inside test fixtures. A name that
+ * appears only in a test is not a variable the application needs, and a check
+ * that reports it teaches people to ignore the check.
+ */
+export function isTestPath(path: string): boolean {
+  return (
+    /(^|\/)(tests?|__tests__|spec|fixtures|e2e|testdata)(\/|$)/.test(path) ||
+    /\.(test|spec)\.[a-z]+$/.test(path) ||
+    /(^|\/)conftest\.py$/.test(path)
+  );
+}
 
 export function checkConsistency(input: ConsistencyInput): readonly ConsistencyFinding[] {
   const read = input.read ?? ((p: string) => readFileSync(join(input.root, p), "utf8"));
@@ -114,6 +139,7 @@ export function checkConsistency(input: ConsistencyInput): readonly ConsistencyF
 
   const usedIn = new Map<string, string>();
   for (const file of input.files) {
+    if (isTestPath(file)) continue;
     const text = safe(() => read(file));
     if (text === null) continue;
     for (const name of envVarsUsed(text)) {
