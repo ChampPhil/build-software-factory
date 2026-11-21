@@ -11,7 +11,7 @@
  *
  * Usage:
  *   node estimate-spend.mjs [--repo owner/name] [--days 90]
- *                           [--gardening-prs 5] [--json]
+ *                           [--gardening-prs 1] [--json]
  */
 
 import { execFileSync } from "node:child_process";
@@ -38,9 +38,10 @@ const COST = {
 };
 
 const FREE_PRIVATE_MINUTES = 2000;
+const DEFAULT_MONTHLY_USD = 35;
 
 function parseArgs(argv) {
-  const args = { days: 90, gardeningPrs: 5, json: false, visibility: null, plan: null };
+  const args = { days: 90, gardeningPrs: 1, json: false, visibility: null, plan: null };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--repo") args.repo = argv[++i];
@@ -167,7 +168,15 @@ function estimate({ activity, days, gardeningPrs, isPrivate, planName }) {
       `Non-gardening work alone is about ${Math.round(nonGardening)} minutes.`;
   }
 
-  const budget = Math.max(25, Math.ceil(modelUsd / 25) * 25);
+  // The default is $35 a month; a repo busier than that buys gets told what
+  // the default covers and what more would, rather than a silently larger bill.
+  const budget = DEFAULT_MONTHLY_USD;
+  const buys = (usd) => ({
+    monthly_usd: usd,
+    product_prs: Math.floor((usd * 0.6) / COST.product_run_usd),
+    gardening_prs: Math.floor((usd * 0.25) / COST.gardening_run_usd),
+    reviews: Math.floor((usd * 0.15) / COST.review_usd),
+  });
 
   return {
     window_days: days,
@@ -176,6 +185,8 @@ function estimate({ activity, days, gardeningPrs, isPrivate, planName }) {
     model_usd_per_month: Math.round(modelUsd * 100) / 100,
     actions_minutes_per_month: Math.round(minutes),
     actions_minutes_limit: minutesLimit,
+    buys: buys(budget),
+    needed_for_this_activity_usd: Math.ceil(modelUsd),
     suggested: {
       monthly_usd: budget,
       gardening_prs_per_run: suggestedGardeningPrs,
@@ -210,7 +221,7 @@ Estimate the factory's monthly cost from this repo's last 90 days.
 
   --repo owner/name     Default: the origin remote
   --days N              Window to measure (default 90)
-  --gardening-prs N     Cleanup PRs per night (default 5)
+  --gardening-prs N     Cleanup PRs per night (default 1)
   --private | --public  State the repo's visibility instead of reading it
   --plan NAME         State the owner's plan (free, pro, team, enterprise).
                       With both of these, no API call is made at all
@@ -284,6 +295,15 @@ Estimated monthly cost for ${repo}
     monthly budget            $${r.suggested.monthly_usd}
     gardening PRs a night     ${r.suggested.gardening_prs_per_run}
     shares                    product ${r.suggested.shares.product_work}% · gardening ${r.suggested.shares.gardening}% · review ${r.suggested.shares.review_and_benchmarks}%
+
+  What $${r.buys.monthly_usd} a month buys
+    product PRs               about ${r.buys.product_prs}
+    gardening PRs             about ${r.buys.gardening_prs}
+    scheduled reviews         about ${r.buys.reviews}${
+    r.needed_for_this_activity_usd > r.buys.monthly_usd
+      ? `\n\n  This repo's activity would use about $${r.needed_for_this_activity_usd}. At $${r.buys.monthly_usd} each pipeline pauses when it\n  has spent its share, and resumes next month; raise monthly_usd in factory.yaml to do more.`
+      : ""
+  }
 `);
 for (const n of r.notes) process.stdout.write(`\n  Note: ${n}\n`);
 process.stdout.write("\nThese are estimates. The dashboard shows real spend from the first run.\n\n");

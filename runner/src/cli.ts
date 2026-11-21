@@ -2510,7 +2510,7 @@ async function scoreCommand(args: Args): Promise<number> {
   const rubrics = loadRubrics(".factory/definition/rubrics");
   if (rubrics.length === 0) die("no rubrics in .factory/definition/rubrics");
 
-  const grader = process.env["FACTORY_GRADER_PROVIDER"] ?? "anthropic:messages:claude-opus-5";
+  const grader = process.env["FACTORY_GRADER_PROVIDER"] ?? "anthropic:messages:claude-haiku-5-5";
   const repeat = typeof args["repeat"] === "string" ? Number(args["repeat"]) : 2;
   const report = await runScorers({
     rubrics,
@@ -2574,7 +2574,7 @@ async function benchmarkCommand(second: string | undefined, args: Args): Promise
         { label: "before", path: before },
         { label: "after", path: after },
       ],
-      graderProvider: process.env["FACTORY_GRADER_PROVIDER"] ?? "anthropic:messages:claude-opus-5",
+      graderProvider: process.env["FACTORY_GRADER_PROVIDER"] ?? "anthropic:messages:claude-haiku-5-5",
       repeats: Number.isInteger(repeats) && repeats > 0 ? repeats : 3,
     });
 

@@ -29,7 +29,7 @@ models:                           # model per step (self-improvement may change 
   scorer: <model-id>
 pipelines:
   product_work: { auto_merge: false }
-  gardening:    { auto_merge: false, schedule: "0 6 * * *", max_prs_per_run: 5 }
+  gardening:    { auto_merge: false, schedule: "0 6 * * *", max_prs_per_run: 1 }
   hardening:    { auto_merge: false }
 review:
   every_days: 3
@@ -40,7 +40,7 @@ limits:
   step_time_budget_sec: 2700
   concurrency: { max_runs: 5 }
 budget:
-  monthly_usd: 200
+  monthly_usd: 35
   monthly_actions_minutes: 2000   # default: the plan's included minutes; null on public repos
   shares:                         # % of each limit each pipeline may use
     product_work: 60
