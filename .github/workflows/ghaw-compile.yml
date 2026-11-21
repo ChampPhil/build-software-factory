@@ -84,6 +84,7 @@ jobs:
           set -o pipefail
           rm -rf /tmp/live && mkdir -p /tmp/live/.github/workflows
           cp tests/live/workflows/*.md /tmp/live/.github/workflows/
+          cp -R templates/harness/cursor-cli/workflows/shared /tmp/live/.github/workflows/
           (cd /tmp/live && git init -q && git config user.email ci@example.com && git config user.name ci \
             && git add -A && git commit -qm scratch && gh aw compile --strict --approve 2>&1 | tee /tmp/compile-live.log)
 

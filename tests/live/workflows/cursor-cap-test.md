@@ -13,6 +13,8 @@ on:
 engine:
   id: cursor
   model: ${{ inputs.model }}
+imports:
+  - shared/cursor.md
 permissions:
   contents: read
 network:
