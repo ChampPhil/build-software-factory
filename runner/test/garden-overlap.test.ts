@@ -98,6 +98,22 @@ describe("runGardenCommand", () => {
     expect(JSON.parse(files.get(LEDGER)!).open).toHaveLength(2);
   });
 
+  it("files nothing while open gardening items already fill the cap", async () => {
+    await runGardenCommand({
+      gh, now: NOW, root: ".", plan: true, scan: false, maxPrs: 1,
+      baselines: { schema: "baselines/1", rules: {} },
+      extra: [drift("tests for src/util.js", ["src/util.js"])],
+    });
+    const next = await runGardenCommand({
+      gh, now: "2026-11-22T08:00:00Z", root: ".", plan: true, scan: false, maxPrs: 1,
+      baselines: { schema: "baselines/1", rules: {} },
+      extra: [drift("tests for src/db.js", ["src/db.js"])],
+    });
+    expect(next.picked).toEqual([]);
+    expect(next.scan.skipped.map((s) => s.reason)).toEqual(["gardening already has max_prs_per_run items open"]);
+    expect(JSON.parse(files.get(LEDGER)!).open).toHaveLength(1);
+  });
+
   it("does not re-scan when the items were already picked", async () => {
     const r = await runGardenCommand({
       gh, now: NOW, root: "/nonexistent", plan: true, scan: false, maxPrs: 5,

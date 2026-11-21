@@ -197,11 +197,19 @@ export async function runGardenCommand(opts: GardenOptions): Promise<GardenRepor
   // picked earlier tonight. An item naming no files is repo-wide and takes
   // everything.
   const taken = await openGardeningScopes(store, ledger);
+  // The cap bounds the backlog, not only tonight's batch: gardening items
+  // still open from earlier nights count against it, so a night whose PRs
+  // were never reviewed (or never ran) files nothing new rather than
+  // piling a queue up behind them.
+  const room = Math.max(0, opts.maxPrs - taken.length);
   const picked: DriftItem[] = [];
   for (const item of eligible
     .slice()
     .sort((a, b) => ORDER[a.kind] - ORDER[b.kind] || b.occurrences - a.occurrences)) {
-    if (picked.length >= Math.max(0, opts.maxPrs)) break;
+    if (picked.length >= room) {
+      skipped.push({ problem_class: item.problem_class, reason: "gardening already has max_prs_per_run items open" });
+      continue;
+    }
     const scope = scopeOf(item.files);
     if (taken.some((t) => scopesOverlap(t, scope))) {
       skipped.push({ problem_class: item.problem_class, reason: "overlaps files another gardening item is changing" });
