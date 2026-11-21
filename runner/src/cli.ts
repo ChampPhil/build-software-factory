@@ -595,7 +595,19 @@ async function main(argv: readonly string[]): Promise<number> {
       // The run links its PR to the item as soon as the build opens it; wait
       // a little for that link rather than verify against nothing.
       let workItem = "";
+      // A factory PR that touches only .factory/ — setup, a sandbox amendment,
+      // a definition change — has no work item and no spec: there is nothing
+      // for the verifier to check it against, and policy already requires a
+      // person to approve it. It is not agent-verified, and says why.
+      let definitionOnly = false;
       if (plan.agentVerification && actor === "agent" && ev.pr > 0) {
+        const files = await new GitHub({ repo: requireRepo() }).pullFiles(ev.pr).catch(() => []);
+        definitionOnly = files.length > 0 && files.every((f) => f.filename.startsWith(".factory/"));
+        if (definitionOnly) {
+          process.stdout.write("  this PR changes only .factory/: not agent-verified (no spec to check it against); a person approves it under policy\n");
+        }
+      }
+      if (plan.agentVerification && actor === "agent" && ev.pr > 0 && !definitionOnly) {
         const { FactoryStore } = await import("./lib/store.js");
         const store = new FactoryStore(new GitHub({ repo: requireRepo() }));
         for (let i = 0; i < 20 && workItem === ""; i++) {
@@ -610,7 +622,7 @@ async function main(argv: readonly string[]): Promise<number> {
       // skipping verification: the verifier runs and fails for want of a
       // spec. A human PR asking for it with the label gets it when it is
       // linked to an item, and is told otherwise.
-      setOutput("agent_verification", String(plan.agentVerification && (actor === "agent" || workItem !== "")));
+      setOutput("agent_verification", String(plan.agentVerification && !definitionOnly && (actor === "agent" || workItem !== "")));
       for (const r of plan.reasons) process.stdout.write(`  ${r}\n`);
       void policy;
       return 0;
