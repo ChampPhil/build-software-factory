@@ -218,7 +218,7 @@ async function apply(
     case "resolve_conflict":
       // The conflict pipeline rebases and re-clears; dispatching it here is
       // what makes a conflicting PR recover without anyone watching.
-      await requestRebuild(opts.gh, head.work_item);
+      await requestRebuild(opts.gh, head.work_item, action.pr);
       return `started a rebuild of #${action.pr} on main`;
 
     case "update_from_main":

@@ -55,7 +55,7 @@ export async function runConflictsCommand(opts: ConflictsOptions): Promise<Confl
   const dispatched: string[] = [];
   if (opts.dispatch !== false) {
     for (const c of conflicting) {
-      await requestRebuild(opts.gh, c.work_item, opts.ref);
+      await requestRebuild(opts.gh, c.work_item, c.pr, opts.ref);
       dispatched.push(c.work_item);
       if (opts.checks !== undefined) {
         await conflictCheck(opts.checks, c.pr).catch((e: Error) => {
@@ -97,8 +97,11 @@ async function mergeability(
  * `workflows` permission: a merge would carry main's workflow changes into a
  * push the App makes.
  */
-export async function requestRebuild(gh: GitHub, workItem: string, ref?: string): Promise<void> {
-  await gh.dispatchWorkflow("factory-run.yml", ref, { work_item: workItem, reason: "conflict" });
+export async function requestRebuild(gh: GitHub, workItem: string, pr: number, ref?: string): Promise<void> {
+  // The PR travels with the request: a rebuild that waits in the queue while
+  // an earlier one replaces that PR must find it gone and stand down, not
+  // rebuild the replacement too.
+  await gh.dispatchWorkflow("factory-run.yml", ref, { work_item: workItem, reason: "conflict", pr_number: String(pr) });
 }
 
 const CONFLICT_CHECK = "factory/conflicts";
@@ -127,7 +130,7 @@ export async function rebuildFromButton(gh: GitHub, pr: number, now: string): Pr
   const ledger = await new FactoryStore(gh).ledger(now);
   const item = ledger.open.find((o) => o.pr === pr);
   if (item === undefined) return `#${pr} is not an open factory work item's PR; nothing to rebuild`;
-  await requestRebuild(gh, item.work_item);
+  await requestRebuild(gh, item.work_item, pr);
   return `started a rebuild of ${item.work_item} (#${pr}) on main`;
 }
 

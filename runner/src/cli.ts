@@ -1211,6 +1211,7 @@ async function runCommand(second: string | undefined, args: Args, third?: string
       firstStep: typeof args["first-step"] === "string" ? args["first-step"] : "builder",
       now: nowIso(),
       ...(typeof args["reason"] === "string" && args["reason"] !== "" ? { reason: args["reason"] } : {}),
+      ...(Number(args["pr"]) > 0 ? { pr: Number(args["pr"]) } : {}),
       ...(Number(process.env["GITHUB_RUN_ID"]) > 0 ? { actionsRun: Number(process.env["GITHUB_RUN_ID"]) } : {}),
     });
     process.stdout.write(r.runId === "" ? `${r.reason}\n` : `${third} is ${r.status}; run ${r.runId}\n`);

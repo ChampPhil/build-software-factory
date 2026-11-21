@@ -63,6 +63,8 @@ export async function startRun(opts: {
   readonly actionsRun?: number;
   /** "conflict": rebuild an item whose PR conflicts with main. */
   readonly reason?: string;
+  /** For a rebuild: the PR found conflicting. */
+  readonly pr?: number;
 }): Promise<StartRunReport> {
   const store = new FactoryStore(opts.gh);
   const item = await store.get<WorkItemDoc>(workItemPath(opts.workItem), "work-item");
@@ -77,6 +79,9 @@ export async function startRun(opts: {
     opts.reason === "conflict"
       ? opts.attempt === 1 && (item.status === "in_review" || item.status === "escalated") && typeof item.pr === "number"
       : opts.attempt === 1 ? item.status === "queued" : item.status === "running";
+  if (opts.reason === "conflict" && opts.pr !== undefined && opts.pr > 0 && item.pr !== opts.pr) {
+    return { runId: "", status: "not_claimed", reason: `${opts.workItem} has moved on from #${opts.pr} to #${String(item.pr)}, so this rebuild is not needed` };
+  }
   if (!claimable && !opts.escalate) {
     return { runId: "", status: "not_claimed", reason: `${opts.workItem} is ${item.status}, so attempt ${opts.attempt} does not start it` };
   }

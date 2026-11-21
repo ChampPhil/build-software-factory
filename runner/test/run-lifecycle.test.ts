@@ -302,6 +302,16 @@ describe("a conflict rebuild", () => {
     expect((await startRun({ gh, workItem: WI, attempt: 1, escalate: false, firstStep: "builder", now: "2026-11-21T00:00:00Z", reason: "conflict" })).status).toBe("not_claimed");
   });
 
+  it("stands down when the PR it was asked to rebuild has already been replaced", async () => {
+    // ts-webapp: a second rebuild of #33 waited in the queue behind the first,
+    // which opened #36; it then rebuilt #36, which did not conflict, as #40.
+    files.set(`work-items/${WI}.json`, JSON.stringify({ ...item("in_review"), pr: 36 }));
+    const { gh } = fakeGh([]);
+    const r = await startRun({ gh, workItem: WI, attempt: 1, escalate: false, firstStep: "builder", now: "2026-11-21T00:00:00Z", reason: "conflict", pr: 33 });
+    expect(r.status).toBe("not_claimed");
+    expect(r.reason).toMatch(/moved on from #33 to #36/);
+  });
+
   it("links the new PR, keeps the old one on the item, and closes it with a pointer", async () => {
     files.set(`work-items/${WI}.json`, JSON.stringify({ ...item("running"), runs: [RUN], pr: 33 }));
     files.set(`live/${RUN}.json`, "{}");
