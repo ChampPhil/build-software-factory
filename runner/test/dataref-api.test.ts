@@ -117,4 +117,25 @@ describe("the factory's data ref, against the Git Data API's real paths", () => 
     await store.commit([{ path: "a.json", content: "3" }], "second");
     expect(await store.read("a.json")).toBe("3");
   });
+
+  it("merges a ledger write with what another writer committed after it read", async () => {
+    const { FactoryStore, LEDGER } = await import("../src/lib/store.js");
+    const { gh } = fakeGitHub();
+    const led = (open: unknown[]) => JSON.stringify({ schema: "ledger/1", updated_at: "2026-11-21T00:00:00Z", open, recent: [], merge_queue: [] });
+    const A = "wi_01M7ZGEAFGTTWNPPHGYVCCPVAK";
+    const B = "wi_01M7ZGEBERHW6JBHKTMV3MNV3W";
+    await new FactoryStore(gh).put([{ path: LEDGER, content: led([{ work_item: A, pipeline: "product_work", status: "running" }]) }], "seed");
+
+    const run = new FactoryStore(gh);
+    const read = await run.ledger("2026-11-21T00:00:00Z");
+    // Meanwhile intake queues another item.
+    const intake = new FactoryStore(gh);
+    const l2 = await intake.ledger("2026-11-21T00:00:00Z");
+    await intake.put([{ path: LEDGER, content: JSON.stringify({ ...l2, open: [...l2.open, { work_item: B, pipeline: "product_work", status: "queued" }] }) }], "intake");
+    // The run writes back what it read, with its own item changed.
+    await run.put([{ path: LEDGER, content: JSON.stringify({ ...read, open: read.open.map((o) => ({ ...o, status: "in_review" })) }) }], "run");
+
+    const after = await new FactoryStore(gh).ledger("x");
+    expect(after.open.map((o) => `${o.work_item.slice(-4)}:${o.status}`)).toEqual(["PVAK:in_review", "NV3W:queued"]);
+  });
 });

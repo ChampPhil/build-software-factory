@@ -108,9 +108,26 @@ export class DataRefStore implements Loader {
   /** One file's text, or null when it is not on the ref. */
   async read(path: string): Promise<string | null> {
     const head = await this.head();
-    if (head === null) return null;
-    return this.readAt(head, path);
+    const text = head === null ? null : await this.readAt(head, path);
+    this.lastRead.set(path, text);
+    return text;
   }
+
+  /**
+   * What this store last read at a path: the base a caller's change was made
+   * from, so a write can be merged with whatever landed in between rather
+   * than overwrite it. Undefined when this store never read it.
+   */
+  baseOf(path: string): string | null | undefined {
+    return this.lastRead.get(path);
+  }
+
+  /** Record what a commit wrote, as the base for this store's next change. */
+  wrote(path: string, text: string | null): void {
+    this.lastRead.set(path, text);
+  }
+
+  private readonly lastRead = new Map<string, string | null>();
 
   /** One file's text as of a given commit on this ref. */
   async readAt(commit: string, path: string): Promise<string | null> {
