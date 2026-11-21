@@ -344,3 +344,34 @@ describe("dispatch before setup", () => {
     expect(chooseDispatches(items, { maxRuns: 5, running: 0, pausedPipelines: [], setupFinished: true }).dispatch).toEqual(["b", "a"]);
   });
 });
+
+describe("comments that are not requests", () => {
+  it("reads a comment on a PR's conversation as a PR comment, not a new issue", async () => {
+    const { normalizeEvent } = await import("../src/commands/intake-run.js");
+    const e = normalizeEvent(
+      "issue_comment",
+      {
+        action: "created",
+        issue: { number: 3, title: "Set up the software factory", state: "open", pull_request: { url: "x" } },
+        comment: { id: 1, body: "Superseded: setup is running again", user: { login: "owner", type: "User" }, author_association: "OWNER" },
+      },
+      "2026-11-21T15:32:15Z",
+    );
+    expect(e?.kind).toBe("review_comment");
+    expect(e?.pr).toBe(3);
+  });
+
+  it("starts nothing from a comment on a closed issue or PR", async () => {
+    const { normalizeEvent } = await import("../src/commands/intake-run.js");
+    const e = normalizeEvent(
+      "issue_comment",
+      {
+        action: "created",
+        issue: { number: 3, title: "Old", state: "closed", pull_request: { url: "x" } },
+        comment: { id: 2, body: "Superseded", user: { login: "owner", type: "User" }, author_association: "OWNER" },
+      },
+      "2026-11-21T15:32:15Z",
+    );
+    expect(e).toBeNull();
+  });
+});

@@ -54,7 +54,7 @@ export interface IntakeRunReport {
  */
 interface Payload {
   action?: string;
-  issue?: { number?: number; title?: string; body?: string | null; labels?: { name?: string }[]; user?: { login?: string; type?: string }; author_association?: string };
+  issue?: { number?: number; title?: string; body?: string | null; labels?: { name?: string }[]; user?: { login?: string; type?: string }; author_association?: string; state?: string; pull_request?: unknown };
   comment?: { id?: number; body?: string | null; user?: { login?: string; type?: string }; author_association?: string; created_at?: string };
   pull_request?: { number?: number; head?: { repo?: { full_name?: string } | null }; base?: { repo?: { full_name?: string } } };
   label?: { name?: string };
@@ -104,7 +104,14 @@ export function normalizeEvent(
 
   if ((eventName === "issue_comment" || eventName === "pull_request_review_comment") && payload.comment !== undefined) {
     if (payload.action !== "created") return null;
-    const onPr = payload.pull_request !== undefined || eventName === "pull_request_review_comment";
+    // GitHub sends a comment on a PR's conversation as an issue_comment whose
+    // issue carries a pull_request key. Read without it, every PR comment
+    // looked like a new request (trinsports filed work from a status comment
+    // on its closed setup PR).
+    const onPr = payload.pull_request !== undefined || payload.issue?.pull_request != null || eventName === "pull_request_review_comment";
+    // Nothing on a closed issue or PR starts work, apart from an explicit
+    // /retry, which names what it hands back.
+    const closed = payload.issue?.state === "closed";
     if (retryRequested(payload.comment.body)) {
       return {
         id,
@@ -117,6 +124,7 @@ export function normalizeEvent(
         ...(payload.pull_request === undefined ? {} : { from_fork: isFork(payload.pull_request) }),
       };
     }
+    if (closed) return null;
     const practice = practiceText(payload.comment.body);
     if (practice !== null) {
       // Wherever someone already is — an issue, a PR, a review thread — a
