@@ -78,7 +78,7 @@ and the secrets its text references.
 
 | Workflow | Triggers | Secrets |
 | --- | --- | --- |
-| `factory-gates.yml` | `pull_request`, `merge_group` | **none** |
+| `factory-gates.yml` | `pull_request`, `merge_group` | `FACTORY_SANDBOX_ENV` only (test-mode values for the sandbox; never given to a fork) |
 | `factory-policy.yml` | `pull_request_target`, `pull_request_review` | App key |
 | `factory-merge.yml` | `pull_request_target` | App key |
 

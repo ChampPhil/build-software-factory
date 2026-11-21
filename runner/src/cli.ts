@@ -2173,7 +2173,16 @@ async function gatesTests(args: Args): Promise<number> {
     gh,
     commit: headSha(),
     existingCheck,
-    command: test.kind === "command" ? test.command : null,
+    // The build first, where the manifest has one: a test command is written
+    // to follow it (dotnet test --no-build, a compiled test binary), and the
+    // sandbox start runs only the install.
+    command:
+      test.kind === "command"
+        ? (() => {
+            const build = sandboxCommandText("build");
+            return build === null ? test.command : `${build} && ${test.command}`;
+          })()
+        : null,
     root: process.cwd(),
     ...(env === undefined ? {} : { env }),
   });
