@@ -79,6 +79,46 @@ export function filesOf(r: PrReport): string[] {
   return out;
 }
 
+const clip = (text: string, max: number): string => (text.length <= max ? text : `${text.slice(0, max - 1).trimEnd()}…`);
+
+/**
+ * Shorten what an agent wrote past the report's lengths and counts, rather
+ * than throw the whole report away. A summary line three words too long is
+ * not worth failing a verification gate over; what was shortened is listed as
+ * a problem, so the check still says so.
+ */
+export function fitReport(raw: PrReport): { readonly report: PrReport; readonly trimmed: readonly string[] } {
+  const trimmed: string[] = [];
+  const note = (what: string, before: number, after: number): void => {
+    if (before !== after) trimmed.push(`${what} was shortened to fit (${before} → ${after})`);
+  };
+  const summary = (raw.summary ?? []).slice(0, 3).map((line, i) => {
+    const out = clip(line, 200);
+    note(`summary line ${i + 1}`, line.length, out.length);
+    return out;
+  });
+  if ((raw.summary ?? []).length > 3) trimmed.push(`${raw.summary.length - 3} summary line(s) past the third were dropped`);
+  const blocks = (raw.blocks ?? []).map((b, i): Block => {
+    if (b.type === "file") {
+      const caption = clip(b.caption, 300);
+      note(`block ${i + 1}'s caption`, b.caption.length, caption.length);
+      return { ...b, caption };
+    }
+    const title = clip(b.title, 200);
+    note(`block ${i + 1}'s title`, b.title.length, title.length);
+    return { ...b, title };
+  });
+  const focus = raw.focus?.slice(0, 6).map((f, i) => {
+    const title = clip(f.title, 120);
+    const detail = clip(f.detail, 1000);
+    note(`focus ${i + 1}'s title`, f.title.length, title.length);
+    note(`focus ${i + 1}'s detail`, f.detail.length, detail.length);
+    return { ...f, title, detail };
+  });
+  if ((raw.focus?.length ?? 0) > 6) trimmed.push(`${raw.focus!.length - 6} focus item(s) past the sixth were dropped`);
+  return { report: { ...raw, summary, blocks, ...(focus === undefined ? {} : { focus }) }, trimmed };
+}
+
 /**
  * Store a role's report: validate it, put its files on the media ref and the
  * report on the data ref. A file it names but did not write is a problem the
@@ -94,13 +134,13 @@ export async function storeReport(opts: {
 }): Promise<StoredReport | null> {
   const file = join(opts.dir, REPORT_FILE);
   if (!existsSync(file)) return null;
-  const report = JSON.parse(readFileSync(file, "utf8")) as PrReport;
+  const { report, trimmed } = fitReport(JSON.parse(readFileSync(file, "utf8")) as PrReport);
   assertValid("pr-report", report);
 
   const prefix = `reports/${opts.workItem}/${opts.role}-${opts.attempt}`;
   const changes: { path: string; content: string; encoding: "base64" }[] = [];
   const inline: Record<string, string> = {};
-  const problems: string[] = [];
+  const problems: string[] = [...trimmed];
   for (const rel of filesOf(report)) {
     const abs = inside(opts.dir, rel);
     if (abs === null || !existsSync(abs)) {

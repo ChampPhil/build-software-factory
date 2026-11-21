@@ -308,3 +308,18 @@ describe("whether a run can start", () => {
     expect(canStart(doc, LIMITS, "product_work", MODELS, NOW, ["builder", "verifier"]).ok).toBe(true);
   });
 });
+
+describe("a report written a little too long", () => {
+  it("is shortened and kept, not rejected", async () => {
+    const { fitReport } = await import("../src/commands/pr-report.js");
+    const { validate } = await import("../src/lib/schema.js");
+    const r = fitReport({
+      schema: "pr-report/1",
+      summary: ["x".repeat(260), "ok", "fine", "a fourth"],
+      blocks: [{ type: "diagram", title: "t".repeat(250), mermaid: "graph TD; a-->b" }],
+    });
+    expect(validate("pr-report", r.report).ok).toBe(true);
+    expect(r.report.summary[0]!.length).toBe(200);
+    expect(r.trimmed.join("; ")).toMatch(/summary line 1 was shortened/);
+  });
+});
