@@ -1206,7 +1206,8 @@ async function runCommand(second: string | undefined, args: Args, third?: string
       buildResult: typeof args["build-result"] === "string" ? args["build-result"] : "",
       now: nowIso,
       waitMs: waitMin * 60_000,
-      pollMs: 30_000,
+      // Each poll is two API calls on an App installation every repo shares.
+      pollMs: 60_000,
     });
     process.stdout.write(`${r.next}: ${r.reason}${r.pr === null ? "" : ` (PR #${r.pr})`}\n`);
     setOutput("next", r.next);
