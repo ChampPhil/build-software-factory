@@ -430,3 +430,12 @@ describe("definition templates", () => {
     expect(text.toLowerCase()).toContain("persistent state");
   });
 });
+
+describe("factory-gates on the PR that installs the factory", () => {
+  it("stands down instead of failing when the default branch has no runner yet", () => {
+    const text = readFileSync(join(TEMPLATES, "workflows", "factory-gates.yml"), "utf8");
+    const plan = text.slice(text.indexOf("\n  plan:\n"), text.indexOf("\n  static:\n"));
+    expect(plan).toMatch(/if \[ ! -f \.factory-trusted\/\.factory\/bin\/bsf \]; then[\s\S]*installed=false[\s\S]*exit 0/);
+    expect(plan).toContain("if: steps.trusted.outputs.installed == 'true'");
+  });
+});

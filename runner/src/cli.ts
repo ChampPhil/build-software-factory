@@ -169,6 +169,7 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
   bsf write-triage WORK_ITEM --from PATH
   bsf run status WORK_ITEM
   bsf spec check --file PATH [--pipeline P]
+  bsf sandbox report --from PATH [--work-item ID]
       Store the spec role's plan and acceptance checks on the work item.
 
   bsf fetch-artifact NAME --out PATH [--run-id N]
@@ -1407,6 +1408,49 @@ async function sandboxCommandCli(second: string | undefined, args: Args): Promis
         `${r.envNames.length} variable(s) in ${r.envFile}\n`,
     );
     setOutput("tier", r.tier);
+    return 0;
+  }
+  if (second === "report") {
+    // `bsf sandbox report --from PATH [--work-item ID]`: a role found the
+    // sandbox could not exercise what its change needs. This is the one way
+    // the sandbox changes after setup: it starts factory-setup in amend mode,
+    // once per need, and the amendment arrives as a PR a person reviews.
+    const from = args["from"];
+    if (typeof from !== "string") die("usage: bsf sandbox report --from PATH [--work-item ID]");
+    if (!existsSync(from)) {
+      process.stdout.write("no sandbox report: the sandbox was enough for this step\n");
+      return 0;
+    }
+    const { inadequacyProblems, inadequacyKey } = await import("./commands/sandbox.js");
+    let report: unknown;
+    try {
+      report = JSON.parse(readFileSync(from, "utf8"));
+    } catch (e) {
+      die(`${from}: ${(e as Error).message}`);
+    }
+    const problems = inadequacyProblems(report);
+    if (problems.length > 0) die(`the sandbox report was rejected:\n  - ${problems.join("\n  - ")}`);
+    const r = report as import("./commands/sandbox.js").InadequacyReport;
+    const gh = new GitHub({ repo: requireRepo() });
+    const { FactoryStore, json } = await import("./lib/store.js");
+    const store = new FactoryStore(gh);
+    const key = inadequacyKey(r);
+    const path = `sandbox-reports/${key}.json`;
+    const seen = await store.data.readJson<{ reported_at: string; reports: number }>(path);
+    const workItem = typeof args["work-item"] === "string" ? args["work-item"] : undefined;
+    const entry = {
+      ...r,
+      ...(workItem === undefined ? {} : { work_item: workItem }),
+      reported_at: seen?.reported_at ?? nowIso(),
+      reports: (seen?.reports ?? 0) + 1,
+    };
+    await store.put([{ path, content: json(entry) }], `sandbox report ${key}: ${r.needs.slice(0, 60)}`);
+    if (seen !== null) {
+      process.stdout.write(`already reported (${entry.reports} times); the amendment it started is the one to review\n`);
+      return 0;
+    }
+    await gh.dispatchWorkflow("factory-setup.yml", undefined, { amend: JSON.stringify({ ...r, key }) });
+    process.stdout.write(`the sandbox cannot exercise "${r.needs}"; started factory-setup to amend it\n`);
     return 0;
   }
   if (second === "check") {

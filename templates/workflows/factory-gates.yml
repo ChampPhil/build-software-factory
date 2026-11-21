@@ -56,8 +56,21 @@ jobs:
           sparse-checkout-cone-mode: false
           persist-credentials: false
       - name: Put the trusted runner on PATH
+        id: trusted
         shell: bash
         run: |
+          # The PR that installs the factory is the one PR with no judge on
+          # the default branch yet. There is nothing trusted to judge it with,
+          # so it is not judged: every gate skips and a person reviews it, as
+          # they must anyway, since it changes protected paths.
+          if [ ! -f .factory-trusted/.factory/bin/bsf ]; then
+            echo "installed=false" >> "$GITHUB_OUTPUT"
+            msg="Not judged: the default branch has no factory yet. This PR installs it, so there is no trusted runner to judge it with; review it yourself."
+            echo "::notice title=factory-gates::$msg"
+            echo "$msg" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo "installed=true" >> "$GITHUB_OUTPUT"
           mkdir -p "$RUNNER_TEMP/bsf"
           cp -R .factory-trusted/.factory/bin/. "$RUNNER_TEMP/bsf/"
           # The definition and the sandbox decide how a change is judged, so
@@ -72,6 +85,7 @@ jobs:
           "$RUNNER_TEMP/bsf/bsf" --version
       - name: Read each role's model from factory.yaml
         id: models
+        if: steps.trusted.outputs.installed == 'true'
         run: bsf models
       # Decides which gates to run: a human PR gets the deterministic ones and
       # spends nothing on models unless it carries factory:verify; a commit
@@ -80,6 +94,7 @@ jobs:
       # the PR's feature folders.
       - name: Plan the gates for this commit
         id: plan
+        if: steps.trusted.outputs.installed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: bsf gates plan

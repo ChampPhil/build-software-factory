@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { connect } from "node:net";
@@ -456,4 +457,30 @@ export function freezeManifest(rounds: readonly Round[], now: string): {
   const v = validate("sandbox", manifest);
   if (!v.ok) throw new Error(`the frozen manifest is invalid: ${v.errors.map((e) => `${e.path} ${e.message}`).join("; ")}`);
   return { manifest, chosen: b.i };
+}
+
+/* ------------------------------------------------------------- inadequacy */
+
+export interface InadequacyReport {
+  readonly role: string;
+  readonly needs: string;
+  readonly paths: readonly string[];
+  readonly why: string;
+}
+
+export function inadequacyProblems(r: unknown): readonly string[] {
+  if (typeof r !== "object" || r === null) return ["the report is not an object"];
+  const o = r as Record<string, unknown>;
+  const out: string[] = [];
+  for (const k of ["role", "needs", "why"]) {
+    if (typeof o[k] !== "string" || (o[k]).trim() === "") out.push(`${k} is required`);
+  }
+  if (!Array.isArray(o["paths"]) || !(o["paths"] as unknown[]).every((p) => typeof p === "string")) out.push("paths is a list of file paths");
+  return out;
+}
+
+/** One amendment per need: the same need reported by every run must not start setup every time. */
+export function inadequacyKey(r: InadequacyReport): string {
+  const norm = `${r.needs.toLowerCase().replace(/\s+/g, " ").trim()}|${[...r.paths].sort().join(",")}`;
+  return createHash("sha256").update(norm).digest("hex").slice(0, 16);
 }
