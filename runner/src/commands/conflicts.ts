@@ -118,7 +118,7 @@ export async function conflictCheck(checks: GitHub, pr: number): Promise<void> {
         "as a new PR that replaces this one. An approval given here carries over when the rebuilt change adds " +
         "the same lines and removes nothing new. If the rebuild does not finish, press **Rebuild on main** above to start it again.",
     },
-    actions: [{ label: "Rebuild on main", description: "Make this change again on the current main", identifier: "rebuild" }],
+    actions: [{ label: "Rebuild on main", description: "Remake this change on the current main", identifier: "rebuild" }],
   });
 }
 

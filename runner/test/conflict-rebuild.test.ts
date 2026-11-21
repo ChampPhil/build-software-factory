@@ -55,3 +55,21 @@ describe("factory/policy when only an approval is missing", async () => {
     expect(awaitingApproval(fail(["undeclared_test_edit"]) as never)).toBe(false);
   });
 });
+
+describe("the factory/conflicts check's button", async () => {
+  const { conflictCheck } = await import("../src/commands/conflicts.js");
+  it("fits GitHub's limits: label 20 characters, description 40", async () => {
+    let body: { actions: { label: string; description: string; identifier: string }[] } | undefined;
+    const gh = {
+      repo: "o/r",
+      pull: async () => ({ head: { sha: "abc" } }),
+      send: async (_m: string, _p: string, b: unknown) => { body = b as typeof body; },
+    } as never;
+    await conflictCheck(gh, 33);
+    for (const a of body!.actions) {
+      expect(a.label.length).toBeLessThanOrEqual(20);
+      expect(a.description.length).toBeLessThanOrEqual(40);
+      expect(a.identifier.length).toBeLessThanOrEqual(20);
+    }
+  });
+});
