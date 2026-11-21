@@ -234,7 +234,7 @@ jobs:
               guard="the baseline could not be recorded; the static gate starts from zero"
             fi
             if [ -f "$design/guardrails.json" ]; then
-              guard="$guard. Rules: $(node -e 'const g=require(process.argv[1]);console.log(`${(g.installed||[]).length} installed, ${(g.skipped||[]).length} left out`)' "$design/guardrails.json")"
+              guard="$guard. Rules: $(jq -r '"\(.installed // [] | length) installed, \(.skipped // [] | length) left out"' "$design/guardrails.json")"
             fi
           fi
           branch="factory/setup-${GITHUB_RUN_ID}"
