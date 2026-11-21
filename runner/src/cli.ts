@@ -2094,6 +2094,19 @@ async function gatesTests(args: Args): Promise<number> {
     return 1;
   }
   if (test.kind === "no_manifest" && existingCheck === null) {
+    // The setup PR is the one that brings the first manifest: the default
+    // branch has none to run its tests with, and setup's own trial already
+    // ran them on the runner with exactly this manifest. Not judged here.
+    const { MANIFEST_PATH } = await import("./commands/sandbox.js");
+    if (existsSync(join(process.env["GITHUB_WORKSPACE"] ?? process.cwd(), MANIFEST_PATH))) {
+      const why =
+        "This change brings the first sandbox manifest, so the default branch has none to run the tests with. " +
+        "Setup's trial ran them on a runner with exactly this manifest; its measured tier is in the PR.";
+      process.stdout.write(`${why}\n`);
+      await maybeReportCheck(args, "neutral", "Not judged: this PR brings the sandbox", why, "factory/gate-tests");
+      setOutput("tests_source", "setup_trial");
+      return 0;
+    }
     const summary =
       "The factory does not know how to run this repo's tests: there is no .factory/sandbox/manifest.json, " +
       "which setup writes once it has run them. Finish setup, or set existing_ci.test_check in factory.yaml.";
