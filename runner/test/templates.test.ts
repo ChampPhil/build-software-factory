@@ -337,7 +337,7 @@ describe("trigger workflows", () => {
 
   it("there is one trigger workflow per row of doc 07's table", () => {
     const expected = [
-      "factory-audit.yml", "factory-conflicts.yml", "factory-garden.yml", "factory-gates.yml",
+      "factory-audit.yml", "factory-conflicts.yml", "factory-drop.yml", "factory-garden.yml", "factory-gates.yml",
       "factory-intake.yml", "factory-merge.yml", "factory-policy.yml", "factory-recompile.yml",
       "factory-review.yml", "factory-rollup.yml", "factory-run.yml", "factory-setup-trial.yml", "factory-setup.yml", "factory-sync.yml",
     ];

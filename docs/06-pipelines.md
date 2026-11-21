@@ -91,11 +91,11 @@ Every attempt, pass or fail, is recorded in the run file's `gates` list.
 
 **Scheduled scan → find drift → fix (factory clear) → draft PR**, nightly, at most 5 PRs a night.
 
-1. **Scan** (gardener role) for three kinds of drift:
+1. **Scan** (gardener role, once a night in `factory-garden`; it does not run again in each item's run) for three kinds of drift:
    - **Baselined violations:** rules with counts above zero in `baselines.json`.
    - **Principle drift no rule catches:** duplicate patterns for one concern, nuance-heavy APIs, dead code, folders breaking one-folder-per-feature.
    - **Untested recent behavior:** code merged in the last 14 days that lacks tests or guardrails.
-2. **Pick up to 5 items**, skipping anything an open PR already fixes (the ledger's `fixes` list). Order: baselines with the most violations, then untested behavior, then principle drift.
+2. **Pick up to 5 items**, skipping anything an open PR already fixes (the ledger's `fixes` list). Picks may not overlap: no two picks, and no pick and an open gardening item, change the same files (a pick naming no files is repo-wide), and several picks that need one missing prerequisite (a test runner) are one pick, the prerequisite. Order: baselines with the most violations, then untested behavior, then principle drift.
 3. **One problem class per PR,** each kept small: at most 20 files.
 4. **Build and verify** through factory-clear. Gardening must not change behavior: the verifier compares before and after on the affected flows. A PR for a baselined rule must lower that rule's count, and no rule's count may rise in any file.
 5. **Draft PR** with the before/after evidence and a summary of what was cleaned.

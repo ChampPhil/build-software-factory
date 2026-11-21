@@ -618,3 +618,87 @@ export async function prClosed(opts: {
   await store.put(changes, `PR #${opts.pr} ${opts.merged ? "merged" : "closed"}: ${id} ${status}`);
   return { workItem: id, status, runsUpdated };
 }
+
+/* ------------------------------------------------------------------- drop */
+
+export interface DropReport {
+  readonly dropped: readonly string[];
+  readonly skipped: readonly { readonly work_item: string; readonly why: string }[];
+  readonly cancelledRuns: readonly number[];
+  readonly closedPrs: readonly number[];
+}
+
+const DROPPABLE = new Set(["queued", "running", "in_review", "escalated", "needs_info", "waiting_trust"]);
+
+/**
+ * An owner drops work items: each becomes `rejected`, its live Actions run is
+ * cancelled and its PR closed with the reason. This is how a person takes
+ * back work the factory should not do, whether or not it has a PR yet.
+ */
+export async function dropItems(opts: {
+  readonly gh: GitHub;
+  readonly ids: readonly string[];
+  readonly why: string;
+  readonly now: string;
+}): Promise<DropReport> {
+  const store = new FactoryStore(opts.gh);
+  const ledger = await store.ledger(opts.now);
+  const changes: { path: string; content: string | null }[] = [];
+  const dropped: string[] = [];
+  const skipped: { work_item: string; why: string }[] = [];
+  const cancelledRuns: number[] = [];
+  const closedPrs: number[] = [];
+
+  for (const id of opts.ids) {
+    const item = await store.get<WorkItemDoc>(workItemPath(id), "work-item");
+    if (item === null) {
+      skipped.push({ work_item: id, why: "not on the data ref" });
+      continue;
+    }
+    if (!DROPPABLE.has(item.status)) {
+      skipped.push({ work_item: id, why: `already ${item.status}` });
+      continue;
+    }
+    changes.push({ path: workItemPath(id), content: json({ ...item, status: "rejected", closed_at: opts.now }) });
+    const runId = (item.runs ?? []).at(-1);
+    if (runId !== undefined) {
+      const live = await store.get<{ actions_run?: number }>(livePath(runId), "live");
+      if (live !== null) {
+        if (live.actions_run !== undefined) {
+          await opts.gh.send("POST", `repos/${opts.gh.repo}/actions/runs/${live.actions_run}/cancel`, {}).then(
+            () => cancelledRuns.push(live.actions_run as number),
+            () => undefined,
+          );
+        }
+        changes.push({ path: livePath(runId), content: null });
+      }
+    }
+    if (typeof item.pr === "number") {
+      await opts.gh.send("POST", `repos/${opts.gh.repo}/issues/${item.pr}/comments`, { body: `Dropped by an owner: ${opts.why}` }).catch(() => undefined);
+      await opts.gh.send("PATCH", `repos/${opts.gh.repo}/pulls/${item.pr}`, { state: "closed" }).then(
+        () => closedPrs.push(item.pr as number),
+        () => undefined,
+      );
+    }
+    dropped.push(id);
+  }
+
+  if (dropped.length > 0) {
+    const gone = new Set(dropped);
+    const nextLedger: Ledger = {
+      ...ledger,
+      updated_at: opts.now,
+      open: ledger.open.filter((o) => !gone.has(o.work_item)),
+      recent: [
+        ...ledger.recent.filter((r) => !gone.has(r.work_item)),
+        ...ledger.open
+          .filter((o) => gone.has(o.work_item))
+          .map((o) => ({ work_item: o.work_item, status: "rejected", ...(o.pr == null ? {} : { pr: o.pr }) })),
+      ],
+      merge_queue: ledger.merge_queue.filter((q) => q.work_item === undefined || !gone.has(q.work_item)),
+    };
+    changes.push({ path: LEDGER, content: json(nextLedger) });
+    await store.put(changes, `drop ${dropped.length} item(s): ${opts.why.slice(0, 60)}`);
+  }
+  return { dropped, skipped, cancelledRuns, closedPrs };
+}

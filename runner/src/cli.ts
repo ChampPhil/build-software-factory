@@ -170,6 +170,7 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
   bsf guardrails record [--out PATH]
   bsf run status WORK_ITEM
   bsf run closed --pr N --merged true|false
+  bsf run drop --items ID[,ID...] --why TEXT
   bsf spec check --file PATH [--pipeline P]
   bsf sandbox report --from PATH [--work-item ID]
       Store the spec role's plan and acceptance checks on the work item.
@@ -1098,6 +1099,22 @@ async function runCommand(second: string | undefined, args: Args, third?: string
     setOutput("first_step", roles[0] === "verifier" ? "verifier" : (roles[0] ?? "builder"));
     // Escalation is an outcome, not a crash: the jobs downstream read
     // `proceed`, and failing this job would bury the reason under red.
+    return 0;
+  }
+
+  if (second === "drop") {
+    // `bsf run drop --items ID[,ID...] --why TEXT`: an owner takes work back.
+    const items = typeof args["items"] === "string" ? args["items"].split(/[\s,]+/).filter((x) => x !== "") : [];
+    const why = typeof args["why"] === "string" && args["why"].trim() !== "" ? args["why"].trim() : "no reason given";
+    if (items.length === 0) die("usage: bsf run drop --items ID[,ID...] --why TEXT");
+    const { dropItems } = await import("./commands/run-lifecycle.js");
+    const r = await dropItems({ gh: new GitHub({ repo: requireRepo() }), ids: items, why, now: nowIso() });
+    process.stdout.write(
+      `dropped ${r.dropped.length}: ${r.dropped.join(", ") || "none"}\n` +
+        r.skipped.map((s) => `skipped ${s.work_item}: ${s.why}\n`).join("") +
+        (r.cancelledRuns.length > 0 ? `cancelled run(s) ${r.cancelledRuns.join(", ")}\n` : "") +
+        (r.closedPrs.length > 0 ? `closed PR(s) ${r.closedPrs.map((n) => `#${n}`).join(", ")}\n` : ""),
+    );
     return 0;
   }
 

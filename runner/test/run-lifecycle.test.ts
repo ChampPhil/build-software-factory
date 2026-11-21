@@ -35,7 +35,7 @@ vi.mock("../src/lib/store.js", async (orig) => {
   return { ...real, FactoryStore };
 });
 
-const { startRun, finishRun, gateVerdicts, gateFailuresPath, reapStaleRuns, prClosed } = await import("../src/commands/run-lifecycle.js");
+const { startRun, finishRun, gateVerdicts, gateFailuresPath, reapStaleRuns, prClosed, dropItems } = await import("../src/commands/run-lifecycle.js");
 
 const WI = "wi_01M7XHGA7F5CNWC3BD3BSP0WYW";
 const RUN = "run_01M7XHGA7F5CNWC3BD3BSP0WYX";
@@ -273,5 +273,22 @@ describe("prClosed", () => {
   it("does nothing for a PR no work item owns", async () => {
     const { gh } = fakeGh([]);
     expect((await prClosed({ gh, pr: 99, merged: true, now: "2026-11-21T00:00:00Z" })).status).toBe("no_item");
+  });
+});
+
+describe("dropItems", () => {
+  it("rejects the item, cancels its live run, closes its PR and leaves the ledger", async () => {
+    files.set(`work-items/${WI}.json`, JSON.stringify({ ...item("running"), runs: [RUN], pr: 5 }));
+    files.set(`live/${RUN}.json`, JSON.stringify({ schema: "live/1", run: RUN, work_item: WI, pipeline: "product_work", step: "builder", attempt: 1, started_at: "2026-11-20T00:00:00Z", actions_run: 777 }));
+    files.set("ledger.json", JSON.stringify({ schema: "ledger/1", updated_at: "2026-11-20T00:00:00Z", open: [{ work_item: WI, pipeline: "product_work", status: "running", pr: 5 }], recent: [], merge_queue: [] }));
+    const { gh, sent } = fakeGh([]);
+    const r = await dropItems({ gh, ids: [WI, "wi_01M7XHGA7F5CNWC3BD3BSP0WZZ"], why: "overlaps another item", now: "2026-11-21T00:00:00Z" });
+    expect(r.dropped).toEqual([WI]);
+    expect(r.skipped.map((s) => s.why)).toEqual(["not on the data ref"]);
+    expect(JSON.parse(files.get(`work-items/${WI}.json`)!).status).toBe("rejected");
+    expect(files.has(`live/${RUN}.json`)).toBe(false);
+    expect(sent.some((s) => s.path.endsWith("/actions/runs/777/cancel"))).toBe(true);
+    expect(sent.some((s) => s.method === "PATCH" && s.path.endsWith("/pulls/5"))).toBe(true);
+    expect(JSON.parse(files.get("ledger.json")!).open).toEqual([]);
   });
 });
