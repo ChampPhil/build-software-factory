@@ -214,6 +214,11 @@ jobs:
     # so it neither re-judges it nor records a second verdict on the commit.
     if: always() && needs.plan.outputs.judge == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: write
+      pull-requests: read
+      actions: write
     steps:
       - uses: actions/checkout@v4
       # The runner that judges a change must not come from the change. A pull
@@ -264,3 +269,13 @@ jobs:
           bsf gates record --commit "$COMMIT"
           --plan-static "$PLAN_STATIC" --plan-verification "$PLAN_VERIFICATION" --plan-agent "$PLAN_AGENT"
           --static "$STATIC" --verification "$VERIFICATION" --agent "$AGENT"
+      # A verdict reported with the workflow token starts no workflow — GitHub
+      # does not raise check_suite for it — so merge would wait for some other
+      # event. Starting it here is what moves a passed PR on. Dispatch is the
+      # one event the workflow token may start.
+      - name: Hand a passed change to merge
+        if: success() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: gh workflow run factory-merge.yml --repo "$GITHUB_REPOSITORY" --ref "$DEFAULT_BRANCH"
