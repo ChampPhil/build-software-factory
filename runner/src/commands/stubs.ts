@@ -118,6 +118,9 @@ export function applyInterception(dir: string, stubs: readonly InterceptedStub[]
   // A standalone script, so the front runs the same whether bsf was started
   // from its bundle, from source, or from a test.
   const frontFile = join(dir, "front.mjs");
+  // One front per runner: a sandbox started again (a second trial round in
+  // the same job) replaces the last one's routes rather than fighting for 443.
+  spawnSync("sudo", ["pkill", "-f", "front\\.mjs .*routes\\.json"]);
   writeFileSync(frontFile, FRONT_SOURCE);
   const front = spawn("sudo", [process.execPath, frontFile, routesFile], {
     detached: true,
