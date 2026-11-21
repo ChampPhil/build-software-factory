@@ -1,7 +1,7 @@
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
-import { dirname } from "node:path";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync } from "node:fs";
+import { dirname, join } from "node:path";
 import type { GitHub } from "../lib/github.js";
-import { FactoryStore, json } from "../lib/store.js";
+import { FactoryStore, json, runPath, workItemPath } from "../lib/store.js";
 import { baselinedDrift, untestedRecent, runGardenCommand, type DriftItem } from "./garden.js";
 import { readAll } from "./rollup-run.js";
 import { runReviewRoute, type ScoredFailure } from "./review.js";
@@ -234,7 +234,12 @@ export interface ReviewCollectReport {
   readonly since: string | null;
 }
 
-/** `bsf review-collect` — the runs to grade, with the rubrics to grade them against. */
+/** At most this many runs per review: the newest, so the scorer's cost stays bounded. */
+const MAX_RUNS_TO_SCORE = 12;
+/** And at most this much diff per run. */
+const DIFF_CHARS_PER_RUN = 30_000;
+
+/** `bsf review-collect` — the runs to grade, with what to grade them on and the rubrics. */
 export async function reviewCollect(opts: {
   readonly gh: GitHub;
   readonly now: string;
@@ -250,9 +255,35 @@ export async function reviewCollect(opts: {
       : ((await store.data.readJson<{ window?: { to?: string } }>(last))?.window?.to ?? null);
 
   const { runs } = await readAll(store);
-  const toScore = runs
+  const picked = runs
     .filter((r) => since === null || Date.parse(r.ended_at) > Date.parse(since))
-    .map((r) => ({
+    .sort((a, b) => a.ended_at.localeCompare(b.ended_at))
+    .slice(-MAX_RUNS_TO_SCORE);
+
+  // Everything the scorer grades on is fetched here, by the trusted runner,
+  // and handed over as a file. The scorer cannot fetch it itself: gh-aw's
+  // integrity filter refuses the content of PRs the factory's own bot
+  // opened, and the scorer was left grading outcomes without seeing code.
+  const toScore = [];
+  for (const r of picked) {
+    const problems: string[] = [];
+    let diff: { file: string; status: string; patch: string | null }[] = [];
+    if (r.pr !== null) {
+      try {
+        let budget = DIFF_CHARS_PER_RUN;
+        diff = (await opts.gh.pullFiles(r.pr)).map((f) => {
+          const patch = f.patch === undefined ? null : f.patch.slice(0, Math.max(0, budget));
+          budget -= patch?.length ?? 0;
+          return { file: f.filename, status: f.status, patch };
+        });
+        if (budget < 0) problems.push(`the diff is longer than ${DIFF_CHARS_PER_RUN} characters and was cut`);
+      } catch (e) {
+        problems.push(`the diff of PR #${r.pr} could not be read: ${(e as Error).message}`);
+      }
+    }
+    const item = r.work_item === undefined ? null : await store.get<Record<string, unknown>>(workItemPath(r.work_item), "work-item").catch(() => null);
+    const run = await store.data.readJson<Record<string, unknown>>(runPath(r.id)).catch(() => null);
+    toScore.push({
       id: r.id,
       pipeline: r.pipeline,
       outcome: r.outcome,
@@ -260,16 +291,33 @@ export async function reviewCollect(opts: {
       escalated: r.escalated,
       cost_usd: r.cost_usd,
       pr: r.pr,
-    }));
+      request: item === null ? null : { title: item["title"] ?? null, body: item["body"] ?? null },
+      spec: item?.["spec"] ?? null,
+      gates: run?.["gates"] ?? null,
+      steps: run?.["steps"] ?? null,
+      diff,
+      problems,
+    });
+  }
+
+  const rubrics: Record<string, string> = {};
+  if (opts.rubricsDir !== undefined && existsSync(opts.rubricsDir)) {
+    for (const f of readdirSync(opts.rubricsDir).filter((x) => x.endsWith(".yaml"))) {
+      rubrics[f.replace(/\.yaml$/, "")] = readFileSync(join(opts.rubricsDir, f), "utf8");
+    }
+  }
 
   write(
     opts.out,
     json({
       since,
       runs: toScore,
+      rubrics,
       note:
         "Grade each run against its pipeline's rubric and the shared rubric, 1-5 per criterion, " +
-        "with failure tags from the rubric's own list. A tag you invent routes nowhere.",
+        "with failure tags from the rubric's own list. A tag you invent routes nowhere. " +
+        "Everything to grade on is in this file: the request, the spec, the diff, the gates and the steps. " +
+        "Score a criterion null when this file does not carry what it needs, and say which.",
     }),
   );
   return { runs: toScore.length, wrote: opts.out, since };

@@ -317,6 +317,8 @@ export interface PullFile {
   readonly filename: string;
   readonly status: "added" | "modified" | "removed" | "renamed" | "copied" | "changed" | "unchanged";
   readonly previous_filename?: string;
+  /** The file's unified diff; absent for binary files and very large diffs. */
+  readonly patch?: string;
 }
 
 export interface ReviewResponse {

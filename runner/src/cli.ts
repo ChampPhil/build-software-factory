@@ -49,7 +49,7 @@ import {
   BUDGET_PATH, reserve as reserveBudget, settle as settleBudget, sweepStale, rollMonth, used, creditsToUsd,
   measuredUsd, detectionUsd, canStart, type BudgetDoc, type BudgetLimits, type BudgetMeasure,
 } from "./commands/budget.js";
-import { loadFactory } from "./lib/config.js";
+import { loadFactory, trustedRoot } from "./lib/config.js";
 import { startSandbox, loadManifest, loadManifestAt, trialSandbox, freezeManifest, needsHost, serveOnHost, closedEnv } from "./commands/sandbox.js";
 import { fetchWorkItem, writeSpec, fetchArtifact, storeMedia } from "./commands/role-io.js";
 import { gardenScan, gardenFile, hardenContext, reviewCollect, reviewWrite } from "./commands/role-steps.js";
@@ -2568,7 +2568,8 @@ async function hardenContextCommand(id: string | undefined, args: Args): Promise
 
 async function reviewCollectCommand(args: Args): Promise<number> {
   const out = requireOut(args, "usage: bsf review-collect --out PATH");
-  const r = await reviewCollect({ gh: new GitHub({ repo: requireRepo() }), now: nowIso(), out });
+  const root = trustedRoot() ?? process.cwd();
+  const r = await reviewCollect({ gh: new GitHub({ repo: requireRepo() }), now: nowIso(), out, rubricsDir: join(root, ".factory/definition/rubrics") });
   process.stdout.write(`${r.runs} run(s) to grade${r.since === null ? "" : ` since ${r.since}`} -> ${r.wrote}\n`);
   return 0;
 }
