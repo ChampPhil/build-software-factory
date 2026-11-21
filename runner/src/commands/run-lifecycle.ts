@@ -132,7 +132,14 @@ export function gateVerdicts(checks: readonly GateCheck[]): {
   const verifyChecks = checks.filter(
     (c) => c.name.startsWith("factory/gate-") && !GATE_CHECKS.static.includes(c.name as never),
   );
-  const staticGate = staticChecks.some(failed) ? "failed" : staticChecks.length === 0 ? "skipped" : "passed";
+  // A policy failure the builder caused (an undeclared test edit, a path its
+  // pipeline may not touch) is the builder's to fix, like a static rule. One
+  // that only waits on a person's approval is in progress, not failed.
+  const policy = checks.find((c) => c.name === "factory/policy");
+  const staticGate =
+    staticChecks.some(failed) || (policy !== undefined && failed(policy))
+      ? "failed"
+      : staticChecks.length === 0 ? "skipped" : "passed";
   let verificationGate: "passed" | "failed" | "skipped" | "not_run" = verifyChecks.some(failed)
     ? "failed"
     : verifyChecks.length === 0

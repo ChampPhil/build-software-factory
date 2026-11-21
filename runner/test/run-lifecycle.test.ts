@@ -325,3 +325,14 @@ describe("a conflict rebuild", () => {
     expect((await prClosed({ gh, pr: 33, merged: false, now: "2026-11-21T00:00:00Z" })).status).toBe("no_item");
   });
 });
+
+describe("gateVerdicts and factory/policy", () => {
+  const c = (name: string, conclusion: string | null, status = "completed") => ({ name, status, conclusion, title: null, summary: null, text: null });
+  it("sends an undeclared test edit back to the builder, but not a wait for approval", () => {
+    // ts-webapp#41 edited an existing test its spec did not declare: policy
+    // failed, the gates passed, and the PR was cleared anyway.
+    const pass = [c("factory/gate-static", "success"), c("factory/gate-tests", "success"), c("factory/gates", "success")];
+    expect(gateVerdicts([...pass, c("factory/policy", "failure")]).staticGate).toBe("failed");
+    expect(gateVerdicts([...pass, c("factory/policy", null, "in_progress")]).staticGate).toBe("passed");
+  });
+});
