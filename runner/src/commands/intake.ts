@@ -451,8 +451,21 @@ export function chooseDispatches(
     readonly maxRuns: number;
     readonly running: number;
     readonly pausedPipelines: readonly Pipeline[];
+    /**
+     * False until setup's PR has merged. Nothing can be built before then
+     * (there is no sandbox), so every item waits rather than starting a run
+     * that dies at the sandbox step and is dispatched again.
+     */
+    readonly setupFinished?: boolean;
   },
 ): DispatchDecision {
+  if (opts.setupFinished === false) {
+    return {
+      dispatch: [],
+      stayQueued: queued.map((q) => q.work_item),
+      reason: "setup has not finished: work waits until the setup PR merges",
+    };
+  }
   const slots = Math.max(0, opts.maxRuns - opts.running);
   const paused = new Set(opts.pausedPipelines);
 

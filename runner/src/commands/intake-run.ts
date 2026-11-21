@@ -32,6 +32,8 @@ export interface IntakeRunOptions {
   readonly runningRuns: number;
   /** Pipelines over their budget share; they stay queued (doc 06). */
   readonly pausedPipelines?: readonly QueuedPipeline[];
+  /** False until setup's PR has merged; see chooseDispatches. */
+  readonly setupFinished?: boolean;
   readonly runWorkflow?: string;
   readonly ref?: string;
   /** Set to skip dispatching, for a dry run. */
@@ -404,7 +406,8 @@ export async function runIntakeCommand(opts: IntakeRunOptions): Promise<IntakeRu
       pipeline: i.pipeline as QueuedPipeline,
       created_at: i.created_at,
     })),
-    { running: opts.runningRuns, maxRuns: opts.maxRuns, pausedPipelines: opts.pausedPipelines ?? [] },
+    { running: opts.runningRuns, maxRuns: opts.maxRuns, pausedPipelines: opts.pausedPipelines ?? [],
+      ...(opts.setupFinished === undefined ? {} : { setupFinished: opts.setupFinished }) },
   );
 
   const dispatched: string[] = [];

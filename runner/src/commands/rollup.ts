@@ -53,6 +53,8 @@ export interface RollupInput {
   readonly maxRuns: number;
   readonly pausedPipelines: readonly Pipeline[];
   readonly windowDays: number;
+  /** False until setup's PR has merged; see chooseDispatches. */
+  readonly setupFinished?: boolean;
 }
 
 export interface Metrics {
@@ -157,6 +159,7 @@ export function runRollup(input: RollupInput): RollupResult {
     maxRuns: input.maxRuns,
     running: input.runningRuns,
     pausedPipelines: input.pausedPipelines,
+    ...(input.setupFinished === undefined ? {} : { setupFinished: input.setupFinished }),
   });
 
   return {

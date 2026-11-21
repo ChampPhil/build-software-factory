@@ -247,6 +247,16 @@ export class GitHub {
     }
   }
 
+  /**
+   * Whether setup has finished: its PR, which adds the sandbox manifest, is
+   * on the default branch. A read that errors counts as not yet, so the
+   * worst case is one poll's delay, never a run that cannot start.
+   */
+  async setupFinished(): Promise<boolean> {
+    const branch = await this.defaultBranch().catch(() => "HEAD");
+    return (await this.fileAtRef(".factory/sandbox/manifest.json", branch)) !== null;
+  }
+
   async defaultBranch(): Promise<string> {
     const r = await this.get<{ default_branch: string }>(this.base);
     return r.default_branch;

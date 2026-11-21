@@ -330,3 +330,17 @@ describe("/retry", () => {
     expect(runIntake([ev({ kind: "retry_requested", actor: "stranger", actor_association: "NONE" })], open("escalated")).decisions[0]?.outcome).toBe("ignored_untrusted_retry");
   });
 });
+
+describe("dispatch before setup", () => {
+  it("dispatches nothing until setup has finished", () => {
+    const items = [
+      { work_item: "a", pipeline: "gardening" as const, priority: "normal" as const, created_at: "2026-11-19T08:00:00Z" },
+      { work_item: "b", pipeline: "product_work" as const, priority: "high" as const, created_at: "2026-11-19T09:00:00Z" },
+    ];
+    const d = chooseDispatches(items, { maxRuns: 5, running: 0, pausedPipelines: [], setupFinished: false });
+    expect(d.dispatch).toEqual([]);
+    expect(d.stayQueued).toEqual(["a", "b"]);
+    expect(d.reason).toMatch(/setup has not finished/);
+    expect(chooseDispatches(items, { maxRuns: 5, running: 0, pausedPipelines: [], setupFinished: true }).dispatch).toEqual(["b", "a"]);
+  });
+});

@@ -412,7 +412,7 @@ async function main(argv: readonly string[]): Promise<number> {
 
     case "budget":
       if (second !== "check") die("usage: bsf budget check");
-      return budgetCommand();
+      return budgetCommand(args);
 
     case "merge-queue":
       return mergeCommand(args);
@@ -1060,6 +1060,7 @@ async function intakeCommand(args: Args): Promise<number> {
     maxRuns: cfg.limits?.concurrency?.max_runs ?? 5,
     runningRuns: await runningRuns(gh),
     pausedPipelines: pausedPipelines(await budgetState(cfg, gh)),
+    setupFinished: await gh.setupFinished(),
     ...(args["plan"] === true ? { plan: true } : {}),
   });
 
@@ -1310,6 +1311,7 @@ async function rollupCommand(args: Args): Promise<number> {
     runnerPin: runnerVersion(),
     harness: cfg.harness ?? "claude-code",
     budget: await budgetState(cfg, gh),
+    setupFinished: await gh.setupFinished(),
     guardrails: {
       rules: ruleCount,
       baselined,
@@ -1338,7 +1340,7 @@ async function rollupCommand(args: Args): Promise<number> {
   return 0;
 }
 
-async function budgetCommand(): Promise<number> {
+async function budgetCommand(args: Args): Promise<number> {
   const cfg = await factoryConfig();
   const gh = new GitHub({ repo: requireRepo() });
   const state = await budgetState(cfg, gh);
@@ -1347,6 +1349,16 @@ async function budgetCommand(): Promise<number> {
     process.stdout.write("every pipeline is within its share\n");
   } else {
     process.stdout.write(`paused: ${paused.join(", ")}\n`);
+  }
+  // With --pipeline, `paused` is a yes/no for that one pipeline, which is
+  // what a workflow's `if:` can test. It is also yes before setup merges,
+  // when there is no sandbox for the work to run in.
+  const pipeline = args["pipeline"];
+  if (typeof pipeline === "string") {
+    const setupDone = await gh.setupFinished();
+    if (!setupDone) process.stdout.write("setup has not finished: nothing runs until its PR merges\n");
+    setOutput("paused", String(!setupDone || (paused as readonly string[]).includes(pipeline)));
+    return 0;
   }
   setOutput("paused", paused.join(","));
   return 0;
@@ -1383,6 +1395,12 @@ async function gardenCommand(args: Args): Promise<number> {
   const state = await budgetState(cfg, gh);
   if (pausedPipelines(state).includes("gardening")) {
     process.stdout.write("gardening is over its budget share; nothing filed tonight\n");
+    return 0;
+  }
+  // Before setup merges there is no sandbox to build in, and nothing
+  // gardening files could run; it would only queue up.
+  if (!(await gh.setupFinished())) {
+    process.stdout.write("setup has not finished; nothing filed tonight\n");
     return 0;
   }
   const running = await runningRuns(gh);

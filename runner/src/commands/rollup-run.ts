@@ -26,6 +26,8 @@ export interface RollupOptions {
   readonly runnerPin: string;
   readonly harness: string;
   readonly budget: BudgetState;
+  /** False until setup's PR has merged; see chooseDispatches. */
+  readonly setupFinished?: boolean;
   readonly guardrails: {
     readonly rules: number;
     readonly baselined: number;
@@ -96,6 +98,7 @@ export async function runRollupCommand(opts: RollupOptions): Promise<RollupRepor
     maxRuns: opts.maxRuns,
     pausedPipelines: paused,
     windowDays: opts.windowDays,
+    ...(opts.setupFinished === undefined ? {} : { setupFinished: opts.setupFinished }),
   });
 
   const index = {
