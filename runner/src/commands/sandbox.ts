@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { applyInterception, startStubs, type InterceptedStub } from "./stubs.js";
 import { connect } from "node:net";
 import { dirname, join } from "node:path";
 import { resolveRead } from "../lib/config.js";
@@ -41,6 +42,7 @@ export interface SandboxManifest {
     readonly env?: Readonly<Record<string, string>>;
     readonly why: string;
   }[];
+  readonly stubs?: readonly InterceptedStub[];
 }
 
 export const MANIFEST_PATH = ".factory/sandbox/manifest.json";
@@ -187,6 +189,12 @@ export async function startSandbox(opts: {
       await new Promise((r) => setTimeout(r, 1000));
     }
   }
+
+  // Stubs that answer at a third party's own address: names, trust, front.
+  const stubDir = join(process.env["RUNNER_TEMP"] ?? tmpdir(), "bsf-stubs");
+  const interception = applyInterception(stubDir, m.stubs ?? [], log);
+  if (interception !== null) Object.assign(env, interception.env);
+  await startStubs(m.stubs ?? [], opts.workspace, { ...shellBase(), ...env }, join(stubDir, "logs"), log);
 
   // Written into the workspace so the agent's shell can source it, and kept
   // out of every commit by the repo's own exclude file, so a value can never
@@ -347,6 +355,16 @@ export async function trialSandbox(opts: {
       if (!up) {
         steps.push({ step: "install", command: `docker run ${svc.image}`, ok: false, exit: r.status, seconds: 0,
           tail: tailOf(`${r.stdout ?? ""}\n${r.stderr ?? ""}\n${svc.name} did not open port ${svc.port}`) });
+      }
+    }
+    if (steps.every((s) => s.ok) && (m.stubs ?? []).length > 0) {
+      const stubDir = join(dirname(opts.out), "stubs");
+      try {
+        const interception = applyInterception(stubDir, m.stubs ?? [], log);
+        if (interception !== null) Object.assign(runEnv, interception.env);
+        await startStubs(m.stubs ?? [], opts.workspace, runEnv, join(stubDir, "logs"), log);
+      } catch (e) {
+        steps.push({ step: "install", command: "start the stubs", ok: false, exit: null, seconds: 0, tail: (e as Error).message });
       }
     }
     if (steps.every((s) => s.ok) && run("install", m.commands.install) && run("build", m.commands.build)) {

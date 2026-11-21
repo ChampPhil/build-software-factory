@@ -2952,9 +2952,12 @@
         "properties": [
           "captured_at",
           "captured_from",
+          "hosts",
           "name",
           "path",
-          "replaces"
+          "port",
+          "replaces",
+          "start"
         ],
         "required": [
           "captured_at",
@@ -2983,6 +2986,22 @@
       },
       "/properties/stubs/items/properties/captured_at": {
         "ref": "_common.json#/$defs/timestamp"
+      },
+      "/properties/stubs/items/properties/hosts": {
+        "type": "array"
+      },
+      "/properties/stubs/items/properties/hosts/items": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9.-]+\\.[A-Za-z]{2,63}$"
+      },
+      "/properties/stubs/items/properties/port": {
+        "type": "integer",
+        "minimum": 1024,
+        "maximum": 65535
+      },
+      "/properties/stubs/items/properties/start": {
+        "type": "string",
+        "minLength": 1
       },
       "/properties/dropped": {
         "type": "array"
