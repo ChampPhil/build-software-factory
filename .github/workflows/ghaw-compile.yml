@@ -27,8 +27,12 @@ jobs:
       - name: Install gh-aw
         env:
           GH_TOKEN: ${{ github.token }}
+        # Pinned: the compiled locks are part of the release, so the compiler
+        # that made them is too. factory-recompile pins the same version.
+        # v1.2.2 put the safe-outputs checkout ahead of the App token it
+        # uses, so no role could open a PR.
         run: |
-          gh extension install github/gh-aw
+          gh extension install github/gh-aw --pin v1.3.1
           gh aw version
 
       # gh aw compile works on .github/workflows of the repo it runs in, so the
