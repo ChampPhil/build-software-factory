@@ -94,8 +94,8 @@ function gemfileHas(root: string, gem: string): boolean {
   }
 }
 
-export async function runStaticGate(input: StaticGateInput): Promise<StaticGateResult> {
-  const { root } = input;
+/** Every static checker that applies to this repo, run once: what the gate judges and what setup baselines. */
+export async function runStaticTools(root: string): Promise<{ results: ToolRunResult[]; unavailable: { tool: string; detail: string }[] }> {
   const results: ToolRunResult[] = [];
   const unavailable: { tool: string; detail: string }[] = [];
 
@@ -126,6 +126,29 @@ export async function runStaticGate(input: StaticGateInput): Promise<StaticGateR
     if (r.unavailable) unavailable.push({ tool, detail: r.detail });
     else results.push(r);
   }
+  return { results, unavailable };
+}
+
+/**
+ * Baselines for every rule the repo's checkers report today, per file. Setup
+ * records them so the ratchet has a starting point and gardening has work;
+ * a rule already baselined keeps its entry, since gardening may have lowered
+ * it and re-recording would undo that.
+ */
+export function baselinesFrom(existing: Baselines, measured: RuleCounts, now: string): Baselines {
+  const rules: Record<string, Baselines["rules"][string]> = { ...existing.rules };
+  for (const [rule, byFile] of Object.entries(measured)) {
+    if (rules[rule] !== undefined) continue;
+    const by_file = Object.fromEntries(Object.entries(byFile).filter(([, n]) => n > 0));
+    const count = Object.values(by_file).reduce((a, b) => a + b, 0);
+    rules[rule] = { count, by_file, recorded_at: now };
+  }
+  return { ...existing, rules };
+}
+
+export async function runStaticGate(input: StaticGateInput): Promise<StaticGateResult> {
+  const { root } = input;
+  const { results, unavailable } = await runStaticTools(root);
 
   const measured = measuredCounts(results);
   const before = withZeroBaselines(input.baselineBefore, measured);

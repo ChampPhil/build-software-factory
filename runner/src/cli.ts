@@ -167,6 +167,7 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
   bsf write-spec ID --from PATH [--pipeline P]
   bsf fetch-gate-failures WORK_ITEM --out PATH
   bsf write-triage WORK_ITEM --from PATH
+  bsf guardrails record [--out PATH]
   bsf run status WORK_ITEM
   bsf spec check --file PATH [--pipeline P]
   bsf sandbox report --from PATH [--work-item ID]
@@ -474,6 +475,30 @@ async function main(argv: readonly string[]): Promise<number> {
     case "spec":
       if (second !== "check") die("usage: bsf spec check --file PATH [--pipeline P]");
       return specCheckCommand(args);
+
+    case "guardrails": {
+      // `bsf guardrails record [--out PATH]`: baseline what the repo's own
+      // checkers report today, per rule and per file, for setup's PR.
+      if (second !== "record") die("usage: bsf guardrails record [--out PATH]");
+      const { runStaticTools, baselinesFrom, measuredCounts } = await import("./commands/gates-run.js");
+      const out = typeof args["out"] === "string" ? args["out"] : ".factory/guardrails/baselines.json";
+      const { results, unavailable } = await runStaticTools(process.cwd());
+      const existing = existsSync(out)
+        ? (JSON.parse(readFileSync(out, "utf8")) as import("./lib/types.js").Baselines)
+        : ({ schema: "baselines/1", rules: {} } as import("./lib/types.js").Baselines);
+      const next = baselinesFrom(existing, measuredCounts(results), nowIso());
+      const { assertValid } = await import("./lib/schema.js");
+      assertValid("baselines", next);
+      mkdirSync(dirname(out), { recursive: true });
+      writeFileSync(out, `${JSON.stringify(next, null, 2)}\n`);
+      const total = Object.values(next.rules).reduce((a, r) => a + r.count, 0);
+      process.stdout.write(
+        `baselined ${Object.keys(next.rules).length} rule(s), ${total} existing violation(s), from ${results.map((r) => r.tool).join(", ") || "no checker"}\n`,
+      );
+      for (const u of unavailable) process.stdout.write(`  ${u.tool} could not run: ${u.detail.split("\n")[0] ?? ""}\n`);
+      setOutput("violations", String(total));
+      return 0;
+    }
 
     case "write-triage":
       return writeTriageCommand(command[1], args);

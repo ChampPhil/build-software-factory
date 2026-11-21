@@ -54,6 +54,9 @@ const PLAN = [
   [join(skill, "runner"), ".factory/bin"],
   [join(repoRoot, "templates/definition"), ".factory/definition"],
   [join(repoRoot, "templates/guardrails"), ".factory/guardrails"],
+  // The rule packs setup installs from: each rule with the code it must fail
+  // on and the code it must pass.
+  [join(repoRoot, "rules"), ".factory/rules"],
   [join(repoRoot, "templates/workflows"), ".github/workflows"],
   [join(repoRoot, "templates/compiled"), ".github/workflows"],
 ];
@@ -77,6 +80,7 @@ function files(dir) {
  */
 const OWNED = [
   { dir: ".factory/bin", match: () => true },
+  { dir: ".factory/rules", match: (name) => /\.ya?ml$/.test(name) },
   { dir: ".github/workflows", match: (name) => /^factory-.*\.(md|ya?ml)$/.test(name) },
 ];
 
