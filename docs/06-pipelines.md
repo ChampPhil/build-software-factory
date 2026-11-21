@@ -61,7 +61,7 @@ Every pipeline that produces code ends in the same loop: the builder writes, the
    - suppression control
 4. **Gate 2 — verification** (in a fresh sandbox):
    - full test suite (or, where the repo already has a CI test check that runs on factory branches, that check's result on the same commit; if it hasn't reported within 15 minutes, the gate runs the tests itself)
-   - coverage, from the report the sandbox's `commands.coverage` writes at `coverage_report` (the tests gate runs that command instead of `commands.test`, once): diff coverage ≥ 80% (the main check), total ≥ floor (one point below the highest total reached), skips within cap
+   - coverage, from the report the sandbox's `commands.coverage` writes at `coverage_report` (the tests gate runs that command instead of `commands.test`, once): diff coverage ≥ 80% (the main check), over the changed executable lines where the report records per-line hits (lcov, Cobertura), else over the changed files, total ≥ floor (one point below the highest total reached), skips within cap
    - formal checks where installed
    - mutation testing on changed lines (from v0.2), with each language's existing tool (StrykerJS, Stryker.NET, cargo-mutants, Infection and the rule pack's equivalents)
    - **agent runtime verification**: the verifier starts the app per the runbook, exercises the change with real dev tools (a browser through Playwright MCP, console, network, database), and Playwright records the screenshots, video and traces

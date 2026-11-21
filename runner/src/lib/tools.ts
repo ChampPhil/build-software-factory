@@ -319,6 +319,8 @@ export interface CoverageNumbers {
   readonly total_pct: number;
   /** Per-file line coverage, so diff coverage can be worked out for changed files. */
   readonly by_file: Readonly<Record<string, { covered: number; total: number }>>;
+  /** Hits per executable line, where the format records them (lcov, Cobertura). */
+  readonly lines?: Readonly<Record<string, Readonly<Record<number, number>>>>;
 }
 
 /**
@@ -373,6 +375,7 @@ function fromLcov(root: string, file: string): CoverageNumbers | null {
   try {
     const text = readFileSync(file, "utf8");
     const byFile: Record<string, { covered: number; total: number }> = {};
+    const lines: Record<string, Record<number, number>> = {};
     let current: string | null = null;
     let found = 0;
     let hit = 0;
@@ -381,6 +384,13 @@ function fromLcov(root: string, file: string): CoverageNumbers | null {
         current = rel(root, line.slice(3).trim());
         found = 0;
         hit = 0;
+      } else if (line.startsWith("DA:") && current !== null) {
+        const [n, h] = line.slice(3).split(",");
+        const no = Number(n);
+        if (Number.isInteger(no)) {
+          const byLine = (lines[current] ??= {});
+          byLine[no] = Math.max(byLine[no] ?? 0, Number(h) || 0);
+        }
       } else if (line.startsWith("LF:")) {
         found = Number(line.slice(3));
       } else if (line.startsWith("LH:")) {
@@ -390,7 +400,7 @@ function fromLcov(root: string, file: string): CoverageNumbers | null {
         current = null;
       }
     }
-    return { total_pct: overall(byFile), by_file: byFile };
+    return { total_pct: overall(byFile), by_file: byFile, lines };
   } catch {
     return null;
   }
@@ -404,6 +414,7 @@ function fromCoberturaish(root: string, file: string): CoverageNumbers | null {
     // is needed is each class's filename and its line hits.
     // A class's filename is relative to one of the report's <source> dirs
     // (coverage.py, and most tools that write Cobertura), or absolute.
+    const lines: Record<string, Record<number, number>> = {};
     const sources = [...text.matchAll(/<source>([^<]+)<\/source>/g)].map((m) => (m[1] ?? "").trim());
     const resolve = (f: string): string => {
       if (isAbsolute(f)) return rel(root, f);
@@ -419,16 +430,22 @@ function fromCoberturaish(root: string, file: string): CoverageNumbers | null {
       const block = m[0];
       let covered = 0;
       let total = 0;
-      for (const line of block.matchAll(/<line[^>]*hits="(\d+)"[^>]*\/>/g)) {
+      const byLine = (lines[path] ??= {});
+      for (const line of block.matchAll(/<line\b([^>]*)\/>/g)) {
+        const attrs = line[1] ?? "";
+        const hits = /\bhits="(\d+)"/.exec(attrs);
+        if (hits === null) continue;
         total++;
-        if (Number(line[1]) > 0) covered++;
+        if (Number(hits[1]) > 0) covered++;
+        const no = /\bnumber="(\d+)"/.exec(attrs);
+        if (no !== null) byLine[Number(no[1])] = Math.max(byLine[Number(no[1])] ?? 0, Number(hits[1]));
       }
       // A file can appear as several classes (Java inner classes, C# partials).
       const prev = byFile[path];
       byFile[path] = prev === undefined ? { covered, total } : { covered: prev.covered + covered, total: prev.total + total };
     }
     if (Object.keys(byFile).length === 0) return null;
-    return { total_pct: overall(byFile), by_file: byFile };
+    return { total_pct: overall(byFile), by_file: byFile, lines };
   } catch {
     return null;
   }
@@ -452,10 +469,25 @@ function overall(byFile: Readonly<Record<string, { covered: number; total: numbe
 export function diffCoverage(
   coverage: CoverageNumbers,
   changedFiles: readonly string[],
+  changedLines?: Readonly<Record<string, ReadonlySet<number>>>,
 ): number | null {
   let covered = 0;
   let total = 0;
   for (const file of changedFiles) {
+    // Where the report has per-line hits and the diff says which lines
+    // changed, only the changed executable lines count: new uncovered lines
+    // in a well-covered file must not hide behind the file's total.
+    const byLine = coverage.lines?.[file];
+    const changed = changedLines?.[file];
+    if (byLine !== undefined && changed !== undefined) {
+      for (const n of changed) {
+        const h = byLine[n];
+        if (h === undefined) continue;
+        total++;
+        if (h > 0) covered++;
+      }
+      continue;
+    }
     const entry = coverage.by_file[file];
     if (entry === undefined) continue;
     covered += entry.covered;

@@ -140,6 +140,44 @@ export class RefLoader implements Loader {
 }
 
 /** Files changed between a ref and the working tree. */
+/**
+ * The lines each changed file adds or changes, by number in the new file,
+ * from `git diff -U0`: what line-level diff coverage measures.
+ */
+export function changedLinesSince(ref: string): Readonly<Record<string, ReadonlySet<number>>> {
+  let out: string;
+  try {
+    out = execFileSync("git", ["diff", "-U0", "--no-color", "--no-ext-diff", `${ref}...HEAD`], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      maxBuffer: 256 * 1024 * 1024,
+    });
+  } catch {
+    return {};
+  }
+  return parseChangedLines(out);
+}
+
+export function parseChangedLines(diff: string): Readonly<Record<string, ReadonlySet<number>>> {
+  const lines: Record<string, Set<number>> = {};
+  let file: string | null = null;
+  for (const l of diff.split("\n")) {
+    if (l.startsWith("+++ ")) {
+      const p = l.slice(4).trim();
+      file = p === "/dev/null" ? null : p.replace(/^b\//, "");
+      continue;
+    }
+    const m = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/.exec(l);
+    if (m !== null && file !== null) {
+      const start = Number(m[1]);
+      const count = m[2] === undefined ? 1 : Number(m[2]);
+      const set = (lines[file] ??= new Set<number>());
+      for (let i = 0; i < count; i++) set.add(start + i);
+    }
+  }
+  return lines;
+}
+
 export function changedFilesSince(ref: string): readonly string[] {
   try {
     const out = execFileSync("git", ["diff", "--name-only", `${ref}...HEAD`], {

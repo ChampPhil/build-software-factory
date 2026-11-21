@@ -101,3 +101,26 @@ describe("setup's trial runs the declared checks, and freeze drops what failed",
     expect(readFileSync(out, "utf8")).toContain("pmd check failed");
   });
 });
+
+describe("line-level diff coverage", () => {
+  // Found by ts-webapp's own amendment: diff coverage was the changed files'
+  // whole coverage, so new uncovered lines hid inside a well-covered file.
+  it("counts only the changed executable lines where the report has per-line hits", async () => {
+    const { diffCoverage } = await import("../src/lib/tools.js");
+    const { parseChangedLines } = await import("../src/lib/config.js");
+    const dir = mkdtempSync(join(tmpdir(), "bsf-lines-"));
+    const da = Array.from({ length: 20 }, (_, i) => `DA:${i + 1},${i < 18 ? 1 : 0}`).join("\n");
+    writeFileSync(join(dir, "lcov.info"), `SF:src/a.ts\n${da}\nLF:20\nLH:18\nend_of_record\n`);
+    const cov = readCoverage(dir, { path: "lcov.info", format: "lcov" })!;
+    const changed = parseChangedLines("diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -18,0 +19,2 @@\n+x\n+y\n");
+    expect(diffCoverage(cov, ["src/a.ts"])).toBe(90);
+    expect(diffCoverage(cov, ["src/a.ts"], changed)).toBe(0);
+  });
+
+  it("ignores changed lines the report does not count as executable (comments, blanks)", async () => {
+    const { diffCoverage } = await import("../src/lib/tools.js");
+    const cov = { total_pct: 50, by_file: { "a.ts": { covered: 1, total: 2 } }, lines: { "a.ts": { 3: 1, 4: 0 } } };
+    expect(diffCoverage(cov, ["a.ts"], { "a.ts": new Set([1, 2, 3]) })).toBe(100);
+    expect(diffCoverage(cov, ["a.ts"], { "a.ts": new Set([1, 2]) })).toBe(null);
+  });
+});

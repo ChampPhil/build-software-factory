@@ -311,6 +311,8 @@ export async function runCoverageGate(args: {
   readonly changedFiles: readonly string[];
   /** Where setup declared the report, from the default branch's sandbox. */
   readonly report?: SandboxManifest["coverage_report"];
+  /** The lines the change adds, per file, for line-level diff coverage. */
+  readonly changedLines?: Readonly<Record<string, ReadonlySet<number>>>;
 }): Promise<CoverageGateResult> {
   const coverage = readCoverage(args.root, args.report);
   const skips = await countSkips(args.root);
@@ -351,7 +353,7 @@ export async function runCoverageGate(args: {
     };
   }
 
-  const diff = diffCoverage(coverage, args.changedFiles);
+  const diff = diffCoverage(coverage, args.changedFiles, args.changedLines);
   const verdict = checkCoverage(args.current, {
     // Nothing measurable in the changed files is not zero coverage: it means
     // the change touched nothing the report covers, such as a config file.

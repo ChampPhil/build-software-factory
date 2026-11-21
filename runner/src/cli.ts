@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { GitHub } from "./lib/github.js";
 import {
-  DiskLoader, RefLoader, loadPolicy, loadBaselines, loadCoverage, changedFilesSince,
+  DiskLoader, RefLoader, loadPolicy, loadBaselines, loadCoverage, changedFilesSince, changedLinesSince,
 } from "./lib/config.js";
 import { runStaticGate, runCoverageGate, checkedFromCheckRuns, summarizeGates, GATES_CHECK, type JobResult } from "./commands/gates-run.js";
 import { runPolicyCommand } from "./commands/policy-run.js";
@@ -779,6 +779,7 @@ async function gatesCoverage(args: Args): Promise<number> {
     root,
     current: await loadCoverage(new DiskLoader(root)),
     changedFiles: changedFilesSince(base),
+    changedLines: changedLinesSince(base),
     ...(report === undefined ? {} : { report }),
   });
 
