@@ -1,3 +1,4 @@
+import { effectiveAssociation } from "../lib/github.js";
 import { GitHub, type PullFile, type ReviewResponse } from "../lib/github.js";
 import { loadPolicy, type Loader } from "../lib/config.js";
 import { runPolicy, type PolicyResult } from "./policy.js";
@@ -43,6 +44,7 @@ export async function gatherPullFacts(
   gh: GitHub,
   prNumber: number,
   declaredTestEdits: readonly string[] = [],
+  trusted: readonly string[] = ["OWNER", "MEMBER", "COLLABORATOR"],
 ): Promise<PullRequestFacts> {
   const [pr, files, reviews] = await Promise.all([
     gh.pull(prNumber),
@@ -71,7 +73,7 @@ export async function gatherPullFacts(
     labels,
     changed_files: changedPaths(files),
     added_files: files.filter((f) => f.status === "added").map((f) => f.filename),
-    reviews: reviews.map(toReview),
+    reviews: await trustedReviews(gh, reviews, trusted),
     draft: pr.draft,
     declared_test_edits: declaredTestEdits,
   };
@@ -101,6 +103,20 @@ function changedPaths(files: readonly PullFile[]): string[] {
  * and `is_app` — which silently disabled the "an approval does not carry to a
  * later commit" check in the one place that decides whether to merge.
  */
+/** Reviews with each reviewer's association corrected from their real permission (see effectiveAssociation). */
+export async function trustedReviews(
+  gh: GitHub,
+  reviews: readonly ReviewResponse[],
+  trusted: readonly string[],
+): Promise<PullRequestFacts["reviews"]> {
+  return Promise.all(
+    reviews.map(async (r) => {
+      const base = toReview(r);
+      return { ...base, author_association: (await effectiveAssociation(gh, base.author, base.author_association, trusted)) as Association };
+    }),
+  );
+}
+
 export function toReview(r: ReviewResponse): PullRequestFacts["reviews"][number] {
   const isApp = r.user?.type === "Bot" || /\[bot\]$/.test(r.user?.login ?? "");
   const state = r.state as "APPROVED" | "CHANGES_REQUESTED" | "COMMENTED" | "DISMISSED";
@@ -117,7 +133,7 @@ export function toReview(r: ReviewResponse): PullRequestFacts["reviews"][number]
 export async function runPolicyCommand(opts: PolicyRunOptions): Promise<PolicyResult> {
   // policy.yaml comes from the default branch, whatever the PR says.
   const policy = await loadPolicy(opts.loader);
-  const pr = await gatherPullFacts(opts.gh, opts.pr);
+  const pr = await gatherPullFacts(opts.gh, opts.pr, [], policy.trust.associations);
 
   const result = runPolicy({ policy, pr, appLogins: opts.appLogins });
 

@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
-import type { GitHub } from "../lib/github.js";
+import { effectiveAssociation, type GitHub } from "../lib/github.js";
 import { FactoryStore, CURSOR, INCOMING, LEDGER, json, workItemPath } from "../lib/store.js";
 import type { Change } from "../lib/dataref.js";
 import { runIntake, chooseDispatches, type IncomingEvent, type EventKind, type IntakeResult, type LedgerOpenItem, type DispatchDecision } from "./intake.js";
@@ -234,7 +234,19 @@ function isFork(pr: NonNullable<Payload["pull_request"]>): boolean {
 export async function runIntakeCommand(opts: IntakeRunOptions): Promise<IntakeRunReport> {
   const store = new FactoryStore(opts.gh);
   const payload = JSON.parse(readFileSync(opts.eventPath, "utf8")) as Payload;
-  const incoming = normalizeEvent(opts.eventName, payload, opts.now);
+  const raw = normalizeEvent(opts.eventName, payload, opts.now);
+  const incoming =
+    raw === null
+      ? null
+      : {
+          ...raw,
+          actor_association: (await effectiveAssociation(
+            opts.gh,
+            raw.actor,
+            raw.actor_association ?? "NONE",
+            opts.policy.trust.associations,
+          )) as typeof raw.actor_association,
+        };
 
   // Persist first. Everything after this point can be redone by a later run.
   const existing = (await store.data.read(INCOMING)) ?? "";

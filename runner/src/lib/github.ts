@@ -315,3 +315,28 @@ export interface ReviewResponse {
   readonly submitted_at: string;
   readonly commit_id: string;
 }
+
+/**
+ * The association to judge trust by. GitHub reports a private member of the
+ * repo's organization as NONE or CONTRIBUTOR, even an owner, so an
+ * association alone turns away the very people who own the repo. Where it
+ * does not already grant trust, the person's actual permission on the repo
+ * decides: write or above counts as a collaborator.
+ */
+export async function effectiveAssociation(
+  gh: { repo: string; get<T>(path: string): Promise<T> },
+  login: string,
+  association: string,
+  trusted: readonly string[],
+): Promise<string> {
+  if (trusted.includes(association) || /\[bot\]$/.test(login) || login === "" || login === "unknown") return association;
+  try {
+    const r = await gh.get<{ permission?: string; role_name?: string }>(
+      `repos/${gh.repo}/collaborators/${encodeURIComponent(login)}/permission`,
+    );
+    const p = r.role_name ?? r.permission ?? "none";
+    return ["admin", "maintain", "write"].includes(p) ? "COLLABORATOR" : association;
+  } catch {
+    return association;
+  }
+}

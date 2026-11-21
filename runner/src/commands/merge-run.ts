@@ -3,7 +3,7 @@ import { FactoryStore, LEDGER, runPath, workItemPath, json } from "../lib/store.
 import { fetchInteractions } from "./interactions.js";
 import { isEligible, queueOrder, nextAction, humanPrMayMerge, type QueueCandidate, type QueueAction } from "./merge-queue.js";
 import { hasTrustedHumanApproval } from "./policy.js";
-import { toReview } from "./policy-run.js";
+import { trustedReviews } from "./policy-run.js";
 import type { Policy, Pipeline, Association } from "../lib/types.js";
 
 /**
@@ -92,7 +92,7 @@ export async function runMergeCommand(opts: MergeOptions): Promise<MergeReport> 
         labels: pr.labels.map((l) => l.name),
         changed_files: [],
         draft: pr.draft,
-        reviews: reviews.map(toReview),
+        reviews: await trustedReviews(opts.gh, reviews, opts.policy.trust.associations),
         ...(pipeline === undefined ? {} : { pipeline }),
       },
       appLogins: opts.appLogins ?? [],
