@@ -103,18 +103,14 @@ export async function runRollupCommand(opts: RollupOptions): Promise<RollupRepor
     updated_at: opts.now,
     factory: { runner: opts.runnerPin, harness: opts.harness },
     metrics: result.metrics,
+    // Run ids, as schema/index.json and the dashboard read them. The rollup
+    // wrote objects here, which the schema refused, so the index never
+    // updated once a factory had a run and every metric read zero.
     recent_runs: runs
       .slice()
       .sort((a, b) => b.ended_at.localeCompare(a.ended_at))
       .slice(0, 20)
-      .map((r) => ({
-        id: r.id,
-        pipeline: r.pipeline,
-        outcome: r.outcome,
-        ended_at: r.ended_at,
-        cost_usd: r.cost_usd,
-        ...(r.pr == null ? {} : { pr: r.pr }),
-      })),
+      .map((r) => r.id),
     guardrails: opts.guardrails,
     health: opts.health,
   };

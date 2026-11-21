@@ -57,7 +57,11 @@ export async function runConflictsCommand(opts: ConflictsOptions): Promise<Confl
     for (const c of conflicting) {
       await requestRebuild(opts.gh, c.work_item, opts.ref);
       dispatched.push(c.work_item);
-      if (opts.checks !== undefined) await conflictCheck(opts.checks, c.pr).catch(() => undefined);
+      if (opts.checks !== undefined) {
+        await conflictCheck(opts.checks, c.pr).catch((e: Error) => {
+          process.stderr.write(`could not put the factory/conflicts check on #${c.pr}: ${e.message}\n`);
+        });
+      }
     }
   }
 
