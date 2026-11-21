@@ -1,6 +1,7 @@
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { describe, it, expect } from "vitest";
-import { readFileSync, readdirSync, existsSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, existsSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
@@ -446,6 +447,60 @@ describe("factory-gates on the PR that installs the factory", () => {
     const text = readFileSync(join(TEMPLATES, "workflows", "factory-gates.yml"), "utf8");
     expect(text).not.toContain("outputs.judge == 'true'");
     expect(text.match(/outputs\.judge != 'false'/g)?.length).toBe(5);
+  });
+});
+
+describe("factory-gates on a PR that upgrades the factory", () => {
+  // trinsports#4: the default branch's runner, older than the PR's workflows,
+  // failed every gate on a PR that changed nothing but the factory's files.
+  const text = readFileSync(join(TEMPLATES, "workflows", "factory-gates.yml"), "utf8");
+  const doc = parseYaml(text) as { jobs: { plan: { steps: { id?: string; run?: string }[] } } };
+  const script = doc.jobs.plan.steps.find((st) => st.id === "trusted")!.run!;
+
+  function runPlanStep(change: (dir: string) => void): string {
+    const dir = mkdtempSync(join(tmpdir(), "bsf-upgrade-"));
+    const git = (...a: string[]) => execFileSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", ...a], { cwd: dir });
+    git("init", "-q");
+    mkdirSync(join(dir, ".factory/bin"), { recursive: true });
+    mkdirSync(join(dir, "src"));
+    writeFileSync(join(dir, ".factory/bin/VERSION"), "0.1.0 aaa\n");
+    writeFileSync(join(dir, ".factory/bin/bsf"), "#!/bin/sh\necho bsf\n", { mode: 0o755 });
+    writeFileSync(join(dir, "src/a.js"), "1\n");
+    git("add", "-A");
+    git("commit", "-qm", "base");
+    const base = execFileSync("git", ["rev-parse", "HEAD"], { cwd: dir, encoding: "utf8" }).trim();
+    mkdirSync(join(dir, ".factory-trusted/.factory/bin"), { recursive: true });
+    writeFileSync(join(dir, ".factory-trusted/.factory/bin/VERSION"), "0.1.0 aaa\n");
+    writeFileSync(join(dir, ".factory-trusted/.factory/bin/bsf"), "#!/bin/sh\necho bsf\n", { mode: 0o755 });
+    change(dir);
+    git("add", "src", ".factory/bin");
+    git("commit", "-qm", "change");
+    const out = join(dir, "out");
+    writeFileSync(out, "");
+    const body = script
+      .replaceAll("${{ github.event_name }}", "pull_request")
+      .replaceAll("${{ github.event.pull_request.base.sha }}", base);
+    spawnSync("bash", ["-c", body], {
+      cwd: dir,
+      env: { ...process.env, GITHUB_OUTPUT: out, GITHUB_ENV: join(dir, "env"), GITHUB_PATH: join(dir, "path"), GITHUB_STEP_SUMMARY: join(dir, "sum"), RUNNER_TEMP: join(dir, "tmp") },
+    });
+    return readFileSync(out, "utf8");
+  }
+
+  it("stands down, and says why, when the PR changes only the runner and the factory's files", () => {
+    const out = runPlanStep((d) => writeFileSync(join(d, ".factory/bin/VERSION"), "0.2.0 bbb\n"));
+    expect(out).toContain("installed=false");
+    expect(out).toContain("upgrade=true");
+    expect(out).toMatch(/upgrades the factory from 0\.1\.0 aaa to 0\.2\.0 bbb/);
+  });
+
+  it("still judges a PR that changes the runner and app code together", () => {
+    const out = runPlanStep((d) => {
+      writeFileSync(join(d, ".factory/bin/VERSION"), "0.2.0 bbb\n");
+      writeFileSync(join(d, "src/a.js"), "2\n");
+    });
+    expect(out).toContain("installed=true");
+    expect(out).not.toContain("upgrade=true");
   });
 });
 
