@@ -110,7 +110,7 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
       Which roles run for this attempt, and why. factory-run reads this.
 
   bsf run start WORK_ITEM [--attempt N] [--escalate true] [--first-step ROLE]
-  bsf run after-gates WORK_ITEM --run-id R [--attempt N] [--pr N] [--build-result R] [--wait-min M]
+  bsf run after-gates WORK_ITEM --run-id R [--attempt N] [--pr N] [--build-result R] [--wait-min M] [--steps-dir DIR]
   bsf run after-gates --static S --verification V [--attempt N]
       What happens after the gates: verify, retry, escalate or clear.
 
@@ -1140,9 +1140,24 @@ async function runCommand(second: string | undefined, args: Args, third?: string
     const attempt = typeof args["attempt"] === "string" ? Number(args["attempt"]) : 1;
     const pr = typeof args["pr"] === "string" ? Number(args["pr"]) : 0;
     const waitMin = typeof args["wait-min"] === "string" ? Number(args["wait-min"]) : 90;
+    // The roles' StepReports, downloaded from this run's artifacts.
+    const steps: import("./commands/run-lifecycle.js").StepReportDoc[] = [];
+    const stepsDir = typeof args["steps-dir"] === "string" ? args["steps-dir"] : undefined;
+    if (stepsDir !== undefined && existsSync(stepsDir)) {
+      const walk = (d: string): string[] =>
+        readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(d, e.name)) : e.name.endsWith(".json") ? [join(d, e.name)] : []));
+      for (const f of walk(stepsDir)) {
+        try {
+          steps.push(JSON.parse(readFileSync(f, "utf8")) as import("./commands/run-lifecycle.js").StepReportDoc);
+        } catch {
+          process.stdout.write(`  ${f} is not a StepReport; left out\n`);
+        }
+      }
+    }
     const r = await finishRun({
       gh: new GitHub({ repo: requireRepo() }),
       workItem: third,
+      steps,
       runId: runIdArg,
       attempt: Number.isInteger(attempt) && attempt > 0 ? attempt : 1,
       maxAttempts: cfg.limits?.retry_cap ?? 3,

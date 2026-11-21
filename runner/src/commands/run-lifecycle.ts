@@ -1,5 +1,5 @@
 import { runId as newRunId } from "../lib/ids.js";
-import { FactoryStore, LEDGER, json, livePath, workItemPath, type Ledger } from "../lib/store.js";
+import { FactoryStore, LEDGER, json, livePath, runPath, workItemPath, type Ledger } from "../lib/store.js";
 import type { GitHub } from "../lib/github.js";
 import { afterGates, type AfterGates } from "./run-plan.js";
 import { GATE_CHECKS, GATES_CHECK } from "./gates-run.js";
@@ -196,6 +196,8 @@ export interface FinishRunOptions {
   readonly waitMs: number;
   readonly pollMs: number;
   readonly sleep?: (ms: number) => Promise<void>;
+  /** The roles' StepReports for this run, read from its artifacts. */
+  readonly steps?: readonly StepReportDoc[];
 }
 
 /**
@@ -210,16 +212,34 @@ export async function finishRun(opts: FinishRunOptions): Promise<AfterGatesRepor
   if (item === null) throw new Error(`${opts.workItem} is not on the data ref`);
   const pr = opts.pr !== null && opts.pr > 0 ? opts.pr : null;
 
+  const live = await store.data.readJson<{ started_at?: string }>(livePath(opts.runId)).catch(() => null);
+  const record = (report: AfterGatesReport, checks: readonly GateCheck[], commit: string | null, status: string) => ({
+    path: runPath(opts.runId),
+    content: json(
+      runRecord({
+        runId: opts.runId, workItem: item.id, pipeline: item.pipeline,
+        startedAt: live?.started_at ?? opts.now(), endedAt: opts.now(), attempt: opts.attempt,
+        report, itemStatus: status, steps: opts.steps ?? [], checks, commit,
+      }),
+    ),
+  });
+
   // Triage (or a person) already decided what became of the item: needs
   // info, out of scope, a duplicate. There is nothing to gate and nothing to
   // retry; the run only ends its live record.
   if (item.status !== "running") {
-    await store.put([{ path: livePath(opts.runId), content: null }], `run ${opts.runId}: ${item.id} stood down (${item.status})`);
-    return { next: "stood_down", reason: `${item.id} is ${item.status}`, pr, attempt: opts.attempt };
+    const stood: AfterGatesReport = { next: "stood_down", reason: `${item.id} is ${item.status}`, pr, attempt: opts.attempt };
+    await store.put(
+      [{ path: livePath(opts.runId), content: null }, record(stood, [], null, item.status)],
+      `run ${opts.runId}: ${item.id} stood down (${item.status})`,
+    );
+    return stood;
   }
 
   let report: AfterGatesReport;
   let failures: unknown = null;
+  let finalChecks: readonly GateCheck[] = [];
+  let finalHead: string | null = null;
   if (pr === null) {
     // No PR: the builder failed, or produced nothing. Another attempt is the
     // same as after a failed gate, and at the cap it is a human's.
@@ -252,6 +272,8 @@ export async function finishRun(opts: FinishRunOptions): Promise<AfterGatesRepor
       head = (await opts.gh.pull(pr)).head.sha;
       checks = await gateChecks(opts.gh, head);
     }
+    finalChecks = checks;
+    finalHead = head;
     const agg = checks.find((c) => c.name === GATES_CHECK);
     if (agg === undefined || agg.status !== "completed") {
       report = { next: "timed_out", reason: `${GATES_CHECK} did not report on ${head.slice(0, 7)} in ${Math.round(opts.waitMs / 60000)} min`, pr, attempt: opts.attempt };
@@ -278,6 +300,7 @@ export async function finishRun(opts: FinishRunOptions): Promise<AfterGatesRepor
       { path: workItemPath(item.id), content: json(next) },
       { path: LEDGER, content: json(withStatus(ledger, item, status, pr, now)) },
       { path: livePath(opts.runId), content: null },
+      record(report, finalChecks, finalHead, status),
       ...(failures === null ? [] : [{ path: gateFailuresPath(item.id), content: json(failures) }]),
     ],
     `run ${opts.runId}: ${item.id} ${report.next}`,
@@ -427,4 +450,100 @@ export async function reapStaleRuns(gh: GitHub, now: string): Promise<ReapReport
     await store.put(changes, `reap ${reaped.length} run(s) that ended without finishing`);
   }
   return { reaped };
+}
+
+/* -------------------------------------------------------------- run record */
+
+export interface StepReportDoc {
+  readonly role: string;
+  readonly model: string;
+  readonly exit: "ok" | "error" | "timeout" | "refused";
+  readonly duration_sec: number;
+  readonly tokens: { readonly in: number; readonly out: number; readonly cached?: number };
+  readonly cost_usd: number;
+  readonly transcript: string | null;
+}
+
+const OUTCOME: Record<string, string> = {
+  clear: "draft_pr",
+  verify: "draft_pr",
+  timed_out: "draft_pr",
+  retry: "failed",
+  escalate: "escalated",
+  no_pr: "failed",
+};
+const STATUS_OUTCOME: Record<string, string> = {
+  duplicate: "duplicate",
+  rejected: "rejected",
+  needs_info: "no_action",
+  escalated: "escalated",
+};
+
+/**
+ * The record of one factory-run: what each role cost and did, how the gates
+ * judged it, and how it ended. Everything that measures the factory — the
+ * review, the benchmarks, the dashboard's cost and quality — reads these, and
+ * before this nothing wrote them, so all of it measured an empty set.
+ */
+export function runRecord(input: {
+  readonly runId: string;
+  readonly workItem: string;
+  readonly pipeline: string;
+  readonly startedAt: string;
+  readonly endedAt: string;
+  readonly attempt: number;
+  readonly report: AfterGatesReport;
+  readonly itemStatus: string;
+  readonly steps: readonly StepReportDoc[];
+  readonly checks: readonly GateCheck[];
+  readonly commit: string | null;
+}): Record<string, unknown> {
+  const outcome =
+    input.report.next === "stood_down"
+      ? (STATUS_OUTCOME[input.itemStatus] ?? "no_action")
+      : (OUTCOME[input.report.next] ?? "failed");
+  const gate = (names: readonly string[]): "pass" | "fail" | "skipped" => {
+    const cs = input.checks.filter((c) => names.includes(c.name));
+    if (cs.length === 0) return "skipped";
+    return cs.some((c) => c.conclusion === "failure" || c.conclusion === "timed_out") ? "fail" : "pass";
+  };
+  const steps = input.steps.map((s) => ({
+    role: s.role,
+    model: s.model,
+    attempt: input.attempt,
+    duration_sec: s.duration_sec,
+    tokens: s.tokens,
+    cost_usd: s.cost_usd,
+    transcript: s.transcript,
+    exit: s.exit,
+  }));
+  const gates =
+    input.checks.length === 0
+      ? []
+      : [
+          { gate: "static", attempt: input.attempt, result: gate(GATE_CHECKS.static), ...(input.commit === null ? {} : { commit: input.commit }) },
+          {
+            gate: "verification",
+            attempt: input.attempt,
+            result: gate(input.checks.map((c) => c.name).filter((n) => n.startsWith("factory/gate-") && !GATE_CHECKS.static.includes(n as never))),
+            ...(input.commit === null ? {} : { commit: input.commit }),
+          },
+        ];
+  const cost = Math.round(steps.reduce((a, s) => a + s.cost_usd, 0) * 10000) / 10000;
+  return {
+    schema: "run/1",
+    id: input.runId,
+    work_item: input.workItem,
+    pipeline: input.pipeline,
+    actor: { kind: "agent", harness: "claude-code" },
+    started_at: input.startedAt,
+    ended_at: input.endedAt,
+    duration_sec: Math.max(0, Math.round((Date.parse(input.endedAt) - Date.parse(input.startedAt)) / 1000)),
+    outcome,
+    pr: input.report.pr,
+    steps,
+    gates,
+    cost_usd: cost,
+    escalated: outcome === "escalated",
+  };
 }

@@ -152,6 +152,16 @@ describe("finishRun", () => {
     expect(files.has(`live/${RUN}.json`)).toBe(false);
   });
 
+  it("writes the run's record, with each role's cost from its StepReport", async () => {
+    const { gh } = fakeGh([[{ name: "factory/gate-static", status: "completed", conclusion: "success" }, { name: "factory/gates", status: "completed", conclusion: "success" }]]);
+    const step = { role: "builder", model: "claude-opus-5", exit: "ok" as const, duration_sec: 600, tokens: { in: 1000, out: 200 }, cost_usd: 3.25, transcript: null };
+    await finishRun({ ...base, gh, attempt: 1, pr: 5, steps: [step, { ...step, role: "spec", cost_usd: 1.5 }] });
+    const rec = JSON.parse(files.get(`runs/${RUN}.json`)!);
+    expect(rec.outcome).toBe("draft_pr");
+    expect(rec.cost_usd).toBe(4.75);
+    expect(rec.gates.map((g: { gate: string; result: string }) => `${g.gate}:${g.result}`)).toEqual(["static:pass", "verification:skipped"]);
+  });
+
   it("on a failed gate under the cap, stores the failures and dispatches the next attempt on the same PR", async () => {
     const { gh, dispatched } = fakeGh([
       [
