@@ -225,6 +225,19 @@ export async function finishRun(opts: FinishRunOptions): Promise<AfterGatesRepor
         ? { next: "escalate", reason: `the build made no PR (${opts.buildResult || "not run"}) on attempt ${opts.attempt} of ${opts.maxAttempts}`, pr, attempt: opts.attempt }
         : { next: "retry", reason: `the build made no PR (${opts.buildResult || "not run"})`, pr, attempt: opts.attempt + 1 };
   } else {
+    // Link the PR to the item first: the gates' plan reads this link to
+    // find the spec the verifier checks the change against.
+    if (item.pr !== pr) {
+      const at = opts.now();
+      const ledger = await store.ledger(at);
+      await store.put(
+        [
+          { path: workItemPath(item.id), content: json({ ...item, pr }) },
+          { path: LEDGER, content: json(withStatus(ledger, item, "running", pr, at)) },
+        ],
+        `run ${opts.runId}: ${item.id} is PR #${pr}`,
+      );
+    }
     const deadline = Date.parse(opts.now()) + opts.waitMs;
     let head = (await opts.gh.pull(pr)).head.sha;
     let checks = await gateChecks(opts.gh, head);

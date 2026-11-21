@@ -317,7 +317,9 @@ describe("trigger workflows", () => {
   it("factory-gates runs on merge_group, for repos with the native merge queue", () => {
     const on = load("factory-gates.yml")["on"] as Record<string, unknown>;
     expect(on).toHaveProperty("merge_group");
-    expect(on).toHaveProperty("push");
+    expect(on).toHaveProperty("pull_request");
+    // Not push as well: the same commit was judged twice, once without its PR.
+    expect(on).not.toHaveProperty("push");
   });
 
   it("only three workflows run on a timer, and they are the three doc 07 names", () => {

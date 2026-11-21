@@ -537,10 +537,15 @@ async function main(argv: readonly string[]): Promise<number> {
       if (second === "record") return gatesRecord(args);
       if (second === "tests") return await gatesTests(args);
       if (second !== "plan") die("usage: bsf gates plan|static|coverage|tests|record");
-      const commit = typeof args["commit"] === "string" ? args["commit"] : process.env["GITHUB_SHA"] ?? "";
-      if (commit === "") die("no commit: pass --commit SHA or run inside Actions");
-      const actor = args["actor"] === "human" ? "human" : "agent";
-      const labels = typeof args["labels"] === "string" ? args["labels"].split(",") : [];
+      const ev = gateEvent();
+      const commit = typeof args["commit"] === "string" ? args["commit"] : ev.sha;
+      if (commit === "" || commit === "HEAD") die("no commit: pass --commit SHA or run inside Actions");
+      // The factory's own change is a factory/ branch its App opened. Anyone
+      // can name a branch factory/, so the author has to be a bot as well.
+      const isFactoryChange = ev.headRef.startsWith("factory/") && (ev.pr === 0 || ev.authorIsBot);
+      const actor =
+        args["actor"] === "human" ? "human" : args["actor"] === "agent" ? "agent" : isFactoryChange ? "agent" : "human";
+      const labels = typeof args["labels"] === "string" ? args["labels"].split(",") : ev.labels;
       const policy = await loadPolicy(new DiskLoader()).catch(() => null);
       const verifyLabel =
         typeof args["verify-label"] === "string" ? args["verify-label"] : "factory:verify";
@@ -567,8 +572,28 @@ async function main(argv: readonly string[]): Promise<number> {
       setOutput("static", String(plan.static));
       setOutput("tests", String(plan.tests));
       setOutput("coverage", String(plan.coverage));
-      setOutput("agent_verification", String(plan.agentVerification));
       setOutput("commit", commit);
+      setOutput("pr_number", String(ev.pr));
+      // The verifier checks a factory change against its work item's spec.
+      // The run links its PR to the item as soon as the build opens it; wait
+      // a little for that link rather than verify against nothing.
+      let workItem = "";
+      if (plan.agentVerification && actor === "agent" && ev.pr > 0) {
+        const { FactoryStore } = await import("./lib/store.js");
+        const store = new FactoryStore(new GitHub({ repo: requireRepo() }));
+        for (let i = 0; i < 20 && workItem === ""; i++) {
+          const ledger = await store.ledger(nowIso()).catch(() => null);
+          workItem = ledger?.open.find((o) => o.pr === ev.pr)?.work_item ?? "";
+          if (workItem === "") await new Promise((r) => setTimeout(r, 15_000));
+        }
+        if (workItem === "") process.stdout.write(`  no work item is linked to PR #${ev.pr}, so there is no spec to verify against\n`);
+      }
+      setOutput("work_item", workItem);
+      // A factory change with no item to verify against does not pass by
+      // skipping verification: the verifier runs and fails for want of a
+      // spec. A human PR asking for it with the label gets it when it is
+      // linked to an item, and is told otherwise.
+      setOutput("agent_verification", String(plan.agentVerification && (actor === "agent" || workItem !== "")));
       for (const r of plan.reasons) process.stdout.write(`  ${r}\n`);
       void policy;
       return 0;
@@ -588,8 +613,46 @@ function baseRef(args: Args): string {
   return "origin/HEAD";
 }
 
+interface GateEvent {
+  /** The commit a verdict belongs to: a PR's head, not the merge commit Actions checks out. */
+  readonly sha: string;
+  readonly pr: number;
+  readonly headRef: string;
+  readonly authorIsBot: boolean;
+  readonly labels: readonly string[];
+}
+
+/** What the event that started this job says about the change being judged. */
+function gateEvent(): GateEvent {
+  let p: {
+    pull_request?: { number?: number; head?: { sha?: string; ref?: string }; user?: { type?: string; login?: string }; labels?: { name?: string }[] };
+    merge_group?: { head_sha?: string; head_ref?: string };
+  } = {};
+  const path = process.env["GITHUB_EVENT_PATH"];
+  if (path !== undefined && existsSync(path)) {
+    try {
+      p = JSON.parse(readFileSync(path, "utf8")) as typeof p;
+    } catch {
+      /* no payload: fall back to the environment */
+    }
+  }
+  const pr = p.pull_request;
+  if (pr?.head?.sha !== undefined) {
+    return {
+      sha: pr.head.sha,
+      pr: pr.number ?? 0,
+      headRef: pr.head.ref ?? "",
+      authorIsBot: pr.user?.type === "Bot" || /\[bot\]$/.test(pr.user?.login ?? ""),
+      labels: (pr.labels ?? []).map((l) => l.name ?? "").filter((n) => n !== ""),
+    };
+  }
+  const sha = p.merge_group?.head_sha ?? process.env["GITHUB_SHA"] ?? "HEAD";
+  const ref = (process.env["GITHUB_REF"] ?? "").replace(/^refs\/heads\//, "");
+  return { sha, pr: 0, headRef: p.merge_group?.head_ref ?? ref, authorIsBot: false, labels: [] };
+}
+
 function headSha(): string {
-  return process.env["GITHUB_SHA"] ?? process.env["GITHUB_HEAD_SHA"] ?? "HEAD";
+  return gateEvent().sha;
 }
 
 async function maybeReportCheck(
