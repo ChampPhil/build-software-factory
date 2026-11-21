@@ -115,16 +115,32 @@ export class DataRefStore implements Loader {
     const tree = await this.treeOf(commit);
     const entry = tree.tree.find((e) => e.path === path && e.type === "blob");
     if (entry?.sha === undefined || entry.sha === null) return null;
+    const cached = this.blobs.get(entry.sha);
+    if (cached !== undefined) return cached;
     const blob = await this.gh.get<BlobResponse>(`${this.base}/git/blobs/${entry.sha}`);
-    if (blob.encoding !== "base64") return blob.content;
-    return Buffer.from(blob.content, "base64").toString("utf8");
+    const text = blob.encoding !== "base64" ? blob.content : Buffer.from(blob.content, "base64").toString("utf8");
+    this.blobs.set(entry.sha, text);
+    return text;
   }
 
-  private async treeOf(commit: string): Promise<TreeResponse> {
-    const c = await this.gh.get<CommitResponse>(`${this.base}/git/commits/${commit}`);
-    return this.gh.get<TreeResponse>(
-      `${this.base}/git/trees/${c.tree.sha}?recursive=1`,
-    );
+  // Commits and blobs never change once written, so one command reads each
+  // at most once. Without this every read cost four API calls, and a rollup
+  // reading every run and work item ran an App installation out of its hourly
+  // limit. The ref's head is still read each time: other writers move it.
+  private readonly trees = new Map<string, Promise<TreeResponse>>();
+  private readonly blobs = new Map<string, string>();
+
+  private treeOf(commit: string): Promise<TreeResponse> {
+    let t = this.trees.get(commit);
+    if (t === undefined) {
+      t = (async () => {
+        const c = await this.gh.get<CommitResponse>(`${this.base}/git/commits/${commit}`);
+        return this.gh.get<TreeResponse>(`${this.base}/git/trees/${c.tree.sha}?recursive=1`);
+      })();
+      t.catch(() => this.trees.delete(commit));
+      this.trees.set(commit, t);
+    }
+    return t;
   }
 
   /**

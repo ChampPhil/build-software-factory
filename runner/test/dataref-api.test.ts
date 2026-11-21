@@ -99,4 +99,22 @@ describe("the factory's data ref, against the Git Data API's real paths", () => 
     expect(calls.filter((c) => c.startsWith("POST") && c.endsWith("/git/refs"))).toHaveLength(1);
     expect(calls.filter((c) => c === "PATCH repos/o/r/git/refs/factory/data")).toHaveLength(2);
   });
+
+  it("reads a tree and a blob once per command, however many files it reads", async () => {
+    // Four calls a read made a rollup over every run and work item spend an
+    // App installation's hourly limit.
+    const { gh, calls } = fakeGitHub();
+    const store = new DataRefStore(gh);
+    await store.commit([{ path: "a.json", content: "1" }, { path: "b.json", content: "2" }], "first");
+    calls.length = 0;
+    for (let i = 0; i < 5; i++) {
+      await store.read("a.json");
+      await store.read("b.json");
+    }
+    expect(calls.filter((c) => c.includes("/git/trees/"))).toHaveLength(1);
+    expect(calls.filter((c) => c.includes("/git/blobs/"))).toHaveLength(2);
+    // A new commit is a new tree, read fresh.
+    await store.commit([{ path: "a.json", content: "3" }], "second");
+    expect(await store.read("a.json")).toBe("3");
+  });
 });
