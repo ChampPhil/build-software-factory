@@ -841,6 +841,51 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
+/**
+ * The dashboard's health line, from what can be read. The rollup used to
+ * write fixed values — including an enforcement the schema does not allow,
+ * which failed every rollup — and a guess is worse than a blank.
+ */
+async function measuredHealth(gh: GitHub, cfg: FactoryConfig): Promise<{
+  gardening_schedule_active?: boolean;
+  last_review?: string;
+  sandbox_profile?: string;
+  enforcement?: "branch_protection" | "audit";
+}> {
+  const out: { gardening_schedule_active?: boolean; last_review?: string; sandbox_profile?: string; enforcement?: "branch_protection" | "audit" } = {};
+  out.sandbox_profile = cfg.sandbox?.agent_runtime === "docker-sudo-iptables" ? "docker-sudo-iptables" : "docker";
+  try {
+    const { FactoryStore } = await import("./lib/store.js");
+    const reviews = (await new FactoryStore(gh).data.list("reviews/"))
+      .map((p) => /^reviews\/(\d{4})-(\d{2})-(\d{2})\.json$/.exec(p))
+      .filter((m): m is RegExpExecArray => m !== null)
+      .map((m) => `rev_${m[1]}${m[2]}${m[3]}`)
+      .sort();
+    const last = reviews.at(-1);
+    if (last !== undefined) out.last_review = last;
+  } catch {
+    /* unreadable: leave it out */
+  }
+  try {
+    // The branch endpoint carries the protection summary with only contents
+    // access, which the rollup's token has; the protection endpoint needs admin.
+    const b = await gh.get<{ protected?: boolean; protection?: { required_status_checks?: { contexts?: string[] } } }>(
+      `repos/${gh.repo}/branches/${await gh.defaultBranch()}`,
+    );
+    const contexts = b.protection?.required_status_checks?.contexts ?? [];
+    out.enforcement = b.protected === true && contexts.includes(GATES_CHECK) ? "branch_protection" : "audit";
+  } catch {
+    /* unreadable: leave it out */
+  }
+  try {
+    const garden = readFileSync(join(process.env["GITHUB_WORKSPACE"] ?? process.cwd(), ".github/workflows/factory-garden.yml"), "utf8");
+    out.gardening_schedule_active = /^\s*schedule:/m.test(garden) && cfg.pipelines?.["gardening"]?.max_prs_per_run !== 0;
+  } catch {
+    /* no workflow in this checkout: leave it out */
+  }
+  return out;
+}
+
 /** How many runs are in flight, from the live refs' files, after ending the ones that are not. */
 async function runningRuns(gh: GitHub): Promise<number> {
   const { reapStaleRuns } = await import("./commands/run-lifecycle.js");
@@ -937,12 +982,14 @@ async function runCommand(second: string | undefined, args: Args, third?: string
     // factory-run's first step would have died on a usage error.
     const workItemId = third;
     let pipeline = typeof args["pipeline"] === "string" ? args["pipeline"] : undefined;
+    let hasSpec = true;
     if (pipeline === undefined && typeof workItemId === "string") {
       const { FactoryStore, workItemPath } = await import("./lib/store.js");
       const store = new FactoryStore(new GitHub({ repo: requireRepo() }));
-      const item = await store.get<{ pipeline: string }>(workItemPath(workItemId), "work-item");
+      const item = await store.get<{ pipeline: string; spec?: unknown }>(workItemPath(workItemId), "work-item");
       if (item === null) die(`${workItemId} is not on the data ref`);
       pipeline = item.pipeline;
+      hasSpec = item.spec !== null && item.spec !== undefined;
     }
     if (pipeline === undefined) die("usage: bsf run plan WORK_ITEM [--attempt N] | --pipeline P");
     const attempt = typeof args["attempt"] === "string" ? Number(args["attempt"]) : 1;
@@ -954,6 +1001,16 @@ async function runCommand(second: string | undefined, args: Args, third?: string
       ...(args["revision"] === true ? { revision: true } : {}),
     });
 
+    // A retry repeats only the build, because the spec is already on the
+    // item. When it is not — the spec step itself is what failed — the retry
+    // has to start where the last attempt stopped, or the builder runs with
+    // no plan at all, which is what happened on attempts 2 and 3 on ts-webapp.
+    let roles = plan.roles;
+    if (!hasSpec && plan.attempt > 1 && !plan.escalate) {
+      const first = planRun({ pipeline: pipeline as Parameters<typeof planRun>[0]["pipeline"], attempt: 1, maxAttempts: cfg.limits?.retry_cap ?? 3 });
+      if (first.roles.includes("spec")) roles = first.roles;
+    }
+
     // gh-aw's protected-file policy for this pipeline's safe outputs.
     let protectedFilesPolicy = "request-review";
     try {
@@ -963,18 +1020,18 @@ async function runCommand(second: string | undefined, args: Args, third?: string
       /* no policy in this checkout: keep the safe default */
     }
 
-    process.stdout.write(`${plan.reason}\nroles: ${plan.roles.join(" -> ") || "(none)"}\n`);
+    process.stdout.write(`${plan.reason}\nroles: ${roles.join(" -> ") || "(none)"}\n`);
     setOutput("pipeline", pipeline);
-    setOutput("roles", plan.roles.join(","));
-    setOutput("needs_triage", String(plan.roles.includes("triage")));
-    setOutput("needs_hardener", String(plan.roles.includes("hardener")));
-    setOutput("needs_gardener", String(plan.roles.includes("gardener")));
-    setOutput("needs_spec", String(plan.roles.includes("spec")));
+    setOutput("roles", roles.join(","));
+    setOutput("needs_triage", String(roles.includes("triage")));
+    setOutput("needs_hardener", String(roles.includes("hardener")));
+    setOutput("needs_gardener", String(roles.includes("gardener")));
+    setOutput("needs_spec", String(roles.includes("spec")));
     setOutput("protected_files_policy", protectedFilesPolicy);
     setOutput("proceed", String(!plan.escalate));
     setOutput("escalate", String(plan.escalate));
     setOutput("attempt", String(plan.attempt));
-    setOutput("first_step", plan.roles[0] === "verifier" ? "verifier" : (plan.roles[0] ?? "builder"));
+    setOutput("first_step", roles[0] === "verifier" ? "verifier" : (roles[0] ?? "builder"));
     // Escalation is an outcome, not a crash: the jobs downstream read
     // `proceed`, and failing this job would bury the reason under red.
     return 0;
@@ -1091,13 +1148,7 @@ async function rollupCommand(args: Args): Promise<number> {
       coverage_floor_pct: coverage.floor_pct,
       candidates_pending: 0,
     },
-    health: {
-      gardening_schedule_active: true,
-      last_review: null,
-      lock_files_current: true,
-      sandbox_profile: cfg.sandbox?.agent_runtime ?? "docker",
-      enforcement: "deterministic",
-    },
+    health: await measuredHealth(gh, cfg),
     ...(args["plan"] === true ? { plan: true } : {}),
   });
 
@@ -1789,7 +1840,31 @@ async function specCheckCommand(args: Args): Promise<number> {
     process.stderr.write(`${file} is not JSON: ${(e as Error).message}\n`);
     return 1;
   }
-  const problems = specProblems({ ...(await specGate(args)), spec });
+  // The shape first: write-spec stores the spec on the work item, whose
+  // schema allows exactly the documented fields. An agent that passed the
+  // gate but added a field lost the run at the store step.
+  const { validate } = await import("./lib/schema.js");
+  const stub = {
+    schema: "work-item/1",
+    id: "wi_00000000000000000000000000",
+    created_at: "2000-01-01T00:00:00Z",
+    source: { kind: "dashboard", actor: "check" },
+    trigger_class: "request",
+    pipeline: "product_work",
+    title: "check",
+    body: "",
+    priority: "normal",
+    fingerprint: `sha256:${"0".repeat(64)}`,
+    status: "running",
+    runs: [],
+    pr: null,
+    parent: null,
+    related: [],
+    spec,
+  };
+  const shape = validate("work-item", stub);
+  const shapeProblems = shape.ok ? [] : shape.errors.filter((e) => e.path.startsWith("/spec") && !/must be null|must match exactly one schema/.test(e.message)).map((e) => `${e.path}: ${e.message}`);
+  const problems = [...shapeProblems, ...specProblems({ ...(await specGate(args)), spec })];
   if (problems.length === 0) {
     process.stdout.write("the spec passes the gate\n");
     return 0;

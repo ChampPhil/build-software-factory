@@ -31,12 +31,13 @@ export interface RollupOptions {
     readonly coverage_floor_pct: number;
     readonly candidates_pending: number;
   };
+  /** Only what was measured: a field the rollup cannot know is left out, not guessed. */
   readonly health: {
-    readonly gardening_schedule_active: boolean;
-    readonly last_review: string | null;
-    readonly lock_files_current: boolean;
-    readonly sandbox_profile: string;
-    readonly enforcement: string;
+    readonly gardening_schedule_active?: boolean;
+    readonly last_review?: string;
+    readonly lock_files_current?: boolean;
+    readonly sandbox_profile?: string;
+    readonly enforcement?: "branch_protection" | "audit";
   };
   readonly runWorkflow?: string;
   readonly ref?: string;
