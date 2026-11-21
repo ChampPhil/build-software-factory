@@ -35,7 +35,8 @@ GitHub Actions, so they need no Docker and no toolchain.
 
 **Later, what they can say whenever they like:** `/practice <anything>` as a
 comment on any issue or PR adds a standing instruction every agent follows,
-through a PR they approve.
+through a PR they approve. When the factory stops on something and says so,
+`/retry` on that issue or PR hands it back once they have done what it needed.
 
 ## Before you start
 

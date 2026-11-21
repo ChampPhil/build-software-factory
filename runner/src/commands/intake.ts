@@ -16,7 +16,9 @@ export type EventKind =
   | "ci_failure_on_main" | "dashboard_dispatch" | "schedule_gardening"
   | "review_routed" | "conflict_detected" | "correction"
   /** `/practice …` from a trusted person: a standing instruction for every agent. */
-  | "practice_declared";
+  | "practice_declared"
+  /** `/retry` from a trusted person: an escalated item goes back in the queue. */
+  | "retry_requested";
 
 export interface IncomingEvent {
   /** Monotonic per-repo event id. The cursor is the highest id processed. */
@@ -36,6 +38,8 @@ export interface IncomingEvent {
   /** Set for events that belong to an existing run, such as a review comment. */
   readonly pr?: number;
   readonly touched_area?: string;
+  /** The work item a `/retry` names, when it names one (a dispatch has no issue to find it by). */
+  readonly target_item?: string;
 }
 
 export interface WorkItemDraft {
@@ -76,7 +80,9 @@ export interface IntakeDecision {
     | "ignored_bot"
     | "context_for_open_item"
     | "answers_open_item"
-    | "admits_open_item";
+    | "admits_open_item"
+    | "retries_open_item"
+    | "ignored_untrusted_retry";
   readonly reason: string;
   /** The open item an answer or an admission applies to. */
   readonly openItem?: string;
@@ -96,6 +102,8 @@ export interface LedgerOpenItem {
   readonly fingerprint?: string;
   /** The issue or PR the item came from (`#N`), so a later comment there finds it. */
   readonly source_ref?: string | null;
+  /** The item's PR, so a comment on the PR finds it too. */
+  readonly pr?: number | null;
   readonly status: string;
   readonly pipeline: Pipeline;
 }
@@ -128,6 +136,7 @@ const ROUTE: Readonly<Record<EventKind, { pipeline: Pipeline; cls: TriggerClass;
   correction: { pipeline: "hardening", cls: "self" },
   // A practice changes what every agent reads, which is the definition.
   practice_declared: { pipeline: "definition", cls: "request" },
+  retry_requested: { pipeline: "product_work", cls: "request" },
   schedule_gardening: { pipeline: "gardening", cls: "scheduled" },
   review_routed: { pipeline: "hardening", cls: "self" },
   conflict_detected: { pipeline: "conflict", cls: "dev_event" },
@@ -258,6 +267,37 @@ function decide(event: IncomingEvent, ctx: IntakeContext): IntakeDecision {
 
   const accepted = (event.labels ?? []).includes(ctx.policy.trust.accept_label);
 
+  // `/retry` hands an item that stopped back to the factory. Only a trusted
+  // person can, and only an item that stopped: escalated, or waiting on a
+  // question. It never creates an item.
+  if (event.kind === "retry_requested") {
+    if (!trusted) {
+      return { event, workItem: null, outcome: "ignored_untrusted_retry", reason: `${event.actor} is not trusted to retry work`, duplicateShortlist: [] };
+    }
+    const prNum = /^#(\d+)$/.exec(event.ref ?? "")?.[1];
+    const open = ctx.openItems.find(
+      (o) =>
+        (event.target_item !== undefined && o.work_item === event.target_item) ||
+        (event.ref != null && o.source_ref === event.ref) ||
+        (prNum !== undefined && o.pr === Number(prNum)),
+    );
+    if (open === undefined) {
+      return { event, workItem: null, outcome: "context_for_open_item", reason: "/retry names no open work item", duplicateShortlist: [] };
+    }
+    if (open.status !== "escalated" && open.status !== "needs_info") {
+      return {
+        event, workItem: null, outcome: "context_for_open_item", openItem: open.work_item,
+        reason: `${open.work_item} is ${open.status}, not stopped, so there is nothing to retry`,
+        duplicateShortlist: [],
+      };
+    }
+    return {
+      event, workItem: null, outcome: "retries_open_item", openItem: open.work_item,
+      reason: `${event.actor} asked to retry ${open.work_item}`,
+      duplicateShortlist: [],
+    };
+  }
+
   // A comment or label on an issue that already has an open item belongs to
   // that item. It answers a question triage asked, admits an item that was
   // waiting for trust, or is conversation — never a second item for the
@@ -357,6 +397,7 @@ export function sourceKind(kind: EventKind): string {
     case "conflict_detected": return "conflict";
     case "correction": return "correction";
     case "practice_declared": return "practice";
+    case "retry_requested": return "dashboard";
   }
 }
 

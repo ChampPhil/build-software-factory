@@ -304,7 +304,9 @@ export async function finishRun(opts: FinishRunOptions): Promise<AfterGatesRepor
     if (target !== null) {
       await opts.gh
         .send("POST", `repos/${opts.gh.repo}/issues/${target}/comments`, {
-          body: `The factory stopped on this and needs a person: ${report.reason}.`,
+          body:
+            `The factory stopped on this and needs a person: ${report.reason}.\n\n` +
+            `Fix what it needs (or push to the PR yourself), then comment \`/retry\` here to hand it back.`,
         })
         .catch(() => undefined);
     }

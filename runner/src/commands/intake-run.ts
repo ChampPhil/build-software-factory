@@ -103,6 +103,18 @@ export function normalizeEvent(
   if ((eventName === "issue_comment" || eventName === "pull_request_review_comment") && payload.comment !== undefined) {
     if (payload.action !== "created") return null;
     const onPr = payload.pull_request !== undefined || eventName === "pull_request_review_comment";
+    if (retryRequested(payload.comment.body)) {
+      return {
+        id,
+        kind: "retry_requested",
+        at: payload.comment.created_at ?? now,
+        actor: payload.comment.user?.login ?? "unknown",
+        actor_association: assoc(payload.comment.author_association),
+        actor_is_bot: payload.comment.user?.type === "Bot",
+        ref: `#${payload.pull_request?.number ?? payload.issue?.number ?? 0}`,
+        ...(payload.pull_request === undefined ? {} : { from_fork: isFork(payload.pull_request) }),
+      };
+    }
     const practice = practiceText(payload.comment.body);
     if (practice !== null) {
       // Wherever someone already is — an issue, a PR, a review thread — a
@@ -156,7 +168,17 @@ export function normalizeEvent(
   if (eventName === "workflow_dispatch") {
     const inputs = payload.inputs ?? {};
     const kindInput = inputs["kind"] as EventKind | undefined;
-    const practice = practiceText(typeof inputs["title"] === "string" ? inputs["title"] : undefined);
+    const title = typeof inputs["title"] === "string" ? inputs["title"] : undefined;
+    const retryOf = /^\s*\/retry\s+(wi_[0-9A-HJKMNP-TV-Z]{26})\s*$/.exec(title ?? "")?.[1];
+    if (retryOf !== undefined) {
+      return {
+        id, kind: "retry_requested", at: now,
+        actor: payload.sender?.login ?? "unknown",
+        actor_association: "COLLABORATOR",
+        target_item: retryOf,
+      };
+    }
+    const practice = practiceText(title);
     if (practice !== null) {
       return {
         id, kind: "practice_declared", at: now,
@@ -181,6 +203,11 @@ export function normalizeEvent(
   }
 
   return null;
+}
+
+/** Whether a comment is `/retry` (optionally followed by a reason). */
+export function retryRequested(body: string | null | undefined): boolean {
+  return body != null && /^\s*\/retry(\s|$)/.test(body);
 }
 
 /**
@@ -237,6 +264,7 @@ export async function runIntakeCommand(opts: IntakeRunOptions): Promise<IntakeRu
     pipeline: o.pipeline as LedgerOpenItem["pipeline"],
     ...(o.fingerprint === undefined ? {} : { fingerprint: o.fingerprint }),
     ...(o.source_ref === undefined ? {} : { source_ref: o.source_ref }),
+    ...(o.pr === undefined ? {} : { pr: o.pr }),
   }));
 
   const result = runIntake(queued, {
@@ -263,7 +291,7 @@ export async function runIntakeCommand(opts: IntakeRunOptions): Promise<IntakeRu
   // Answers and admissions put an existing item back in the queue.
   const requeued = new Map<string, string>();
   for (const d of result.decisions) {
-    if ((d.outcome !== "answers_open_item" && d.outcome !== "admits_open_item") || d.openItem === undefined) continue;
+    if ((d.outcome !== "answers_open_item" && d.outcome !== "admits_open_item" && d.outcome !== "retries_open_item") || d.openItem === undefined) continue;
     const doc = await store.get<{ status: string; body: string } & Record<string, unknown>>(workItemPath(d.openItem), "work-item");
     if (doc === null) continue;
     const body =

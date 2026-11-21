@@ -312,3 +312,21 @@ describe("bots", () => {
     expect(d?.outcome).toBe("ignored_bot");
   });
 });
+
+describe("/retry", () => {
+  const open = (status: string) =>
+    ctx({ openItems: [{ work_item: "wi_01M7XHGA7F5CNWC3BD3BSP0WYW", status, pipeline: "product_work", source_ref: "#142", pr: 17 }] });
+
+  it("a trusted /retry on the item's issue or PR puts an escalated item back in the queue", () => {
+    expect(runIntake([ev({ kind: "retry_requested", ref: "#142" })], open("escalated")).decisions[0]).toMatchObject({ outcome: "retries_open_item" });
+    expect(runIntake([ev({ kind: "retry_requested", ref: "#17" })], open("escalated")).decisions[0]?.outcome).toBe("retries_open_item");
+    expect(
+      runIntake([ev({ kind: "retry_requested", ref: undefined, target_item: "wi_01M7XHGA7F5CNWC3BD3BSP0WYW" })], open("escalated")).decisions[0]?.outcome,
+    ).toBe("retries_open_item");
+  });
+
+  it("does nothing to an item that has not stopped, and never for an untrusted person", () => {
+    expect(runIntake([ev({ kind: "retry_requested" })], open("running")).decisions[0]?.outcome).toBe("context_for_open_item");
+    expect(runIntake([ev({ kind: "retry_requested", actor: "stranger", actor_association: "NONE" })], open("escalated")).decisions[0]?.outcome).toBe("ignored_untrusted_retry");
+  });
+});
