@@ -547,3 +547,74 @@ export function runRecord(input: {
     escalated: outcome === "escalated",
   };
 }
+
+/* -------------------------------------------------------------- PR closed */
+
+export interface PrClosedReport {
+  readonly workItem: string | null;
+  readonly status: "merged" | "rejected" | "no_item";
+  readonly runsUpdated: readonly string[];
+}
+
+/**
+ * A factory PR closed: its work item is done. Merged makes it `merged`, with
+ * the time, which is what the metrics count and what lets anything waiting on
+ * the change (a sandbox report, a gardening item on the same files) go ahead.
+ * Closed without merging makes it `rejected`. The item's runs that ended at
+ * the PR take the same outcome. Nothing else marks an item finished, so an
+ * item left `in_review` after its PR closed would block those forever.
+ */
+export async function prClosed(opts: {
+  readonly gh: GitHub;
+  readonly pr: number;
+  readonly merged: boolean;
+  readonly now: string;
+}): Promise<PrClosedReport> {
+  const store = new FactoryStore(opts.gh);
+  const ledger = await store.ledger(opts.now);
+  const id =
+    ledger.open.find((o) => o.pr === opts.pr)?.work_item ??
+    ledger.merge_queue.find((q) => q.pr === opts.pr)?.work_item ??
+    null;
+  if (id === null) return { workItem: null, status: "no_item", runsUpdated: [] };
+  const item = await store.get<WorkItemDoc & { merged_at?: string; closed_at?: string }>(workItemPath(id), "work-item");
+  if (item === null) return { workItem: id, status: "no_item", runsUpdated: [] };
+
+  const status = opts.merged ? "merged" : "rejected";
+  const nextItem = {
+    ...item,
+    status,
+    pr: opts.pr,
+    ...(opts.merged ? { merged_at: opts.now } : { closed_at: opts.now }),
+  };
+  const changes: { path: string; content: string }[] = [{ path: workItemPath(id), content: json(nextItem) }];
+
+  const runsUpdated: string[] = [];
+  for (const runId of item.runs ?? []) {
+    const run = await store.get<{ outcome?: string; pr?: number | null }>(runPath(runId), "run");
+    if (run === null || run.outcome !== "draft_pr") continue;
+    changes.push({ path: runPath(runId), content: json({ ...run, outcome: opts.merged ? "merged" : "rejected" }) });
+    runsUpdated.push(runId);
+  }
+
+  const entry = ledger.open.find((o) => o.work_item === id);
+  const nextLedger: Ledger = {
+    ...ledger,
+    updated_at: opts.now,
+    open: ledger.open.filter((o) => o.work_item !== id),
+    recent: [
+      ...ledger.recent.filter((r) => r.work_item !== id),
+      {
+        work_item: id,
+        status,
+        ...(opts.merged ? { merged_at: opts.now } : {}),
+        ...(entry?.fingerprint === undefined ? {} : { fingerprint: entry.fingerprint }),
+        pr: opts.pr,
+      },
+    ],
+    merge_queue: ledger.merge_queue.filter((q) => q.pr !== opts.pr),
+  };
+  changes.push({ path: LEDGER, content: json(nextLedger) });
+  await store.put(changes, `PR #${opts.pr} ${opts.merged ? "merged" : "closed"}: ${id} ${status}`);
+  return { workItem: id, status, runsUpdated };
+}

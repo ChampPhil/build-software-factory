@@ -169,6 +169,7 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
   bsf write-triage WORK_ITEM --from PATH
   bsf guardrails record [--out PATH]
   bsf run status WORK_ITEM
+  bsf run closed --pr N --merged true|false
   bsf spec check --file PATH [--pipeline P]
   bsf sandbox report --from PATH [--work-item ID]
       Store the spec role's plan and acceptance checks on the work item.
@@ -1097,6 +1098,30 @@ async function runCommand(second: string | undefined, args: Args, third?: string
     setOutput("first_step", roles[0] === "verifier" ? "verifier" : (roles[0] ?? "builder"));
     // Escalation is an outcome, not a crash: the jobs downstream read
     // `proceed`, and failing this job would bury the reason under red.
+    return 0;
+  }
+
+  if (second === "closed") {
+    // `bsf run closed --pr N --merged true|false`: a factory PR closed, so
+    // its work item is done. Then anything that waited on it may go.
+    const pr = Number(args["pr"]);
+    if (!Number.isInteger(pr) || pr <= 0) die("usage: bsf run closed --pr N --merged true|false");
+    const merged = args["merged"] === "true" || args["merged"] === true;
+    const gh = new GitHub({ repo: requireRepo() });
+    const { prClosed } = await import("./commands/run-lifecycle.js");
+    const now = nowIso();
+    const r = await prClosed({ gh, pr, merged, now });
+    process.stdout.write(
+      r.workItem === null
+        ? `PR #${pr} is not a factory work item's; nothing to record\n`
+        : `PR #${pr} ${merged ? "merged" : "closed"}: ${r.workItem} is ${r.status}` +
+            (r.runsUpdated.length > 0 ? `; run(s) ${r.runsUpdated.join(", ")} updated` : "") + "\n",
+    );
+    const { FactoryStore } = await import("./lib/store.js");
+    const { sweepReports } = await import("./commands/sandbox-reports.js");
+    const store = new FactoryStore(gh);
+    const sweep = await sweepReports({ gh, store, ledger: await store.ledger(now), now });
+    process.stdout.write(`${sweep.why}\n`);
     return 0;
   }
 

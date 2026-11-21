@@ -35,7 +35,7 @@ vi.mock("../src/lib/store.js", async (orig) => {
   return { ...real, FactoryStore };
 });
 
-const { startRun, finishRun, gateVerdicts, gateFailuresPath, reapStaleRuns } = await import("../src/commands/run-lifecycle.js");
+const { startRun, finishRun, gateVerdicts, gateFailuresPath, reapStaleRuns, prClosed } = await import("../src/commands/run-lifecycle.js");
 
 const WI = "wi_01M7XHGA7F5CNWC3BD3BSP0WYW";
 const RUN = "run_01M7XHGA7F5CNWC3BD3BSP0WYX";
@@ -234,5 +234,44 @@ describe("reapStaleRuns", () => {
     files.set(`live/${RUN}.json`, JSON.stringify({ run: RUN, work_item: WI, started_at: "2026-11-20T00:00:00Z" }));
     expect((await reapStaleRuns(ghWithRun("completed"), "2026-11-20T01:00:00Z")).reaped).toEqual([]);
     expect((await reapStaleRuns(ghWithRun("completed"), "2026-11-20T07:00:00Z")).reaped).toHaveLength(1);
+  });
+});
+
+describe("prClosed", () => {
+  const cleared = async () => {
+    files.set(`work-items/${WI}.json`, JSON.stringify({ ...item("running"), runs: [RUN] }));
+    files.set(`live/${RUN}.json`, "{}");
+    const { gh } = fakeGh([[{ name: "factory/gates", status: "completed", conclusion: "success" }]]);
+    await finishRun({ ...base, gh, attempt: 1, pr: 5 });
+    return gh;
+  };
+
+  it("marks a merged PR's item merged, moves it to recent, and the run's outcome with it", async () => {
+    // Nothing did this before: java-service and py-api PRs merged and their
+    // items stayed in_review, so no metric ever counted a merge.
+    const gh = await cleared();
+    const r = await prClosed({ gh, pr: 5, merged: true, now: "2026-11-21T00:00:00Z" });
+    expect(r.status).toBe("merged");
+    const wi = JSON.parse(files.get(`work-items/${WI}.json`)!);
+    expect(wi.status).toBe("merged");
+    expect(wi.merged_at).toBe("2026-11-21T00:00:00Z");
+    expect(JSON.parse(files.get(`runs/${RUN}.json`)!).outcome).toBe("merged");
+    const ledger = JSON.parse(files.get("ledger.json")!);
+    expect(ledger.open.some((o: { work_item: string }) => o.work_item === WI)).toBe(false);
+    expect(ledger.recent).toContainEqual(expect.objectContaining({ work_item: WI, status: "merged", pr: 5 }));
+  });
+
+  it("marks an item rejected when its PR closes without merging", async () => {
+    const gh = await cleared();
+    await prClosed({ gh, pr: 5, merged: false, now: "2026-11-21T00:00:00Z" });
+    const wi = JSON.parse(files.get(`work-items/${WI}.json`)!);
+    expect(wi.status).toBe("rejected");
+    expect(wi.closed_at).toBe("2026-11-21T00:00:00Z");
+    expect(JSON.parse(files.get(`runs/${RUN}.json`)!).outcome).toBe("rejected");
+  });
+
+  it("does nothing for a PR no work item owns", async () => {
+    const { gh } = fakeGh([]);
+    expect((await prClosed({ gh, pr: 99, merged: true, now: "2026-11-21T00:00:00Z" })).status).toBe("no_item");
   });
 });

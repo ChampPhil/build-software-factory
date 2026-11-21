@@ -37,6 +37,7 @@ export interface WorkItemSummary {
   readonly priority: "high" | "normal";
   readonly created_at: string;
   readonly merged_at?: string;
+  readonly closed_at?: string;
   readonly fingerprint?: string;
   readonly pr?: number | null;
   readonly fixes?: readonly string[];
@@ -139,9 +140,12 @@ export function runRollup(input: RollupInput): RollupResult {
   cycleTimes.sort((a, b) => a - b);
 
   const openItems = input.workItems.filter((i) => OPEN_STATUSES.has(i.status));
-  const recentItems = input.workItems.filter(
-    (i) => i.merged_at !== undefined && withinWindow(i.merged_at, input.now, 30),
-  );
+  // Recent: merged, or closed without merging, in the last 30 days. A closed
+  // one stays visible so what waited on it (a sandbox report) can see it ended.
+  const recentItems = input.workItems.filter((i) => {
+    const at = i.merged_at ?? i.closed_at;
+    return at !== undefined && !OPEN_STATUSES.has(i.status) && withinWindow(at, input.now, 30);
+  });
 
   // Dispatch queued items when slots are free. This is the backstop that keeps
   // a cancelled run from stalling the queue.
