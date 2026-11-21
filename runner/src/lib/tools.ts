@@ -144,10 +144,23 @@ interface RuffFinding {
   location?: { row?: number };
 }
 
+/**
+ * A tool as the repo installed it, where it did: a project's own linter lives
+ * in its virtualenv or node_modules, not on the runner's PATH, and a gate that
+ * looks only on PATH reports the tool missing on every PR.
+ */
+export function localTool(root: string, name: string): string {
+  for (const dir of [".venv/bin", "venv/bin", "node_modules/.bin"]) {
+    const p = join(root, dir, name);
+    if (existsSync(p)) return p;
+  }
+  return name;
+}
+
 export async function runRuff(root: string, paths: readonly string[] = ["."]): Promise<ToolRunResult> {
   let stdout: string;
   try {
-    const res = await exec("ruff", ["check", "--no-cache", "--output-format", "json", ...paths], {
+    const res = await exec(localTool(root, "ruff"), ["check", "--no-cache", "--output-format", "json", ...paths], {
       cwd: root, encoding: "utf8", maxBuffer: 128 * 1024 * 1024,
     });
     stdout = String(res.stdout);
@@ -256,7 +269,14 @@ export async function runGoVet(root: string): Promise<ToolRunResult> {
 
 /** RuboCop, for Ruby. */
 export async function runRubocop(root: string): Promise<ToolRunResult> {
-  const r = await capture("rubocop", ["--format", "json", "--force-exclusion"], root, (o) => o.trim().startsWith("{"));
+  // Through bundler where the repo has a Gemfile: its rubocop, at its version.
+  const viaBundle = existsSync(join(root, "Gemfile"));
+  const r = await capture(
+    viaBundle ? "bundle" : "rubocop",
+    [...(viaBundle ? ["exec", "rubocop"] : []), "--format", "json", "--force-exclusion"],
+    root,
+    (o) => o.trim().startsWith("{"),
+  );
   if ("unavailable" in r) return { tool: "rubocop", counts: {}, findings: [], unavailable: true, detail: r.unavailable };
   const doc = JSON.parse(r.stdout) as { files?: { path?: string; offenses?: { cop_name?: string; message?: string; location?: { line?: number } }[] }[] };
   const counts: Record<string, Record<string, number>> = {};
