@@ -1,3 +1,4 @@
+import { requestRebuild } from "./conflicts.js";
 import type { GitHub, PullResponse } from "../lib/github.js";
 import { FactoryStore, LEDGER, runPath, workItemPath, json } from "../lib/store.js";
 import { fetchInteractions } from "./interactions.js";
@@ -92,7 +93,7 @@ export async function runMergeCommand(opts: MergeOptions): Promise<MergeReport> 
         labels: pr.labels.map((l) => l.name),
         changed_files: [],
         draft: pr.draft,
-        reviews: await trustedReviews(opts.gh, reviews, opts.policy.trust.associations),
+        reviews: await trustedReviews(opts.gh, reviews, opts.policy.trust.associations, { pr: pr.number, headSha: pr.head.sha, base: pr.base.ref }),
         ...(pipeline === undefined ? {} : { pipeline }),
       },
       appLogins: opts.appLogins ?? [],
@@ -217,11 +218,8 @@ async function apply(
     case "resolve_conflict":
       // The conflict pipeline rebases and re-clears; dispatching it here is
       // what makes a conflicting PR recover without anyone watching.
-      await opts.gh.dispatchWorkflow("factory-run.yml", undefined, {
-        work_item: head.work_item,
-        reason: "conflict",
-      });
-      return `dispatched a resolution run for #${action.pr}`;
+      await requestRebuild(opts.gh, head.work_item);
+      return `started a rebuild of #${action.pr} on main`;
 
     case "update_from_main":
       await opts.gh.send("PUT", `repos/${repo}/pulls/${action.pr}/update-branch`, {
@@ -229,9 +227,17 @@ async function apply(
       });
       return `updated #${action.pr} from main`;
 
-    case "recheck":
-      await opts.gh.dispatchWorkflow("factory-gates.yml", undefined, { pr: String(action.pr) });
+    case "recheck": {
+      // factory-gates runs on pull_request only, so it cannot be dispatched:
+      // re-run its last run on this head instead.
+      const runs = await opts.gh.get<{ workflow_runs: { id: number }[] }>(
+        `repos/${repo}/actions/workflows/factory-gates.yml/runs?head_sha=${head.head_sha}&per_page=1`,
+      );
+      const last = runs.workflow_runs[0];
+      if (last === undefined) return `no gates run on #${action.pr}'s head to re-run`;
+      await opts.gh.send("POST", `repos/${repo}/actions/runs/${last.id}/rerun`, {});
       return `re-ran the gates on #${action.pr}`;
+    }
 
     case "merge": {
       if (opts.nativeQueue) {

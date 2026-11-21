@@ -115,7 +115,7 @@ Fifteen deterministic workflows run the factory, each a thin trigger file that c
 | `factory-gates` | Every PR and every push to it (the factory's own PRs included); `merge_group` (native merge queue) | `bsf gates` | Agent branches: static rules, ratchets, weakening check, coverage, tests, runtime verification. A commit that only merges main into the branch (the queue's update) re-runs static rules and tests, and agent verification only if main's incoming changes touch the PR's feature folders. Human PRs: the deterministic gates only (agent verification when labeled `factory:verify`). Each gate's result is its check run on the PR's head commit (not the merge commit Actions checks out), so a passed gate is never repeated for the same commit; the final job always reports `factory/gates`, the one check branch protection requires. The runner, the definition and the sandbox manifest a gate uses come from the default branch, never from the change |
 | `factory-merge` | PR approved, a factory check completed, a PR becoming eligible for auto-merge; a PR closing | `bsf merge-queue`, `bsf run closed` | Where the repo has GitHub's native merge queue: enables auto-merge so GitHub queues the PR. Elsewhere: the factory's fallback queue; one job works through the whole queue, then exits. When a PR closes, its work item becomes `merged` (with `merged_at`; its runs' outcome too) or `rejected`, and waiting sandbox reports are swept |
 | `factory-drop` | `workflow_dispatch` by an owner | `bsf run drop` | Takes work back: each named work item becomes `rejected`, its live run is cancelled and its PR closed with the reason |
-| `factory-conflicts` | Push to main | `bsf conflicts` | Finds open factory PRs that became conflicting and dispatches a resolution run |
+| `factory-conflicts` | Push to main; the "Rebuild on main" button on a `factory/conflicts` check | `bsf conflicts scan`, `bsf conflicts button` | Finds open factory PRs that became conflicting, starts a rebuild for each (`factory-run`, reason `conflict`) and puts a grey `factory/conflicts` check with a "Rebuild on main" button on the PR |
 | `factory-garden` | Nightly schedule | `bsf budget check`, the gardener role | Runs the gardener agent once: it reads the drift (`bsf garden-scan`) and its picks become gardening work items (`bsf garden-file`), at most `max_prs_per_run`, none overlapping another pick's or an open gardening item's files. Each item then runs builder and verifier in `factory-run`; the gardener does not run again per item |
 | `factory-review` | Daily schedule; runs only when its thresholds say so | `bsf review` | The scheduled self-improvement review (every 3 days, early at 50 runs, skipped under 10) |
 | `factory-rollup` | Called as the last step of every factory workflow; a daily sweep as backstop | `bsf rollup` | Updates `index.json` and `ledger.json` on `factory-data`; dispatches queued work items when concurrency slots are free (so a crashed run can't stall the queue); monthly, squashes `factory-media` |
@@ -270,10 +270,10 @@ Every factory PR reaches main through a merge queue that re-checks it against th
 4. Gates pass → mark ready for review, squash-merge. Gates fail → remove from the queue and send it back to its pipeline as a gate failure (counts toward the retry cap).
 5. Update fails with a conflict → remove from the queue and dispatch a conflict resolution run.
 
-**Conflict resolution run** (also started by `factory-conflicts` whenever a push to main makes an open factory PR conflict):
+**Conflict rebuild** (started by `factory-conflicts` whenever a push to main makes an open factory PR conflict, by the merge queue when updating a PR from main conflicts, and by the check's button):
 
-1. Rebase the PR branch onto main.
-2. The builder resolves each conflict using both sides' intent: the PR's spec and the description of the change that landed on main.
-3. The result goes through the full factory-clear loop again.
-4. Approval resets: back to a human, or automatic if auto-merge is on.
-5. If the two intents contradict, escalate to a human with both specs side by side.
+1. The builder makes the same change again on the current main, from the old PR's diff and what main has since done to the same files (`bsf conflicts context`). It opens as a new PR; the old one is closed with a pointer to it and kept on the work item as `previous_prs`.
+2. Rebuilding, rather than merging main into the branch, means the App never pushes main's workflow changes, so it never needs the `workflows` permission.
+3. The new PR goes through the gates like any change.
+4. A person's approval on the old PR carries to the new one when the rebuilt change touches the same files, adds exactly the lines the approved change added, and removes only lines it removed. Anything else — an extra line, a dropped change from main, a file GitHub will not diff — asks for approval again.
+5. A rebuild that cannot finish escalates like any run, and the button on the PR's `factory/conflicts` check starts it again.

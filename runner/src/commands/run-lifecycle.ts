@@ -24,6 +24,7 @@ interface WorkItemDoc {
   readonly status: string;
   readonly runs?: readonly string[];
   readonly pr?: number | null;
+  readonly previous_prs?: readonly number[];
   readonly source?: { readonly ref?: string | null };
   readonly [k: string]: unknown;
 }
@@ -60,6 +61,8 @@ export async function startRun(opts: {
   readonly runId?: string;
   /** GITHUB_RUN_ID, so the reaper can ask Actions whether the run is still going. */
   readonly actionsRun?: number;
+  /** "conflict": rebuild an item whose PR conflicts with main. */
+  readonly reason?: string;
 }): Promise<StartRunReport> {
   const store = new FactoryStore(opts.gh);
   const item = await store.get<WorkItemDoc>(workItemPath(opts.workItem), "work-item");
@@ -68,7 +71,12 @@ export async function startRun(opts: {
   // Attempt 1 claims a queued item; a retry continues one already running.
   // Anything else means another run or a person has it, and two dispatches of
   // the same item (an intake racing a rollup) must not both start.
-  const claimable = opts.attempt === 1 ? item.status === "queued" : item.status === "running";
+  // A conflict rebuild starts from an item that already has its PR: waiting
+  // for review, or escalated because an earlier rebuild could not finish.
+  const claimable =
+    opts.reason === "conflict"
+      ? opts.attempt === 1 && (item.status === "in_review" || item.status === "escalated") && typeof item.pr === "number"
+      : opts.attempt === 1 ? item.status === "queued" : item.status === "running";
   if (!claimable && !opts.escalate) {
     return { runId: "", status: "not_claimed", reason: `${opts.workItem} is ${item.status}, so attempt ${opts.attempt} does not start it` };
   }
@@ -208,8 +216,9 @@ export interface FinishRunOptions {
 export async function finishRun(opts: FinishRunOptions): Promise<AfterGatesReport> {
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const store = new FactoryStore(opts.gh);
-  const item = await store.get<WorkItemDoc>(workItemPath(opts.workItem), "work-item");
-  if (item === null) throw new Error(`${opts.workItem} is not on the data ref`);
+  const found = await store.get<WorkItemDoc>(workItemPath(opts.workItem), "work-item");
+  if (found === null) throw new Error(`${opts.workItem} is not on the data ref`);
+  let item: WorkItemDoc = found;
   const pr = opts.pr !== null && opts.pr > 0 ? opts.pr : null;
 
   const live = await store.data.readJson<{ started_at?: string }>(livePath(opts.runId)).catch(() => null);
@@ -253,13 +262,34 @@ export async function finishRun(opts: FinishRunOptions): Promise<AfterGatesRepor
     if (item.pr !== pr) {
       const at = opts.now();
       const ledger = await store.ledger(at);
+      // A rebuild (the old PR conflicted with main) opened a new PR for the
+      // same item: the old one is kept on the item, so an approval given there
+      // can carry over, and closed with a pointer to the new one.
+      const replaced = typeof item.pr === "number" ? item.pr : null;
+      const previous = replaced === null ? item.previous_prs ?? [] : [...(item.previous_prs ?? []), replaced];
+      const linked: WorkItemDoc = { ...item, pr, ...(previous.length === 0 ? {} : { previous_prs: previous }) };
       await store.put(
         [
-          { path: workItemPath(item.id), content: json({ ...item, pr }) },
-          { path: LEDGER, content: json(withStatus(ledger, item, "running", pr, at)) },
+          { path: workItemPath(item.id), content: json(linked) },
+          {
+            path: LEDGER,
+            content: json({
+              ...withStatus(ledger, item, "running", pr, at),
+              merge_queue: ledger.merge_queue.filter((q) => replaced === null || q.pr !== replaced),
+            }),
+          },
         ],
-        `run ${opts.runId}: ${item.id} is PR #${pr}`,
+        `run ${opts.runId}: ${item.id} is PR #${pr}${replaced === null ? "" : ` (replaces #${replaced})`}`,
       );
+      item = linked;
+      if (replaced !== null) {
+        await opts.gh
+          .send("POST", `repos/${opts.gh.repo}/issues/${replaced}/comments`, {
+            body: `Rebuilt on the current main as #${pr}, because this branch conflicted with it. An approval given here carries to #${pr} when the rebuilt change adds the same lines and removes nothing new.`,
+          })
+          .catch(() => undefined);
+        await opts.gh.send("PATCH", `repos/${opts.gh.repo}/pulls/${replaced}`, { state: "closed" }).catch(() => undefined);
+      }
     }
     const deadline = Date.parse(opts.now()) + opts.waitMs;
     let head = (await opts.gh.pull(pr)).head.sha;
@@ -579,6 +609,9 @@ export async function prClosed(opts: {
   if (id === null) return { workItem: null, status: "no_item", runsUpdated: [] };
   const item = await store.get<WorkItemDoc & { merged_at?: string; closed_at?: string }>(workItemPath(id), "work-item");
   if (item === null) return { workItem: id, status: "no_item", runsUpdated: [] };
+  // A PR the item has moved on from (rebuilt as a new PR after a conflict)
+  // closing says nothing about the item.
+  if (typeof item.pr === "number" && item.pr !== opts.pr) return { workItem: id, status: "no_item", runsUpdated: [] };
 
   const status = opts.merged ? "merged" : "rejected";
   const nextItem = {

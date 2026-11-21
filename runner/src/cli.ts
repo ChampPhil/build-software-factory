@@ -128,6 +128,8 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
       The nightly scan: file up to N gardening items and dispatch them.
 
   bsf conflicts scan [--no-dispatch]
+  bsf conflicts context WORK_ITEM --out DIR
+  bsf conflicts button --pr N
       Find open factory PRs that became conflicting; dispatch resolution runs.
 
   bsf review due [--force true]
@@ -415,8 +417,10 @@ async function main(argv: readonly string[]): Promise<number> {
       return gardenCommand(args);
 
     case "conflicts":
-      if (second !== "scan") die("usage: bsf conflicts scan");
-      return conflictsCommand(args);
+      if (second !== "scan" && second !== "context" && second !== "button") {
+        die("usage: bsf conflicts scan | context WORK_ITEM --out DIR | button --pr N");
+      }
+      return conflictsCommand(args, second, command[2]);
 
     case "review":
       return reviewCommand(second, args);
@@ -1076,6 +1080,9 @@ async function runCommand(second: string | undefined, args: Args, third?: string
       pipeline = item.pipeline;
       hasSpec = item.spec !== null && item.spec !== undefined;
     }
+    // A conflict rebuild: the same change, rebuilt on the current main by the
+    // builder and verified. The intent and spec are the item's already.
+    if (args["reason"] === "conflict") pipeline = "conflict";
     if (pipeline === undefined) die("usage: bsf run plan WORK_ITEM [--attempt N] | --pipeline P");
     const attempt = typeof args["attempt"] === "string" ? Number(args["attempt"]) : 1;
     const cfg: FactoryConfig = await factoryConfig().catch((): FactoryConfig => ({}));
@@ -1188,6 +1195,7 @@ async function runCommand(second: string | undefined, args: Args, third?: string
       escalate: args["escalate"] === "true" || args["escalate"] === true,
       firstStep: typeof args["first-step"] === "string" ? args["first-step"] : "builder",
       now: nowIso(),
+      ...(typeof args["reason"] === "string" && args["reason"] !== "" ? { reason: args["reason"] } : {}),
       ...(Number(process.env["GITHUB_RUN_ID"]) > 0 ? { actionsRun: Number(process.env["GITHUB_RUN_ID"]) } : {}),
     });
     process.stdout.write(r.runId === "" ? `${r.reason}\n` : `${third} is ${r.status}; run ${r.runId}\n`);
@@ -1378,12 +1386,37 @@ async function gardenCommand(args: Args): Promise<number> {
   return 0;
 }
 
-async function conflictsCommand(args: Args): Promise<number> {
+async function conflictsCommand(args: Args, second?: string, third?: string): Promise<number> {
   const gh = new GitHub({ repo: requireRepo() });
+  if (second === "context") {
+    // `bsf conflicts context WORK_ITEM --out DIR`: what a rebuild works from.
+    if (third === undefined || typeof args["out"] !== "string") die("usage: bsf conflicts context WORK_ITEM --out DIR");
+    const { FactoryStore, workItemPath } = await import("./lib/store.js");
+    const item = await new FactoryStore(gh).get<{ pr?: number | null }>(workItemPath(third), "work-item");
+    if (item === null || typeof item.pr !== "number") die(`${third} has no PR to rebuild`);
+    const { rebuildContext } = await import("./commands/conflicts.js");
+    const ctx = await rebuildContext(gh, item.pr);
+    mkdirSync(args["out"], { recursive: true });
+    writeFileSync(join(args["out"], "change.diff"), ctx.change);
+    writeFileSync(join(args["out"], "main-since.diff"), ctx.mainSince);
+    writeFileSync(join(args["out"], "files.txt"), `${ctx.files.join("\n")}\n`);
+    process.stdout.write(`PR #${item.pr}: ${ctx.files.length} file(s); main changed ${ctx.mainSince === "" ? "none" : "some"} of them since\n`);
+    return 0;
+  }
+  if (second === "button") {
+    // `bsf conflicts button --pr N`: the "Rebuild on main" check button.
+    const pr = Number(args["pr"]);
+    if (!Number.isInteger(pr) || pr <= 0) die("usage: bsf conflicts button --pr N");
+    const { rebuildFromButton } = await import("./commands/conflicts.js");
+    process.stdout.write(`${await rebuildFromButton(gh, pr, nowIso())}\n`);
+    return 0;
+  }
+  const checksToken = process.env["CHECKS_TOKEN"];
   const report = await runConflictsCommand({
     gh,
     now: nowIso(),
     ...(args["no-dispatch"] === true ? { dispatch: false } : {}),
+    ...(checksToken === undefined || checksToken === "" ? {} : { checks: new GitHub({ repo: requireRepo(), token: checksToken }) }),
   });
   process.stdout.write(
     `${report.conflicting.length} conflicting, ${report.clean.length} clean, ${report.unknown.length} undetermined\n`,

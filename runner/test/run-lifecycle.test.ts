@@ -292,3 +292,26 @@ describe("dropItems", () => {
     expect(JSON.parse(files.get("ledger.json")!).open).toEqual([]);
   });
 });
+
+describe("a conflict rebuild", () => {
+  it("claims an item in review that has a PR, and nothing else", async () => {
+    files.set(`work-items/${WI}.json`, JSON.stringify({ ...item("in_review"), pr: 33 }));
+    const { gh } = fakeGh([]);
+    expect((await startRun({ gh, workItem: WI, attempt: 1, escalate: false, firstStep: "builder", now: "2026-11-21T00:00:00Z", reason: "conflict" })).status).toBe("running");
+    files.set(`work-items/${WI}.json`, JSON.stringify({ ...item("queued") }));
+    expect((await startRun({ gh, workItem: WI, attempt: 1, escalate: false, firstStep: "builder", now: "2026-11-21T00:00:00Z", reason: "conflict" })).status).toBe("not_claimed");
+  });
+
+  it("links the new PR, keeps the old one on the item, and closes it with a pointer", async () => {
+    files.set(`work-items/${WI}.json`, JSON.stringify({ ...item("running"), runs: [RUN], pr: 33 }));
+    files.set(`live/${RUN}.json`, "{}");
+    const { gh, sent } = fakeGh([[{ name: "factory/gates", status: "completed", conclusion: "success" }]]);
+    await finishRun({ ...base, gh, attempt: 1, pr: 36 });
+    const wi = JSON.parse(files.get(`work-items/${WI}.json`)!);
+    expect(wi.pr).toBe(36);
+    expect(wi.previous_prs).toEqual([33]);
+    expect(sent.some((s) => s.method === "PATCH" && s.path.endsWith("/pulls/33"))).toBe(true);
+    // The old PR closing then leaves the item alone.
+    expect((await prClosed({ gh, pr: 33, merged: false, now: "2026-11-21T00:00:00Z" })).status).toBe("no_item");
+  });
+});

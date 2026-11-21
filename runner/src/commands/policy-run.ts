@@ -74,7 +74,7 @@ export async function gatherPullFacts(
     labels,
     changed_files: changedPaths(files),
     added_files: files.filter((f) => f.status === "added").map((f) => f.filename),
-    reviews: await trustedReviews(gh, reviews, trusted),
+    reviews: await trustedReviews(gh, reviews, trusted, { pr: pr.number, headSha: pr.head.sha, base: pr.base.ref }),
     draft: pr.draft,
     declared_test_edits: declaredTestEdits,
   };
@@ -125,13 +125,98 @@ export async function trustedReviews(
   gh: GitHub,
   reviews: readonly ReviewResponse[],
   trusted: readonly string[],
+  carry?: { readonly pr: number; readonly headSha: string; readonly base: string },
 ): Promise<PullRequestFacts["reviews"]> {
-  return Promise.all(
+  const own = await Promise.all(
     reviews.map(async (r) => {
       const base = toReview(r);
       return { ...base, author_association: (await effectiveAssociation(gh, base.author, base.author_association, trusted)) as Association };
     }),
   );
+  if (carry === undefined) return own;
+  const carried = await carriedApprovals(gh, carry, trusted).catch(() => []);
+  return [...own, ...carried];
+}
+
+/* ------------------------------------------------------- carried approvals */
+
+interface ComparedFile {
+  readonly filename: string;
+  readonly patch?: string;
+}
+
+/** The added and removed lines of each file's patch, ignoring context and line numbers. */
+export function changedLinesOf(files: readonly ComparedFile[]): Map<string, { added: string[]; removed: string[] } | null> {
+  const out = new Map<string, { added: string[]; removed: string[] } | null>();
+  for (const f of files) {
+    if (f.patch === undefined) {
+      // GitHub leaves out a patch it considers too large or binary: nothing
+      // can be compared, so nothing carries.
+      out.set(f.filename, null);
+      continue;
+    }
+    const added: string[] = [];
+    const removed: string[] = [];
+    for (const l of f.patch.split("\n")) {
+      if (l.startsWith("+")) added.push(l.slice(1).trimEnd());
+      else if (l.startsWith("-")) removed.push(l.slice(1).trimEnd());
+    }
+    out.set(f.filename, { added, removed });
+  }
+  return out;
+}
+
+/**
+ * Whether a rebuilt change is the one a person approved: the same files, each
+ * adding exactly the lines the approved change added, and removing only lines
+ * it removed. A rebuild that drops something main added since, or adds
+ * anything new, is a different change and needs its own approval.
+ */
+export function sameChange(approved: readonly ComparedFile[], current: readonly ComparedFile[]): { same: boolean; why: string } {
+  const a = changedLinesOf(approved);
+  const c = changedLinesOf(current);
+  const names = (m: Map<string, unknown>) => [...m.keys()].sort().join("\n");
+  if (names(a) !== names(c)) return { same: false, why: "it changes a different set of files" };
+  for (const [file, cur] of c) {
+    const was = a.get(file);
+    if (cur === null || was === null || was === undefined) return { same: false, why: `${file} cannot be compared` };
+    if (cur.added.join("\n") !== was.added.join("\n")) return { same: false, why: `${file} adds different lines` };
+    const allowed = new Map<string, number>();
+    for (const l of was.removed) allowed.set(l, (allowed.get(l) ?? 0) + 1);
+    for (const l of cur.removed) {
+      const n = allowed.get(l) ?? 0;
+      if (n === 0) return { same: false, why: `${file} removes a line the approved change did not` };
+      allowed.set(l, n - 1);
+    }
+  }
+  return { same: true, why: "the same lines are added and nothing new is removed" };
+}
+
+async function carriedApprovals(
+  gh: GitHub,
+  carry: { readonly pr: number; readonly headSha: string; readonly base: string },
+  trusted: readonly string[],
+): Promise<PullRequestFacts["reviews"]> {
+  const ledger = await new FactoryStore(gh).ledger(new Date().toISOString());
+  const open = ledger.open.find((o) => o.pr === carry.pr);
+  if (open === undefined) return [];
+  const item = await new FactoryStore(gh).get<{ previous_prs?: number[] }>(`work-items/${open.work_item}.json`, "work-item");
+  const previous = item?.previous_prs ?? [];
+  if (previous.length === 0) return [];
+  const current = await gh.get<{ files?: ComparedFile[] }>(`repos/${gh.repo}/compare/${carry.base}...${carry.headSha}`);
+  const out: PullRequestFacts["reviews"][number][] = [];
+  for (const prev of previous) {
+    const reviews = await gh.pullReviews(prev);
+    for (const r of reviews) {
+      if (r.state !== "APPROVED" || r.commit_id === undefined) continue;
+      const review = toReview(r);
+      const association = (await effectiveAssociation(gh, review.author, review.author_association, trusted)) as Association;
+      const approved = await gh.get<{ files?: ComparedFile[] }>(`repos/${gh.repo}/compare/${carry.base}...${r.commit_id}`);
+      if (!sameChange(approved.files ?? [], current.files ?? []).same) continue;
+      out.push({ ...review, author_association: association, commit_sha: carry.headSha });
+    }
+  }
+  return out;
 }
 
 export function toReview(r: ReviewResponse): PullRequestFacts["reviews"][number] {

@@ -19,6 +19,13 @@ export interface ConflictsOptions {
   readonly waitMs?: number;
   readonly ref?: string;
   readonly dispatch?: boolean;
+  /**
+   * A client on the workflow's own GITHUB_TOKEN, for the factory/conflicts
+   * check. Its "Rebuild on main" button reaches a workflow only when the check
+   * was created by GitHub Actions itself; one the App creates sends the click
+   * to the App's webhook, which nothing listens on.
+   */
+  readonly checks?: GitHub;
 }
 
 export interface ConflictsReport {
@@ -48,11 +55,9 @@ export async function runConflictsCommand(opts: ConflictsOptions): Promise<Confl
   const dispatched: string[] = [];
   if (opts.dispatch !== false) {
     for (const c of conflicting) {
-      await opts.gh.dispatchWorkflow("factory-run.yml", opts.ref, {
-        work_item: c.work_item,
-        reason: "conflict",
-      });
+      await requestRebuild(opts.gh, c.work_item, opts.ref);
       dispatched.push(c.work_item);
+      if (opts.checks !== undefined) await conflictCheck(opts.checks, c.pr).catch(() => undefined);
     }
   }
 
@@ -79,4 +84,76 @@ async function mergeability(
     if (i < retries) await new Promise((r) => setTimeout(r, waitMs));
   }
   return "unknown";
+}
+
+/**
+ * Start a rebuild: the builder makes the same change again on the current
+ * main, as a new PR that replaces this one. Rebuilding rather than merging
+ * main into the branch is what lets it work without the App ever holding the
+ * `workflows` permission: a merge would carry main's workflow changes into a
+ * push the App makes.
+ */
+export async function requestRebuild(gh: GitHub, workItem: string, ref?: string): Promise<void> {
+  await gh.dispatchWorkflow("factory-run.yml", ref, { work_item: workItem, reason: "conflict" });
+}
+
+const CONFLICT_CHECK = "factory/conflicts";
+
+/** A grey check on the PR with a button that starts the rebuild again. */
+export async function conflictCheck(checks: GitHub, pr: number): Promise<void> {
+  const p = await checks.pull(pr);
+  await checks.send("POST", `repos/${checks.repo}/check-runs`, {
+    name: CONFLICT_CHECK,
+    head_sha: p.head.sha,
+    status: "completed",
+    conclusion: "neutral",
+    output: {
+      title: "Conflicts with main: rebuilding on main",
+      summary:
+        "This branch conflicts with main, so the factory is making the same change again on the current main, " +
+        "as a new PR that replaces this one. An approval given here carries over when the rebuilt change adds " +
+        "the same lines and removes nothing new. If the rebuild does not finish, press **Rebuild on main** above to start it again.",
+    },
+    actions: [{ label: "Rebuild on main", description: "Make this change again on the current main", identifier: "rebuild" }],
+  });
+}
+
+/** The "Rebuild on main" button was pressed on a PR's factory/conflicts check. */
+export async function rebuildFromButton(gh: GitHub, pr: number, now: string): Promise<string> {
+  const ledger = await new FactoryStore(gh).ledger(now);
+  const item = ledger.open.find((o) => o.pr === pr);
+  if (item === undefined) return `#${pr} is not an open factory work item's PR; nothing to rebuild`;
+  await requestRebuild(gh, item.work_item);
+  return `started a rebuild of ${item.work_item} (#${pr}) on main`;
+}
+
+interface CompareResponse {
+  readonly merge_base_commit?: { readonly sha: string };
+  readonly files?: readonly { readonly filename: string; readonly status: string; readonly patch?: string; readonly previous_filename?: string }[];
+}
+
+function asDiff(files: CompareResponse["files"]): string {
+  return (files ?? [])
+    .map((f) =>
+      `diff --git a/${f.previous_filename ?? f.filename} b/${f.filename}\n--- a/${f.previous_filename ?? f.filename}\n+++ b/${f.filename}\n` +
+      (f.patch ?? `(${f.status}; no text diff)`) + "\n",
+    )
+    .join("");
+}
+
+/**
+ * What the builder needs to rebuild a conflicting PR on main: the change it
+ * made, and what main has since done to the same files.
+ */
+export async function rebuildContext(gh: GitHub, pr: number): Promise<{ change: string; mainSince: string; files: string[] }> {
+  const p = await gh.pull(pr);
+  const branch = await gh.get<CompareResponse>(`repos/${gh.repo}/compare/${p.base.ref}...${p.head.sha}`);
+  const base = branch.merge_base_commit?.sha;
+  const files = (branch.files ?? []).map((f) => f.filename);
+  let mainSince = "";
+  if (base !== undefined) {
+    const main = await gh.get<CompareResponse>(`repos/${gh.repo}/compare/${base}...${p.base.ref}`);
+    mainSince = asDiff((main.files ?? []).filter((f) => files.includes(f.filename)));
+  }
+  return { change: asDiff(branch.files), mainSince, files };
 }
