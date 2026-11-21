@@ -48,9 +48,10 @@ describe("storing a role's report", () => {
     expect(JSON.parse(data.get("reports/wi_X/builder.json")!).media_commit).toBe("mediasha");
   });
 
-  it("refuses a report that does not match the schema", async () => {
+  it("refuses a report whose shape is wrong, which shortening cannot fix", async () => {
     const dir = mkdtempSync(join(tmpdir(), "bsf-report-"));
-    writeFileSync(join(dir, "report.json"), JSON.stringify({ schema: "pr-report/1", summary: ["a", "b", "c", "d"], blocks: [] }));
+    // A path that climbs out of the report directory is never accepted.
+    writeFileSync(join(dir, "report.json"), JSON.stringify({ schema: "pr-report/1", summary: ["a"], blocks: [], technical: "../secrets.md" }));
     await expect(storeReport({ gh: { repo: "o/r" } as never, dir, role: "builder", workItem: "wi_X", attempt: 1, now: "x" })).rejects.toThrow();
   });
 });
