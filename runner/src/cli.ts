@@ -841,8 +841,17 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
-/** How many runs are in flight, from the live refs' files. */
+/** How many runs are in flight, from the live refs' files, after ending the ones that are not. */
 async function runningRuns(gh: GitHub): Promise<number> {
+  const { reapStaleRuns } = await import("./commands/run-lifecycle.js");
+  try {
+    const r = await reapStaleRuns(gh, nowIso());
+    for (const x of r.reaped) {
+      process.stdout.write(`ended ${x.run}, which stopped without finishing${x.requeued ? `; ${x.work_item} is queued again` : ""}\n`);
+    }
+  } catch (e) {
+    process.stdout.write(`could not check for runs that stopped: ${(e as Error).message}\n`);
+  }
   const { FactoryStore } = await import("./lib/store.js");
   const store = new FactoryStore(gh);
   try {
@@ -994,6 +1003,7 @@ async function runCommand(second: string | undefined, args: Args, third?: string
       escalate: args["escalate"] === "true" || args["escalate"] === true,
       firstStep: typeof args["first-step"] === "string" ? args["first-step"] : "builder",
       now: nowIso(),
+      ...(Number(process.env["GITHUB_RUN_ID"]) > 0 ? { actionsRun: Number(process.env["GITHUB_RUN_ID"]) } : {}),
     });
     process.stdout.write(r.runId === "" ? `${r.reason}\n` : `${third} is ${r.status}; run ${r.runId}\n`);
     setOutput("run_id", r.runId);

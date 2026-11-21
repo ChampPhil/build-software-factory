@@ -7,7 +7,11 @@ const commits: string[] = [];
 vi.mock("../src/lib/store.js", async (orig) => {
   const real = await orig<typeof import("../src/lib/store.js")>();
   class FactoryStore {
-    data = { read: async (p: string) => files.get(p) ?? null };
+    data = {
+      read: async (p: string) => files.get(p) ?? null,
+      readJson: async (p: string) => (files.has(p) ? (JSON.parse(files.get(p)!) as unknown) : null),
+      list: async (prefix: string) => [...files.keys()].filter((k) => k.startsWith(prefix)),
+    };
     async get<T>(p: string): Promise<T | null> {
       const t = files.get(p);
       return t === undefined ? null : (JSON.parse(t) as T);
@@ -31,7 +35,7 @@ vi.mock("../src/lib/store.js", async (orig) => {
   return { ...real, FactoryStore };
 });
 
-const { startRun, finishRun, gateVerdicts, gateFailuresPath } = await import("../src/commands/run-lifecycle.js");
+const { startRun, finishRun, gateVerdicts, gateFailuresPath, reapStaleRuns } = await import("../src/commands/run-lifecycle.js");
 
 const WI = "wi_01M7XHGA7F5CNWC3BD3BSP0WYW";
 const RUN = "run_01M7XHGA7F5CNWC3BD3BSP0WYX";
@@ -187,5 +191,38 @@ describe("finishRun", () => {
     const r = await finishRun({ ...base, gh, attempt: 1, pr: 5, now: () => new Date(Date.parse("2026-11-20T01:00:00Z") + (t += 40_000)).toISOString() });
     expect(r.next).toBe("timed_out");
     expect(JSON.parse(files.get(`work-items/${WI}.json`)!).status).toBe("in_review");
+  });
+});
+
+describe("reapStaleRuns", () => {
+  const ghWithRun = (status: string) =>
+    ({ repo: "o/r", get: async (p: string) => (p.includes("/actions/runs/") ? { status } : {}) }) as never;
+
+  it("ends a cancelled run's live record and puts its item back in the queue", async () => {
+    files.set(`work-items/${WI}.json`, JSON.stringify({ ...item("running"), runs: [RUN] }));
+    files.set(`live/${RUN}.json`, JSON.stringify({ run: RUN, work_item: WI, started_at: "2026-11-20T00:00:00Z", actions_run: 42 }));
+    const r = await reapStaleRuns(ghWithRun("completed"), "2026-11-20T00:10:00Z");
+    expect(r.reaped).toEqual([{ run: RUN, work_item: WI, requeued: true }]);
+    expect(files.has(`live/${RUN}.json`)).toBe(false);
+    expect(JSON.parse(files.get(`work-items/${WI}.json`)!).status).toBe("queued");
+  });
+
+  it("leaves a run that is still going", async () => {
+    files.set(`live/${RUN}.json`, JSON.stringify({ run: RUN, work_item: WI, started_at: "2026-11-20T00:00:00Z", actions_run: 42 }));
+    expect((await reapStaleRuns(ghWithRun("in_progress"), "2026-11-20T00:10:00Z")).reaped).toEqual([]);
+  });
+
+  it("does not requeue an item a later run has taken", async () => {
+    files.set(`work-items/${WI}.json`, JSON.stringify({ ...item("running"), runs: [RUN, "run_01M7XHGA7F5CNWC3BD3BSP0WZZ"] }));
+    files.set(`live/${RUN}.json`, JSON.stringify({ run: RUN, work_item: WI, started_at: "2026-11-20T00:00:00Z", actions_run: 42 }));
+    const r = await reapStaleRuns(ghWithRun("completed"), "2026-11-20T00:10:00Z");
+    expect(r.reaped[0]?.requeued).toBe(false);
+    expect(JSON.parse(files.get(`work-items/${WI}.json`)!).status).toBe("running");
+  });
+
+  it("presumes a record with no Actions run dead only after hours", async () => {
+    files.set(`live/${RUN}.json`, JSON.stringify({ run: RUN, work_item: WI, started_at: "2026-11-20T00:00:00Z" }));
+    expect((await reapStaleRuns(ghWithRun("completed"), "2026-11-20T01:00:00Z")).reaped).toEqual([]);
+    expect((await reapStaleRuns(ghWithRun("completed"), "2026-11-20T07:00:00Z")).reaped).toHaveLength(1);
   });
 });

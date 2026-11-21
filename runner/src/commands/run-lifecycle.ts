@@ -58,6 +58,8 @@ export async function startRun(opts: {
   readonly firstStep: string;
   readonly now: string;
   readonly runId?: string;
+  /** GITHUB_RUN_ID, so the reaper can ask Actions whether the run is still going. */
+  readonly actionsRun?: number;
 }): Promise<StartRunReport> {
   const store = new FactoryStore(opts.gh);
   const item = await store.get<WorkItemDoc>(workItemPath(opts.workItem), "work-item");
@@ -81,6 +83,7 @@ export async function startRun(opts: {
     step: opts.firstStep,
     attempt: opts.attempt,
     started_at: opts.now,
+    ...(opts.actionsRun === undefined ? {} : { actions_run: opts.actionsRun }),
   };
   await store.put(
     [
@@ -370,4 +373,56 @@ export async function itemStatus(gh: GitHub, workItem: string): Promise<string> 
   const item = await new FactoryStore(gh).get<WorkItemDoc>(workItemPath(workItem), "work-item");
   if (item === null) throw new Error(`${workItem} is not on the data ref`);
   return item.status;
+}
+
+/* ------------------------------------------------------------------ reaper */
+
+/** A live record older than this with no Actions run to ask about is presumed dead. */
+const STALE_MS = 6 * 3_600_000;
+
+export interface ReapReport {
+  readonly reaped: readonly { readonly run: string; readonly work_item: string; readonly requeued: boolean }[];
+}
+
+/**
+ * End the live records of runs that are no longer going — cancelled, crashed,
+ * or superseded before after-gates could run — and put their items back in
+ * the queue. Without this a cancelled run held its item in "running" for
+ * ever, and its live record held a concurrency slot.
+ */
+export async function reapStaleRuns(gh: GitHub, now: string): Promise<ReapReport> {
+  const store = new FactoryStore(gh);
+  const paths = (await store.data.list("live/")).filter((p) => p.endsWith(".json"));
+  const reaped: { run: string; work_item: string; requeued: boolean }[] = [];
+  const changes: { path: string; content: string | null }[] = [];
+  let ledger = await store.ledger(now);
+  for (const p of paths) {
+    const live = await store.data.readJson<{ run: string; work_item: string; started_at: string; actions_run?: number }>(p);
+    if (live === null) continue;
+    let dead: boolean;
+    if (live.actions_run !== undefined) {
+      const run = await gh
+        .get<{ status?: string }>(`repos/${gh.repo}/actions/runs/${live.actions_run}`)
+        .catch(() => ({ status: "completed" }));
+      dead = run.status === "completed";
+    } else {
+      dead = Date.parse(now) - Date.parse(live.started_at) > STALE_MS;
+    }
+    if (!dead) continue;
+    changes.push({ path: p, content: null });
+    const item = await store.get<WorkItemDoc>(workItemPath(live.work_item), "work-item");
+    // Requeue only if this run was the item's latest and left it running: a
+    // later run, or a person, has had it since.
+    const requeue = item !== null && item.status === "running" && (item.runs ?? []).at(-1) === live.run;
+    if (requeue) {
+      changes.push({ path: workItemPath(item.id), content: json({ ...item, status: "queued" }) });
+      ledger = withStatus(ledger, item, "queued", item.pr ?? null, now);
+    }
+    reaped.push({ run: live.run, work_item: live.work_item, requeued: requeue });
+  }
+  if (changes.length > 0) {
+    if (reaped.some((r) => r.requeued)) changes.push({ path: LEDGER, content: json(ledger) });
+    await store.put(changes, `reap ${reaped.length} run(s) that ended without finishing`);
+  }
+  return { reaped };
 }
