@@ -59,7 +59,7 @@ function pick(block: UsageBlock | undefined, ...keys: readonly (keyof UsageBlock
   return 0;
 }
 
-function parseJsonl(text: string): readonly SessionEvent[] {
+export function parseJsonl(text: string): readonly SessionEvent[] {
   const out: SessionEvent[] = [];
   for (const line of text.split("\n")) {
     const t = line.trim();

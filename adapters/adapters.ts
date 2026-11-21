@@ -66,6 +66,15 @@ export interface AdapterStatus {
   readonly conformance: "passed" | "not_run";
   /** What this adapter still needs, in plain words. Empty when ready. */
   readonly needs: readonly string[];
+  /**
+   * Whether gh-aw's per-step credit cap actually stops this harness, proven
+   * by a live run under a tiny cap. The factory's budget is built on that cap,
+   * so a harness it does not stop cannot be run under a budget at all.
+   */
+  readonly spendCap:
+    | { readonly kind: "enforced"; readonly evidence: string }
+    | { readonly kind: "not_enforced"; readonly evidence: string }
+    | { readonly kind: "untested" };
 }
 
 
@@ -81,6 +90,10 @@ export const ADAPTERS: Readonly<Record<HarnessId, HarnessAdapter>> = {
       kind: "builtin",
       conformance: "not_run",
       needs: ["a conformance run proving the step yields token data"],
+      spendCap: {
+        kind: "enforced",
+        evidence: "bsf-fixtures/go-cli run 44946845429: a 2-credit cap; the proxy refused the second request with 403 max-AI-credits and the agent stopped",
+      },
     },
   },
 
@@ -95,6 +108,7 @@ export const ADAPTERS: Readonly<Record<HarnessId, HarnessAdapter>> = {
       kind: "builtin",
       conformance: "not_run",
       needs: ["a conformance run proving the step yields token data"],
+      spendCap: { kind: "untested" },
     },
   },
 
@@ -111,6 +125,10 @@ export const ADAPTERS: Readonly<Record<HarnessId, HarnessAdapter>> = {
       kind: "vendored",
       conformance: "not_run",
       needs: ["a conformance run proving the step yields token data"],
+      spendCap: {
+        kind: "not_enforced",
+        evidence: "bsf-fixtures/go-cli run 44940807705: a 2-credit cap; Cursor talks to its own servers, the proxy never saw its requests, and the agent made 49 tool calls (about 29 times the cap)",
+      },
     },
   },
 
@@ -135,6 +153,7 @@ export const ADAPTERS: Readonly<Record<HarnessId, HarnessAdapter>> = {
         "the version pin confirmed against the npm registry, rather than the one its docs named",
         "a conformance run proving the step yields token data",
       ],
+      spendCap: { kind: "untested" },
     },
   },
 
@@ -159,6 +178,7 @@ export const ADAPTERS: Readonly<Record<HarnessId, HarnessAdapter>> = {
         "a conformance run proving the step yields token data",
         "correction mining cannot use Hermes sessions: memex reads its counters and metadata, not message content",
       ],
+      spendCap: { kind: "untested" },
     },
   },
 };
@@ -169,7 +189,10 @@ export const ADAPTERS: Readonly<Record<HarnessId, HarnessAdapter>> = {
  * vendors. Nothing here waits on anyone installing a CLI.
  */
 export function readyHarnesses(): readonly HarnessId[] {
-  return (Object.keys(ADAPTERS) as HarnessId[]).filter((id) => ADAPTERS[id].status.kind !== "definition");
+  // A harness the budget cannot stop is not ready, however well gh-aw runs it.
+  return (Object.keys(ADAPTERS) as HarnessId[]).filter(
+    (id) => ADAPTERS[id].status.kind !== "definition" && ADAPTERS[id].status.spendCap.kind === "enforced",
+  );
 }
 
 /**

@@ -1,5 +1,5 @@
 import type { GitHub } from "../lib/github.js";
-import { FactoryStore, INDEX, LEDGER, BUDGET, json } from "../lib/store.js";
+import { FactoryStore, INDEX, LEDGER, json } from "../lib/store.js";
 import { sweepReports } from "./sandbox-reports.js";
 import type { Change } from "../lib/dataref.js";
 import { MEDIA_REF } from "../lib/dataref.js";
@@ -145,7 +145,9 @@ export async function runRollupCommand(opts: RollupOptions): Promise<RollupRepor
   const changes: Change[] = [
     { path: INDEX, content: json(index) },
     { path: LEDGER, content: json(nextLedger) },
-    { path: BUDGET, content: json({ updated_at: opts.now, paused, budget: opts.budget }) },
+    // budget.json is not written here: it is the reserve and settle steps'
+    // record, kept by compare-and-swap. The rollup used to write back the
+    // budget it had read, which is why spend never accumulated.
   ];
   const commit = await store.put(changes, `rollup: ${result.metrics.runs} run(s) in window`);
 

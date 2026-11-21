@@ -45,6 +45,10 @@ import { runReviewDue, runReviewRoute, type ScoredFailure } from "./commands/rev
 import { planRun, afterGates } from "./commands/run-plan.js";
 import { buildStepReport, writeStepReport, changedFilesFromGit, type Harness } from "./commands/step-report.js";
 import { pausedPipelines, type BudgetState } from "./commands/rollup.js";
+import {
+  BUDGET_PATH, reserve as reserveBudget, settle as settleBudget, sweepStale, rollMonth, used, creditsToUsd,
+  measuredUsd, detectionUsd, type BudgetDoc, type BudgetLimits, type BudgetMeasure,
+} from "./commands/budget.js";
 import { loadFactory } from "./lib/config.js";
 import { startSandbox, loadManifest, loadManifestAt, trialSandbox, freezeManifest, needsHost, serveOnHost, closedEnv } from "./commands/sandbox.js";
 import { fetchWorkItem, writeSpec, fetchArtifact, storeMedia } from "./commands/role-io.js";
@@ -118,8 +122,26 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
       Rebuild index.json and ledger.json from the run files, and dispatch
       queued work when slots are free.
 
-  bsf budget check
-      Which pipelines are over their share of either monthly limit.
+  bsf budget check [--pipeline P]
+      Which pipelines are over their share of either monthly limit. With
+      --pipeline, paused=true|false for that one (and true before setup).
+
+  bsf budget reserve --key K --pipeline P --role R --model M --cap CREDITS
+      [--detection-model M --detection-cap CREDITS]
+      Before an agent step: hold the most it can cost (its credit cap plus one
+      request past it, for the agent and its threat detection), or refuse and
+      exit 1 if spent + held + this would pass the budget or the share.
+
+  bsf budget measure --key K --model M --detection-artifact NAME --out PATH
+      After the agent: write what it spent (the larger of its session's cost
+      and its tokens at list price) for the settle step.
+
+  bsf budget settle --key K [--measured PATH] [--detection-dir DIR]
+      Replace a step's hold with its measured cost; anything unmeasured is
+      charged at the ceiling.
+
+  bsf budget status
+      Spent, held and left this month.
 
   bsf merge-queue [--apply]
       Work the queue: update the head PR from main, or merge it.
@@ -411,7 +433,11 @@ async function main(argv: readonly string[]): Promise<number> {
       return rollupCommand(args);
 
     case "budget":
-      if (second !== "check") die("usage: bsf budget check");
+      if (second === "reserve") return budgetReserveCommand(args);
+      if (second === "settle") return budgetSettleCommand(args);
+      if (second === "measure") return budgetMeasureCommand(args);
+      if (second === "status") return budgetStatusCommand();
+      if (second !== "check") die("usage: bsf budget check|reserve|measure|settle|status");
       return budgetCommand(args);
 
     case "merge-queue":
@@ -1011,25 +1037,42 @@ async function runningRuns(gh: GitHub): Promise<number> {
   }
 }
 
-async function budgetState(cfg: FactoryConfig, gh: GitHub): Promise<BudgetState> {
-  const { FactoryStore, BUDGET } = await import("./lib/store.js");
-  const store = new FactoryStore(gh);
-  const spent = await store.data.readJson<{
-    spentUsd?: Record<string, number>;
-    spentMinutes?: Record<string, number>;
-  }>(BUDGET);
+function budgetLimits(cfg: FactoryConfig): BudgetLimits {
   const shares = cfg.budget?.shares ?? {};
   return {
-    limitUsd: cfg.budget?.monthly_usd ?? 0,
-    limitMinutes: cfg.budget?.monthly_actions_minutes ?? null,
+    monthlyUsd: cfg.budget?.monthly_usd ?? 0,
     shares: {
       product_work: shares["product_work"] ?? 60,
       gardening: shares["gardening"] ?? 25,
       review_and_benchmarks: shares["review_and_benchmarks"] ?? 15,
     },
-    spentUsd: spent?.spentUsd ?? {},
-    spentMinutes: spent?.spentMinutes ?? {},
     productHardStopPct: cfg.budget?.product_work_hard_stop_pct ?? 110,
+  };
+}
+
+/**
+ * What dispatch and the rollup see of the budget: per share, what is spent
+ * plus what running steps hold, from the one budget record the reserve and
+ * settle steps keep (budget.json, schema budget/2).
+ */
+async function budgetState(cfg: FactoryConfig, gh: GitHub): Promise<BudgetState> {
+  const { FactoryStore } = await import("./lib/store.js");
+  const store = new FactoryStore(gh);
+  const raw = await store.data.readJson<BudgetDoc | { schema?: string }>(BUDGET_PATH);
+  const doc = raw !== null && (raw as { schema?: string }).schema === "budget/2" ? rollMonth(raw as BudgetDoc, nowIso()) : null;
+  const limits = budgetLimits(cfg);
+  const spentUsd: Record<string, number> = {};
+  if (doc !== null) {
+    for (const share of ["product_work", "gardening", "review_and_benchmarks"] as const) spentUsd[share] = used(doc, share).share;
+    spentUsd["setup"] = used(doc, null).total - Object.values(spentUsd).reduce((a, b) => a + b, 0);
+  }
+  return {
+    limitUsd: limits.monthlyUsd,
+    limitMinutes: cfg.budget?.monthly_actions_minutes ?? null,
+    shares: limits.shares,
+    spentUsd,
+    spentMinutes: {},
+    productHardStopPct: limits.productHardStopPct,
   };
 }
 
@@ -1289,6 +1332,7 @@ async function rollupCommand(args: Args): Promise<number> {
   const cfg = await factoryConfig();
   const gh = new GitHub({ repo: requireRepo() });
   const now = nowIso();
+  if (args["plan"] !== true) await sweepStaleHolds(gh);
   const { loadBaselines: lb, loadCoverage: lc } = await import("./lib/config.js");
   const loader = new DiskLoader(process.cwd());
   const baselines = await lb(loader);
@@ -1338,6 +1382,182 @@ async function rollupCommand(args: Args): Promise<number> {
     process.stdout.write(`media: kept ${r.kept}, dropped ${r.dropped}\n`);
   }
   return 0;
+}
+
+/** Append to the job's summary page, when there is one. */
+function summary(markdown: string): void {
+  const path = process.env["GITHUB_STEP_SUMMARY"];
+  if (path === undefined || path === "") return;
+  try {
+    appendFileSync(path, markdown);
+  } catch {
+    /* a summary is a courtesy; the log line above already says it */
+  }
+}
+
+/** No step runs longer than this (the longest role timeout is 75 minutes); older holds are swept. */
+const STALE_HOLD_SEC = 4 * 3600;
+
+/**
+ * `bsf budget reserve --key K --pipeline P --role R --model M --cap N
+ * [--detection-model M --detection-cap N]`: hold this step's ceiling, or
+ * refuse. Run before the agent starts; a refusal exits 1, so the agent does
+ * not run, and says why on the job's summary.
+ */
+async function budgetReserveCommand(args: Args): Promise<number> {
+  const str = (k: string): string | undefined => (typeof args[k] === "string" ? (args[k]) : undefined);
+  const key = str("key");
+  const pipeline = str("pipeline") ?? "product_work";
+  const role = str("role");
+  const model = str("model");
+  const cap = Number(str("cap"));
+  if (key === undefined || role === undefined || model === undefined || !Number.isFinite(cap)) {
+    die("usage: bsf budget reserve --key K --pipeline P --role R --model M --cap CREDITS [--detection-model M --detection-cap CREDITS]");
+  }
+  const cfg = await factoryConfig();
+  // The budget rests on gh-aw's credit cap, which stops Claude Code and was
+  // shown not to stop Cursor. On any other harness no ceiling is real.
+  if ((cfg.harness ?? "claude-code") !== "claude-code") {
+    process.stdout.write(`refused: factory.yaml names harness ${String(cfg.harness)}; only Claude Code's spend can be capped\n`);
+    setOutput("allowed", "false");
+    summary(`### Not started\n\nfactory.yaml names harness \`${String(cfg.harness)}\`. The factory runs only on Claude Code, the one harness whose spend its budget can stop. Re-run the installer to switch back.\n`);
+    return 1;
+  }
+  const gh = new GitHub({ repo: requireRepo() });
+  const { FactoryStore } = await import("./lib/store.js");
+  const store = new FactoryStore(gh);
+  const limits = budgetLimits(cfg);
+  const now = nowIso();
+  const outcome = await store.data.updateJson<BudgetDoc, ReturnType<typeof reserveBudget>>(
+    BUDGET_PATH,
+    (current) => {
+      const base = current !== null && current.schema === "budget/2" ? current : null;
+      const r = reserveBudget(base, {
+        key, pipeline, role, model, capCredits: cap,
+        detectionModel: str("detection-model") ?? "claude-haiku-5-5",
+        detectionCapCredits: Number(str("detection-cap") ?? "0"),
+      }, limits, now);
+      return { next: r.ok && r.doc !== base ? r.doc : null, result: r };
+    },
+    `budget: reserve ${key}`,
+  );
+  process.stdout.write(`${outcome.ok ? "reserved" : "refused"}: ${outcome.reason}\n`);
+  setOutput("allowed", String(outcome.ok));
+  if (!outcome.ok) {
+    summary(`### Not started: over budget\n\n${outcome.reason}.\n\nThe factory stops before a step could pass the monthly budget. ` +
+      `It starts again next month, or when \`budget.monthly_usd\` in factory.yaml is raised.\n`);
+    return 1;
+  }
+  return 0;
+}
+
+/**
+ * `bsf budget measure --key K --model M --detection-artifact NAME --out PATH`:
+ * in the role's agent job, after the agent, write what it spent for the
+ * caller's settle job to read.
+ */
+async function budgetMeasureCommand(args: Args): Promise<number> {
+  const str = (k: string): string | undefined => (typeof args[k] === "string" ? (args[k]) : undefined);
+  const out = str("out");
+  const key = str("key");
+  const model = str("model");
+  if (out === undefined || key === undefined || model === undefined) {
+    die("usage: bsf budget measure --key K --model M --detection-artifact NAME --out PATH");
+  }
+  const { readSessionUsage } = await import("./lib/session.js");
+  const usage = readSessionUsage(sessionDirs(args));
+  const measure: BudgetMeasure = {
+    schema: "budget-measure/1",
+    key,
+    model,
+    agent_usd: measuredUsd(model, usage),
+    detection_artifact: str("detection-artifact") ?? "",
+  };
+  mkdirSync(dirname(out), { recursive: true });
+  writeFileSync(out, `${JSON.stringify(measure, null, 2)}\n`);
+  process.stdout.write(`${key}: agent ${measure.agent_usd === null ? "not measured (the ceiling will be charged)" : `$${measure.agent_usd.toFixed(4)}`}\n`);
+  return 0;
+}
+
+/**
+ * `bsf budget settle --key K [--measured PATH] [--detection-dir DIR]
+ * [--detection-model M] [--agent-aic N] [--detection-aic N] [--pipeline P]`:
+ * replace a step's hold with what it measured. A missing number is charged
+ * at the ceiling, never as zero.
+ */
+async function budgetSettleCommand(args: Args): Promise<number> {
+  const str = (k: string): string | undefined => (typeof args[k] === "string" ? (args[k]) : undefined);
+  const key = str("key");
+  if (key === undefined) die("usage: bsf budget settle --key K [--measured PATH] [--detection-dir DIR]");
+  let agentUsd = creditsToUsd(str("agent-aic"));
+  const measuredPath = str("measured");
+  if (measuredPath !== undefined && existsSync(measuredPath)) {
+    try {
+      const m = JSON.parse(readFileSync(measuredPath, "utf8")) as BudgetMeasure;
+      if (m.key === key && typeof m.agent_usd === "number") agentUsd = m.agent_usd;
+    } catch {
+      /* an unreadable measure is a missing one: the ceiling is charged */
+    }
+  }
+  let detUsd = creditsToUsd(str("detection-aic"));
+  const detDir = str("detection-dir");
+  if (detUsd === null && detDir !== undefined) detUsd = detectionUsd(detDir, str("detection-model") ?? "claude-haiku-5-5");
+  const gh = new GitHub({ repo: requireRepo() });
+  const { FactoryStore } = await import("./lib/store.js");
+  const store = new FactoryStore(gh);
+  const now = nowIso();
+  const pipeline = str("pipeline");
+  const r = await store.data.updateJson<BudgetDoc, ReturnType<typeof settleBudget>>(
+    BUDGET_PATH,
+    (current) => {
+      const base = current !== null && current.schema === "budget/2" ? current : null;
+      const out = settleBudget(base, { key, agentUsd, detectionUsd: detUsd, ...(pipeline === undefined ? {} : { pipeline }) }, now);
+      return { next: base !== null && base.settled.includes(key) ? null : out.doc, result: out };
+    },
+    `budget: settle ${key}`,
+  );
+  process.stdout.write(`${key}: ${r.reason}\n`);
+  return 0;
+}
+
+/** `bsf budget status`: spent, held and left, for a person reading a log. */
+async function budgetStatusCommand(): Promise<number> {
+  const cfg = await factoryConfig();
+  const gh = new GitHub({ repo: requireRepo() });
+  const { FactoryStore } = await import("./lib/store.js");
+  const raw = await new FactoryStore(gh).data.readJson<BudgetDoc>(BUDGET_PATH);
+  const doc = raw !== null && raw.schema === "budget/2" ? rollMonth(raw, nowIso()) : null;
+  const limit = budgetLimits(cfg).monthlyUsd;
+  if (doc === null) {
+    process.stdout.write(`nothing spent this month; budget $${limit.toFixed(2)}\n`);
+    return 0;
+  }
+  const spent = Object.values(doc.spent_usd).reduce((a, b) => a + b, 0);
+  const held = used(doc, null).total - spent;
+  process.stdout.write(
+    `${doc.month}: spent $${spent.toFixed(4)}, held by running steps $${held.toFixed(4)}, ` +
+      `left $${(limit - spent - held).toFixed(4)} of $${limit.toFixed(2)}\n`,
+  );
+  for (const [p, v] of Object.entries(doc.spent_usd)) process.stdout.write(`  ${p}: $${v.toFixed(4)}\n`);
+  for (const f of doc.inflight) process.stdout.write(`  running ${f.key} (${f.role}): holds $${(f.agent_ceiling_usd + f.detection_ceiling_usd).toFixed(2)}\n`);
+  return 0;
+}
+
+/** Charge holds whose step never settled, at their ceiling. Run by the rollup. */
+async function sweepStaleHolds(gh: GitHub): Promise<void> {
+  const { FactoryStore } = await import("./lib/store.js");
+  const store = new FactoryStore(gh);
+  const now = nowIso();
+  const swept = await store.data.updateJson<BudgetDoc, readonly string[]>(
+    BUDGET_PATH,
+    (current) => {
+      if (current === null || current.schema !== "budget/2") return { next: null, result: [] };
+      const r = sweepStale(current, now, STALE_HOLD_SEC);
+      return { next: r.swept.length === 0 ? null : r.doc, result: r.swept };
+    },
+    "budget: charge stale holds at their ceiling",
+  );
+  if (swept.length > 0) process.stdout.write(`budget: charged ${swept.length} unsettled step(s) at their ceiling\n`);
 }
 
 async function budgetCommand(args: Args): Promise<number> {

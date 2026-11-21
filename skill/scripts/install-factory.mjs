@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Copies the factory's files into a repository checkout.
 //
-//   node skill/scripts/install-factory.mjs --into PATH [--harness ID] [--force] [--dry-run]
+//   node skill/scripts/install-factory.mjs --into PATH [--force] [--dry-run]
 //
 // Mechanical on purpose. Everything this copies is the factory's own
 // machinery — the runner, the role and pipeline workflows, the definition
@@ -28,11 +28,11 @@ function arg(name) {
 if (process.argv.includes("--help") || process.argv.includes("-h")) {
   console.log(`Copy the factory's own files into a repository checkout.
 
-  node skill/scripts/install-factory.mjs --into PATH [--harness ID] [--force] [--dry-run]
+  node skill/scripts/install-factory.mjs --into PATH [--force] [--dry-run]
 
---harness picks the agent CLI the role workflows are compiled for:
-claude-code (the default) or cursor-cli. Without it, the harness already named
-in the repo's .factory/definition/factory.yaml is kept.
+The factory runs its agents on Claude Code only: it is the one harness whose
+spend gh-aw's per-step cap is proven to stop, and the budget is built on that
+cap. A factory.yaml that names another harness is switched back to Claude Code.
 
 The runner (.factory/bin) and the factory-* workflows are the factory's own:
 they are replaced whole, and files the new version no longer ships are
@@ -53,26 +53,6 @@ if (!existsSync(join(into, ".git"))) {
   process.exit(2);
 }
 
-/**
- * The harness: the flag, else what the repo's factory.yaml already says, else
- * Claude Code. gh-aw fixes the engine at compile time, so another harness
- * ships its own compiled set (templates/harness/<id>), laid over the default.
- */
-function currentHarness() {
-  const flag = arg("harness");
-  if (flag !== undefined) return flag;
-  const cfg = join(into, ".factory/definition/factory.yaml");
-  if (!existsSync(cfg)) return "claude-code";
-  const m = /^harness:\s*([\w-]+)/m.exec(readFileSync(cfg, "utf8"));
-  return m === null ? "claude-code" : m[1];
-}
-const harness = currentHarness();
-const harnessDir = join(repoRoot, "templates/harness", harness);
-if (harness !== "claude-code" && !existsSync(join(harnessDir, "compiled"))) {
-  console.error(`no compiled workflows for harness ${harness}; known: claude-code, ${readdirSync(join(repoRoot, "templates/harness")).join(", ")}`);
-  process.exit(2);
-}
-
 /** [source, destination-in-repo]. Directories are copied file by file; later entries win. */
 const PLAN = [
   [join(skill, "runner"), ".factory/bin"],
@@ -83,12 +63,6 @@ const PLAN = [
   [join(repoRoot, "rules"), ".factory/rules"],
   [join(repoRoot, "templates/workflows"), ".github/workflows"],
   [join(repoRoot, "templates/compiled"), ".github/workflows"],
-  ...(harness === "claude-code"
-    ? []
-    : [
-        [join(harnessDir, "workflows"), ".github/workflows"],
-        [join(harnessDir, "compiled"), ".github/workflows"],
-      ]),
 ];
 
 function files(dir) {
@@ -160,23 +134,25 @@ if (!dryRun) {
   }
 }
 
-// A harness named on the command line is recorded in factory.yaml, which is
-// what the runner and the dashboard read it from.
+// Claude Code is the only harness the budget can stop (doc 07, §Agent CLI
+// adapters). A factory.yaml left on another one, from an earlier version, is
+// switched back, models included: Cursor's "auto" names no Claude model.
 const cfgPath = join(into, ".factory/definition/factory.yaml");
-if (arg("harness") !== undefined && existsSync(cfgPath) && !dryRun) {
+if (existsSync(cfgPath) && !dryRun) {
   const text = readFileSync(cfgPath, "utf8");
-  let next = text.replace(/^harness:\s*[\w-]+/m, `harness: ${harness}`);
-  // Each harness names models its own way. Claude model ids mean nothing to
-  // Cursor, so they become Cursor's "auto" (its own pick, billed by Cursor);
-  // the owner can name a specific Cursor model per role afterwards.
-  if (harness === "cursor-cli") next = next.replace(/^(  \w+: )claude-[\w.-]+$/gm, "$1auto");
-  if (harness === "claude-code") next = next.replace(/^(  (triage|verifier|scorer): )auto$/gm, "$1claude-haiku-5-5")
-    .replace(/^(  spec: )auto$/gm, "$1claude-opus-5-5")
-    .replace(/^(  \w+: )auto$/gm, "$1claude-sonnet-5-5");
-  if (next !== text) writeFileSync(cfgPath, next);
+  const was = /^harness:\s*([\w-]+)/m.exec(text)?.[1];
+  if (was !== undefined && was !== "claude-code") {
+    const next = text
+      .replace(/^harness:\s*[\w-]+/m, "harness: claude-code")
+      .replace(/^(  (triage|verifier|scorer): )(?!claude-)\S+$/gm, "$1claude-haiku-5-5")
+      .replace(/^(  spec: )(?!claude-)\S+$/gm, "$1claude-opus-5-5")
+      .replace(/^(  (builder|gardener|hardener): )(?!claude-)\S+$/gm, "$1claude-sonnet-5-5");
+    writeFileSync(cfgPath, next);
+    console.log(`switched the harness from ${was} to claude-code: only Claude Code's spend can be capped`);
+  }
 }
 
-console.log(`${dryRun ? "would write" : "wrote"} ${written.length} file(s) into ${into} (harness: ${harness})`);
+console.log(`${dryRun ? "would write" : "wrote"} ${written.length} file(s) into ${into}`);
 if (removed.length > 0) {
   console.log(`${dryRun ? "would remove" : "removed"} ${removed.length} file(s) the factory no longer ships:`);
   for (const r of removed.slice(0, 20)) console.log(`  ${r}`);

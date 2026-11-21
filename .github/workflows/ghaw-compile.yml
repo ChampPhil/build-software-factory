@@ -10,9 +10,9 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ["templates/workflows/**", "templates/harness/**", "tests/live/workflows/**", ".github/workflows/ghaw-compile.yml", "runner/src/cli.ts"]
+    paths: ["templates/workflows/**", "tests/live/workflows/**", ".github/workflows/ghaw-compile.yml", "runner/src/cli.ts"]
   pull_request:
-    paths: ["templates/workflows/**", "templates/harness/**", "tests/live/workflows/**", ".github/workflows/ghaw-compile.yml", "runner/src/cli.ts"]
+    paths: ["templates/workflows/**", "tests/live/workflows/**", ".github/workflows/ghaw-compile.yml", "runner/src/cli.ts"]
 
 permissions:
   contents: write
@@ -56,27 +56,8 @@ jobs:
           # secret the last one did not have is exactly what it should flag.
           gh aw compile --strict --approve --verbose 2>&1 | tee /tmp/compile.log
 
-      # Each other harness's variants (runner/scripts/harness-variants.mjs),
-      # compiled the same way, so a repo on that harness also needs no gh-aw.
-      - name: Compile each harness's variants
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -o pipefail
-          node runner/scripts/harness-variants.mjs --check
-          for dir in templates/harness/*/; do
-            id=$(basename "$dir")
-            rm -rf "/tmp/harness-$id" && mkdir -p "/tmp/harness-$id/.github/workflows"
-            cp -R "$dir/workflows/." "/tmp/harness-$id/.github/workflows/"
-            (cd "/tmp/harness-$id" && git init -q && git config user.email ci@example.com && git config user.name ci \
-              && git add -A && git commit -qm scratch && gh aw compile --strict --approve 2>&1 | tee "/tmp/compile-$id.log")
-          done
-
-      # The pipeline workflows are plain Actions YAML, which gh-aw does not
-      # check. actionlint does: expressions, `needs` and job-output references,
-      # and every call into a reusable workflow against that workflow's declared
-      # inputs and secrets — which is why it runs here, after the role lock
-      # files it validates those calls against exist.
+      # The live tests (tests/live): deliberate runs against the real
+      # services, such as proving the credit cap stops an agent.
       - name: Compile the live tests
         env:
           GH_TOKEN: ${{ github.token }}
@@ -84,7 +65,6 @@ jobs:
           set -o pipefail
           rm -rf /tmp/live && mkdir -p /tmp/live/.github/workflows
           cp tests/live/workflows/*.md /tmp/live/.github/workflows/
-          cp -R templates/harness/cursor-cli/workflows/shared /tmp/live/.github/workflows/
           (cd /tmp/live && git init -q && git config user.email ci@example.com && git config user.name ci \
             && git add -A && git commit -qm scratch && gh aw compile --strict --approve 2>&1 | tee /tmp/compile-live.log)
 
@@ -107,14 +87,9 @@ jobs:
           mkdir -p templates/compiled
           rm -f templates/compiled/*.lock.yml
           cp /tmp/scratch/.github/workflows/*.lock.yml templates/compiled/
-          for dir in templates/harness/*/; do
-            id=$(basename "$dir")
-            mkdir -p "$dir/compiled" && rm -f "$dir/compiled/"*.lock.yml
-            cp "/tmp/harness-$id/.github/workflows/"*.lock.yml "$dir/compiled/"
-          done
           mkdir -p tests/live/compiled && rm -f tests/live/compiled/*.lock.yml
           cp /tmp/live/.github/workflows/*.lock.yml tests/live/compiled/
-          git add templates/compiled templates/harness tests/live/compiled
+          git add templates/compiled tests/live/compiled
           if git diff --cached --quiet; then echo "compiled roles unchanged"; exit 0; fi
           git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
             commit -m "Recompile the role templates with gh-aw $(gh aw version 2>/dev/null | head -1)"

@@ -338,7 +338,7 @@ describe("trigger workflows", () => {
 
   it("there is one trigger workflow per row of doc 07's table", () => {
     const expected = [
-      "factory-audit.yml", "factory-conflicts.yml", "factory-drop.yml", "factory-garden.yml", "factory-gates.yml",
+      "factory-audit.yml", "factory-budget-settle.yml", "factory-conflicts.yml", "factory-drop.yml", "factory-garden.yml", "factory-gates.yml",
       "factory-intake.yml", "factory-merge.yml", "factory-policy.yml", "factory-recompile.yml",
       "factory-review.yml", "factory-rollup.yml", "factory-run.yml", "factory-setup-trial.yml", "factory-setup.yml", "factory-sync.yml",
     ];
@@ -512,49 +512,98 @@ describe("host-access role variants", () => {
   });
 });
 
-describe("harness variants", () => {
-  it("are regenerated from the claude-code role workflows", () => {
-    const root = repoRoot();
-    const r = spawnSync("node", [join(root, "runner/scripts/harness-variants.mjs"), "--check"], { encoding: "utf8" });
-    expect(r.stderr + r.stdout).not.toMatch(/stale|differs/i);
-    expect(r.status).toBe(0);
-  });
-
-  it("use the cursor engine and keep threat detection on Claude", () => {
-    const dir = join(repoRoot(), "templates/harness/cursor-cli/workflows");
-    const files = readdirSync(dir).filter((f) => f.endsWith(".md"));
-    expect(files.length).toBeGreaterThan(5);
-    for (const f of files) {
-      const text = readFileSync(join(dir, f), "utf8");
-      expect(text, f).toMatch(/engine:\s*\n\s+id: cursor/);
-      expect(text, f).toContain("shared/cursor.md");
-    }
-  });
-});
-
-describe("installer --harness", () => {
-  it("switches to Cursor and back, models included", () => {
+describe("installer and the harness", () => {
+  it("switches a repo left on Cursor back to Claude Code, models included", () => {
     const root = repoRoot();
     const dir = mkdtempSync(join(tmpdir(), "bsf-harness-"));
     execFileSync("git", ["init", "-q", dir]);
-    const install = (...extra: string[]) =>
-      execFileSync("node", [join(root, "skill/scripts/install-factory.mjs"), "--into", dir, "--force", ...extra], { encoding: "utf8" });
-    install();
     mkdirSync(join(dir, ".factory/definition"), { recursive: true });
-    writeFileSync(join(dir, ".factory/definition/factory.yaml"), readFileSync(join(root, "templates/definition/factory.yaml"), "utf8"));
-    install("--harness", "cursor-cli");
-    let cfg = parseYaml(readFileSync(join(dir, ".factory/definition/factory.yaml"), "utf8")) as { harness: string; models: Record<string, string> };
-    expect(cfg.harness).toBe("cursor-cli");
-    expect(new Set(Object.values(cfg.models))).toEqual(new Set(["auto"]));
-    expect(readFileSync(join(dir, ".github/workflows/factory-role-builder.lock.yml"), "utf8")).toContain('"agent_id":"cursor"');
-    // A plain reinstall keeps the harness the repo already names.
-    install();
-    expect(readFileSync(join(dir, ".github/workflows/factory-role-builder.md"), "utf8")).toContain("id: cursor");
-    install("--harness", "claude-code");
-    cfg = parseYaml(readFileSync(join(dir, ".factory/definition/factory.yaml"), "utf8")) as typeof cfg;
+    const cursorCfg = readFileSync(join(root, "templates/definition/factory.yaml"), "utf8")
+      .replace("harness: claude-code", "harness: cursor-cli")
+      .replace(/^(  \w+: )claude-[\w.-]+$/gm, "$1auto");
+    writeFileSync(join(dir, ".factory/definition/factory.yaml"), cursorCfg);
+    execFileSync("node", [join(root, "skill/scripts/install-factory.mjs"), "--into", dir], { encoding: "utf8" });
+    const cfg = parseYaml(readFileSync(join(dir, ".factory/definition/factory.yaml"), "utf8")) as { harness: string; models: Record<string, string> };
     expect(cfg.harness).toBe("claude-code");
-    expect(cfg.models["spec"]).toBe("claude-opus-5-5");
-    expect(cfg.models["verifier"]).toBe("claude-haiku-5-5");
-    expect(readFileSync(join(dir, ".github/workflows/factory-role-builder.md"), "utf8")).not.toContain("id: cursor");
+    expect(cfg.models).toMatchObject({ spec: "claude-opus-5-5", builder: "claude-sonnet-5-5", verifier: "claude-haiku-5-5", triage: "claude-haiku-5-5" });
+    expect(readFileSync(join(dir, ".github/workflows/factory-role-builder.md"), "utf8")).toContain("id: claude");
+  });
+});
+
+describe("the budget in the workflows", () => {
+  const AGENT_FILES = readdirSync(WORKFLOWS).filter((f) => /^factory-(role-.*|setup-agent)\.md$/.test(f));
+  const fm = (f: string): Record<string, unknown> => {
+    const text = readFileSync(join(WORKFLOWS, f), "utf8");
+    return parseYaml(text.slice(4, text.indexOf("\n---\n", 4))) as Record<string, unknown>;
+  };
+
+  it("every agent step holds its budget before the agent, with its own cap", () => {
+    for (const f of AGENT_FILES) {
+      const doc = fm(f);
+      const pre = (doc["pre-agent-steps"] as { run?: string }[]).map((s) => s.run ?? "").join("\n");
+      const m = /bsf budget reserve .*--cap (\d+) --detection-model ([\w.-]+) --detection-cap (\d+)/.exec(pre);
+      expect(m, `${f} holds no budget`).not.toBeNull();
+      expect(Number(m![1]), `${f}: --cap differs from max-ai-credits`).toBe(doc["max-ai-credits"]);
+      const det = (doc["safe-outputs"] as { "threat-detection": { engine: { model: string }; "max-ai-credits": number } })["threat-detection"];
+      expect(m![2], f).toBe(det.engine.model);
+      expect(Number(m![3]), `${f}: --detection-cap differs`).toBe(det["max-ai-credits"]);
+      // The hold comes before the sandbox starts or anything is fetched.
+      const steps = doc["pre-agent-steps"] as { name: string }[];
+      const hold = steps.findIndex((s) => s.name === "Hold this step's budget");
+      const sandbox = steps.findIndex((s) => s.name === "Start the sandbox");
+      if (sandbox >= 0) expect(hold, f).toBeLessThan(sandbox);
+    }
+  });
+
+  it("every agent step is capped, and bounds each request the way the budget's margin assumes", () => {
+    for (const f of AGENT_FILES) {
+      const doc = fm(f);
+      expect(typeof doc["max-ai-credits"], `${f} has no credit cap`).toBe("number");
+      const env = (doc["engine"] as { env: Record<string, string> }).env;
+      expect(env["CLAUDE_CODE_DISABLE_1M_CONTEXT"], f).toBe("1");
+      expect(env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"], f).toBe("32000");
+      const det = (doc["safe-outputs"] as { "threat-detection": { engine: { env: Record<string, string> }; "max-ai-credits": number } })["threat-detection"];
+      expect(typeof det["max-ai-credits"], `${f}: detection is uncapped`).toBe("number");
+      expect(det.engine.env["CLAUDE_CODE_DISABLE_1M_CONTEXT"], f).toBe("1");
+      expect(det.engine.env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"], f).toBe("32000");
+    }
+  });
+
+  it("every agent step runs on a model the budget can price", async () => {
+    const { PRICES } = await import("../src/lib/prices.js");
+    const cfg = parseYaml(readFileSync(join(repoRoot(), "templates/definition/factory.yaml"), "utf8")) as { models: Record<string, string> };
+    for (const [role, model] of Object.entries(cfg.models)) expect(PRICES[model], `${role}: ${model} has no price`).toBeDefined();
+    for (const f of AGENT_FILES) {
+      const det = (fm(f)["safe-outputs"] as { "threat-detection": { engine: { model: string } } })["threat-detection"];
+      expect(PRICES[det.engine.model], f).toBeDefined();
+    }
+  });
+
+  it("every agent step passes the model its caller was given, so factory.yaml decides it", () => {
+    for (const f of AGENT_FILES) {
+      expect((fm(f)["engine"] as { model: string }).model, f).toBe("${{ inputs.model }}");
+    }
+  });
+
+  it("every role call is settled with the same key, before the next agent step", () => {
+    for (const f of readdirSync(WORKFLOWS).filter((x) => x.endsWith(".yml"))) {
+      const wf = parseYaml(readFileSync(join(WORKFLOWS, f), "utf8")) as {
+        jobs: Record<string, { uses?: string; needs?: string | string[]; with?: Record<string, string> }>;
+      };
+      for (const [id, job] of Object.entries(wf.jobs ?? {})) {
+        if (!/factory-(role-|setup-agent)/.test(job.uses ?? "")) continue;
+        const key = job.with?.["budget_key"];
+        expect(key, `${f}:${id} passes no budget_key`).toBe(`\${{ github.run_id }}-\${{ github.run_attempt }}-${id}`);
+        const settle = wf.jobs[`${id}-budget`];
+        expect(settle?.uses, `${f}:${id} is never settled`).toBe("./.github/workflows/factory-budget-settle.yml");
+        expect(settle!.with!["key"], f).toBe(key);
+        for (const [other, j] of Object.entries(wf.jobs)) {
+          const needs = ([] as string[]).concat(j.needs ?? []);
+          if (other !== `${id}-budget` && needs.includes(id)) {
+            expect(needs, `${f}:${other} starts before ${id}'s hold is settled`).toContain(`${id}-budget`);
+          }
+        }
+      }
+    }
   });
 });

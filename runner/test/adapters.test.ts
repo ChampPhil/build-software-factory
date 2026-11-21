@@ -74,7 +74,7 @@ describe("adapter registry", () => {
   });
 
   it("three harnesses can run a role today: the two built in, plus Cursor from gh-aw's own definition", () => {
-    expect([...readyHarnesses()].sort()).toEqual(["claude-code", "cursor-cli", "pi"]);
+    expect([...readyHarnesses()].sort()).toEqual(["claude-code"]);
     expect(ADAPTERS["cursor-cli"].status.kind).toBe("vendored");
   });
 

@@ -166,9 +166,14 @@ export class DataRefStore implements Loader {
    * Write a set of files as one commit. Throws RefMoved if another writer got
    * there first, so the caller can re-read and retry rather than clobber.
    */
-  async commit(changes: readonly Change[], message: string): Promise<string> {
+  async commit(changes: readonly Change[], message: string, onParent?: string | null): Promise<string> {
     if (changes.length === 0) throw new Error("nothing to commit");
-    const parent = await this.head();
+    // With onParent the commit is made on the head the caller read from, so
+    // if anyone wrote since, the non-forced ref update fails and the caller
+    // re-reads: a true compare-and-swap. Without it, the head is looked up
+    // here, which suits writes merged after the fact (the ledger) but not
+    // one computed from a value that may already be stale.
+    const parent = onParent === undefined ? await this.head() : onParent;
 
     const entries: Record<string, unknown>[] = [];
     for (const c of changes) {
@@ -199,10 +204,16 @@ export class DataRefStore implements Loader {
     });
 
     if (parent === null) {
-      await this.gh.send("POST", `${this.base}/git/refs`, {
-        ref: this.ref,
-        sha: commit.sha,
-      });
+      try {
+        await this.gh.send("POST", `${this.base}/git/refs`, {
+          ref: this.ref,
+          sha: commit.sha,
+        });
+      } catch (err) {
+        // Someone else created the ref first: the same race, one step earlier.
+        if ((await this.head()) !== null) throw new RefMoved(this.ref);
+        throw err;
+      }
       return commit.sha;
     }
 
@@ -237,6 +248,37 @@ export class DataRefStore implements Loader {
         // Back off a little: concurrent writers are rollup, intake and the
         // end-of-run step, and they finish in well under a second.
         await new Promise((r) => setTimeout(r, 150 * (i + 1)));
+      }
+    }
+    throw lastError;
+  }
+
+  /**
+   * Read one JSON file, compute its next value, and write it on the very
+   * commit it was read from, retrying from a fresh read if the ref moved.
+   * The budget depends on this: two runs reading the same remaining dollar
+   * must not both be told yes.
+   */
+  async updateJson<T, R>(
+    path: string,
+    step: (current: T | null) => { readonly next: T | null; readonly result: R },
+    message: string,
+    attempts = 8,
+  ): Promise<R> {
+    let lastError: unknown;
+    for (let i = 0; i < attempts; i++) {
+      const head = await this.head();
+      const text = head === null ? null : await this.readAt(head, path);
+      const { next, result } = step(text === null ? null : (JSON.parse(text) as T));
+      if (next === null) return result;
+      try {
+        await this.commit([{ path, content: `${JSON.stringify(next, null, 2)}\n` }], message, head);
+        this.lastRead.set(path, `${JSON.stringify(next, null, 2)}\n`);
+        return result;
+      } catch (err) {
+        if (!(err instanceof RefMoved)) throw err;
+        lastError = err;
+        await new Promise((r) => setTimeout(r, 100 * (i + 1) + Math.floor(Math.random() * 100)));
       }
     }
     throw lastError;
