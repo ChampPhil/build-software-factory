@@ -90,6 +90,11 @@ sandbox:
       - ${{ github.workspace }}:/workspace:rw
 
 timeout-minutes: 60
+# gh-aw stops a run at 1,000 AI credits ($10) unless told otherwise. Setup
+# reads the whole repo, designs the sandbox, its checks and its report, and
+# on a real app (trinsports) ran past that and was stopped mid-design. Setup
+# runs once, and rarely after; $20 is the ceiling for one round.
+max-ai-credits: 2000
 
 tools:
   bash: [":*"]
