@@ -511,3 +511,23 @@ describe("host-access role variants", () => {
     expect(r.status).toBe(0);
   });
 });
+
+describe("harness variants", () => {
+  it("are regenerated from the claude-code role workflows", () => {
+    const root = repoRoot();
+    const r = spawnSync("node", [join(root, "runner/scripts/harness-variants.mjs"), "--check"], { encoding: "utf8" });
+    expect(r.stderr + r.stdout).not.toMatch(/stale|differs/i);
+    expect(r.status).toBe(0);
+  });
+
+  it("use the cursor engine and keep threat detection on Claude", () => {
+    const dir = join(repoRoot(), "templates/harness/cursor-cli/workflows");
+    const files = readdirSync(dir).filter((f) => f.endsWith(".md"));
+    expect(files.length).toBeGreaterThan(5);
+    for (const f of files) {
+      const text = readFileSync(join(dir, f), "utf8");
+      expect(text, f).toMatch(/engine:\s*\n\s+id: cursor/);
+      expect(text, f).toContain("shared/cursor.md");
+    }
+  });
+});

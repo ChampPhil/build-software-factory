@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Copies the factory's files into a repository checkout.
 //
-//   node skill/scripts/install-factory.mjs --into PATH [--force] [--dry-run]
+//   node skill/scripts/install-factory.mjs --into PATH [--harness ID] [--force] [--dry-run]
 //
 // Mechanical on purpose. Everything this copies is the factory's own
 // machinery — the runner, the role and pipeline workflows, the definition
@@ -13,7 +13,7 @@
 // replaced whole on every install, upgrades included. Anything else that
 // already exists — the definition, the context, the guardrails — is the
 // user's, and is kept unless --force.
-import { cpSync, existsSync, mkdirSync, readdirSync, statSync, chmodSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, chmodSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -28,7 +28,11 @@ function arg(name) {
 if (process.argv.includes("--help") || process.argv.includes("-h")) {
   console.log(`Copy the factory's own files into a repository checkout.
 
-  node skill/scripts/install-factory.mjs --into PATH [--force] [--dry-run]
+  node skill/scripts/install-factory.mjs --into PATH [--harness ID] [--force] [--dry-run]
+
+--harness picks the agent CLI the role workflows are compiled for:
+claude-code (the default) or cursor-cli. Without it, the harness already named
+in the repo's .factory/definition/factory.yaml is kept.
 
 The runner (.factory/bin) and the factory-* workflows are the factory's own:
 they are replaced whole, and files the new version no longer ships are
@@ -49,7 +53,27 @@ if (!existsSync(join(into, ".git"))) {
   process.exit(2);
 }
 
-/** [source, destination-in-repo]. Directories are copied file by file. */
+/**
+ * The harness: the flag, else what the repo's factory.yaml already says, else
+ * Claude Code. gh-aw fixes the engine at compile time, so another harness
+ * ships its own compiled set (templates/harness/<id>), laid over the default.
+ */
+function currentHarness() {
+  const flag = arg("harness");
+  if (flag !== undefined) return flag;
+  const cfg = join(into, ".factory/definition/factory.yaml");
+  if (!existsSync(cfg)) return "claude-code";
+  const m = /^harness:\s*([\w-]+)/m.exec(readFileSync(cfg, "utf8"));
+  return m === null ? "claude-code" : m[1];
+}
+const harness = currentHarness();
+const harnessDir = join(repoRoot, "templates/harness", harness);
+if (harness !== "claude-code" && !existsSync(join(harnessDir, "compiled"))) {
+  console.error(`no compiled workflows for harness ${harness}; known: claude-code, ${readdirSync(join(repoRoot, "templates/harness")).join(", ")}`);
+  process.exit(2);
+}
+
+/** [source, destination-in-repo]. Directories are copied file by file; later entries win. */
 const PLAN = [
   [join(skill, "runner"), ".factory/bin"],
   [join(repoRoot, "templates/definition"), ".factory/definition"],
@@ -59,6 +83,12 @@ const PLAN = [
   [join(repoRoot, "rules"), ".factory/rules"],
   [join(repoRoot, "templates/workflows"), ".github/workflows"],
   [join(repoRoot, "templates/compiled"), ".github/workflows"],
+  ...(harness === "claude-code"
+    ? []
+    : [
+        [join(harnessDir, "workflows"), ".github/workflows"],
+        [join(harnessDir, "compiled"), ".github/workflows"],
+      ]),
 ];
 
 function files(dir) {
@@ -130,7 +160,16 @@ if (!dryRun) {
   }
 }
 
-console.log(`${dryRun ? "would write" : "wrote"} ${written.length} file(s) into ${into}`);
+// A harness named on the command line is recorded in factory.yaml, which is
+// what the runner and the dashboard read it from.
+const cfgPath = join(into, ".factory/definition/factory.yaml");
+if (arg("harness") !== undefined && existsSync(cfgPath) && !dryRun) {
+  const text = readFileSync(cfgPath, "utf8");
+  const next = text.replace(/^harness:\s*[\w-]+/m, `harness: ${harness}`);
+  if (next !== text) writeFileSync(cfgPath, next);
+}
+
+console.log(`${dryRun ? "would write" : "wrote"} ${written.length} file(s) into ${into} (harness: ${harness})`);
 if (removed.length > 0) {
   console.log(`${dryRun ? "would remove" : "removed"} ${removed.length} file(s) the factory no longer ships:`);
   for (const r of removed.slice(0, 20)) console.log(`  ${r}`);
