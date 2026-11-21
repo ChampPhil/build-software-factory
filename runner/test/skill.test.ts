@@ -152,7 +152,7 @@ describe("preflight.mjs", () => {
     for (const id of ["git-repo", "clean-tree", "gh-auth", "language", "existing-factory"]) {
       expect(ids, `no ${id} check`).toContain(id);
     }
-  });
+  }, 30_000); // it shells out to gh, which can be slow on a shared runner
 
   it("detects the repo from the origin remote", () => {
     const { out } = node("preflight.mjs", ["--json", "--skip-docker"]);
