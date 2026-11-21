@@ -531,3 +531,30 @@ describe("harness variants", () => {
     }
   });
 });
+
+describe("installer --harness", () => {
+  it("switches to Cursor and back, models included", () => {
+    const root = repoRoot();
+    const dir = mkdtempSync(join(tmpdir(), "bsf-harness-"));
+    execFileSync("git", ["init", "-q", dir]);
+    const install = (...extra: string[]) =>
+      execFileSync("node", [join(root, "skill/scripts/install-factory.mjs"), "--into", dir, "--force", ...extra], { encoding: "utf8" });
+    install();
+    mkdirSync(join(dir, ".factory/definition"), { recursive: true });
+    writeFileSync(join(dir, ".factory/definition/factory.yaml"), readFileSync(join(root, "templates/definition/factory.yaml"), "utf8"));
+    install("--harness", "cursor-cli");
+    let cfg = parseYaml(readFileSync(join(dir, ".factory/definition/factory.yaml"), "utf8")) as { harness: string; models: Record<string, string> };
+    expect(cfg.harness).toBe("cursor-cli");
+    expect(new Set(Object.values(cfg.models))).toEqual(new Set(["auto"]));
+    expect(readFileSync(join(dir, ".github/workflows/factory-role-builder.lock.yml"), "utf8")).toContain('"agent_id":"cursor"');
+    // A plain reinstall keeps the harness the repo already names.
+    install();
+    expect(readFileSync(join(dir, ".github/workflows/factory-role-builder.md"), "utf8")).toContain("id: cursor");
+    install("--harness", "claude-code");
+    cfg = parseYaml(readFileSync(join(dir, ".factory/definition/factory.yaml"), "utf8")) as typeof cfg;
+    expect(cfg.harness).toBe("claude-code");
+    expect(cfg.models["spec"]).toBe("claude-opus-5-5");
+    expect(cfg.models["verifier"]).toBe("claude-haiku-5-5");
+    expect(readFileSync(join(dir, ".github/workflows/factory-role-builder.md"), "utf8")).not.toContain("id: cursor");
+  });
+});

@@ -219,7 +219,7 @@ post-steps:
       ROLE: verifier
       ATTEMPT: ${{ inputs.attempt }}
       MODEL: ${{ inputs.model }}
-    run: bsf step-report --role "$ROLE" --attempt "$ATTEMPT" --model "$MODEL" --out /tmp/gh-aw/agent/bsf/step-report.json
+    run: bsf step-report --harness cursor-cli --role "$ROLE" --attempt "$ATTEMPT" --model "$MODEL" --out /tmp/gh-aw/agent/bsf/step-report.json
   - name: Store the verifier's report for the PR
     shell: bash
     env:

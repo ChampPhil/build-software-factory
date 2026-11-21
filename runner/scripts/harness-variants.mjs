@@ -26,6 +26,7 @@ const WORKFLOWS = join(ROOT, "templates/workflows");
 /** The harnesses with a gh-aw engine definition, keyed by factory.yaml's `harness`. */
 export const HARNESSES = {
   "cursor-cli": {
+    id: "cursor-cli",
     engine: "cursor",
     definition: join(ROOT, "adapters/cursor-cli.md"),
     shared: "shared/cursor.md",
@@ -54,6 +55,8 @@ export function harnessVariant(source, name, harness) {
     /(\n    engine:\n      id: claude\n      model: claude-haiku-5-5\n      max-turns: 3\n)/,
     "$1      env:\n        ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}\n",
   );
+  // The StepReport names the harness that did the work.
+  fm = fm.replace(/run: bsf step-report --role /g, "run: bsf step-report --harness " + harness.id + " --role ");
   return fm + body;
 }
 

@@ -165,7 +165,14 @@ if (!dryRun) {
 const cfgPath = join(into, ".factory/definition/factory.yaml");
 if (arg("harness") !== undefined && existsSync(cfgPath) && !dryRun) {
   const text = readFileSync(cfgPath, "utf8");
-  const next = text.replace(/^harness:\s*[\w-]+/m, `harness: ${harness}`);
+  let next = text.replace(/^harness:\s*[\w-]+/m, `harness: ${harness}`);
+  // Each harness names models its own way. Claude model ids mean nothing to
+  // Cursor, so they become Cursor's "auto" (its own pick, billed by Cursor);
+  // the owner can name a specific Cursor model per role afterwards.
+  if (harness === "cursor-cli") next = next.replace(/^(  \w+: )claude-[\w.-]+$/gm, "$1auto");
+  if (harness === "claude-code") next = next.replace(/^(  (triage|verifier|scorer): )auto$/gm, "$1claude-haiku-5-5")
+    .replace(/^(  spec: )auto$/gm, "$1claude-opus-5-5")
+    .replace(/^(  \w+: )auto$/gm, "$1claude-sonnet-5-5");
   if (next !== text) writeFileSync(cfgPath, next);
 }
 

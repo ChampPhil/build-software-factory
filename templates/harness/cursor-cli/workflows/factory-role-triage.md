@@ -196,7 +196,7 @@ post-steps:
       ROLE: triage
       ATTEMPT: ${{ inputs.attempt }}
       MODEL: ${{ inputs.model }}
-    run: bsf step-report --role "$ROLE" --attempt "$ATTEMPT" --model "$MODEL" --out /tmp/gh-aw/agent/bsf/step-report.json
+    run: bsf step-report --harness cursor-cli --role "$ROLE" --attempt "$ATTEMPT" --model "$MODEL" --out /tmp/gh-aw/agent/bsf/step-report.json
   # The run record is made from these: model, tokens and cost for each role.
   - name: Upload the StepReport
     if: always()
