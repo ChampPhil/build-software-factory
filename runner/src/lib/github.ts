@@ -198,7 +198,8 @@ export class GitHub {
   async reportCheck(opts: {
     readonly name: string;
     readonly headSha: string;
-    readonly conclusion: "success" | "failure" | "neutral" | "skipped";
+    /** "pending" leaves the check in progress (yellow): it waits on something, nothing is wrong. */
+    readonly conclusion: "success" | "failure" | "neutral" | "skipped" | "pending";
     readonly title: string;
     readonly summary: string;
     readonly text?: string;
@@ -206,9 +207,9 @@ export class GitHub {
     await this.send("POST", `${this.base}/check-runs`, {
       name: opts.name,
       head_sha: opts.headSha,
-      status: "completed",
-      conclusion: opts.conclusion,
-      completed_at: new Date().toISOString(),
+      ...(opts.conclusion === "pending"
+        ? { status: "in_progress" }
+        : { status: "completed", conclusion: opts.conclusion, completed_at: new Date().toISOString() }),
       output: {
         title: opts.title,
         // GitHub caps the summary at 65535 characters.

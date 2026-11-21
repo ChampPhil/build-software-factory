@@ -240,21 +240,45 @@ export async function runPolicyCommand(opts: PolicyRunOptions): Promise<PolicyRe
   const result = runPolicy({ policy, pr, appLogins: opts.appLogins });
 
   if (opts.report) {
+    const waiting = awaitingApproval(result);
     await opts.gh.reportCheck({
       name: opts.checkName,
       headSha: pr.head_sha,
-      conclusion: result.conclusion === "success" ? "success" : "failure",
-      title: result.conclusion === "success" ? "Policy passed" : "Policy failed",
+      conclusion: result.conclusion === "success" ? "success" : waiting ? "pending" : "failure",
+      title: result.conclusion === "success" ? "Policy passed" : waiting ? "Awaiting your approval" : "Policy failed",
       summary: summarize(result),
     });
   }
   return result;
 }
 
+/** Failures a trusted person's approval clears: the PR is fine, it is waiting on them. */
+const APPROVAL_CLEARS = new Set(["definition_without_approval", "protected_path"]);
+
+/**
+ * True when the only thing between this PR and a pass is a trusted human's
+ * approval. Then the check waits (yellow) rather than fails (red): red is for
+ * a PR that is wrong, and this one is not.
+ */
+export function awaitingApproval(result: PolicyResult): boolean {
+  return result.conclusion !== "success" && result.failures.length > 0 && result.failures.every((f) => APPROVAL_CLEARS.has(f.kind));
+}
+
 export function summarize(result: PolicyResult): string {
   const lines: string[] = [];
   if (result.conclusion === "success") {
     lines.push("Every changed path is one this pipeline may change.");
+  } else if (awaitingApproval(result)) {
+    lines.push(
+      "Nothing is wrong with this PR. It changes files that need a trusted person's approval, so it waits for one: " +
+        "approve the PR and this check turns green.",
+      "",
+    );
+    for (const f of result.failures) {
+      for (const file of f.files.slice(0, 50)) lines.push(`- \`${file}\``);
+      if (f.files.length > 50) lines.push(`- …and ${f.files.length - 50} more`);
+    }
+    lines.push("");
   } else {
     lines.push(`${result.failures.length} problem(s):`, "");
     for (const f of result.failures) {

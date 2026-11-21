@@ -560,6 +560,14 @@ async function main(argv: readonly string[]): Promise<number> {
         for (const n of result.notes) process.stdout.write(`  note: ${n}\n`);
         return 0;
       }
+      const { awaitingApproval } = await import("./commands/policy-run.js");
+      if (awaitingApproval(result)) {
+        // Waiting is not failing: the job stays green and factory/policy
+        // stays yellow until a trusted person approves.
+        process.stdout.write("policy: awaiting a trusted approval\n");
+        for (const f of result.failures) process.stdout.write(`  ${f.kind}: ${f.message}\n`);
+        return 0;
+      }
       process.stdout.write("policy: fail\n");
       for (const f of result.failures) {
         process.stdout.write(`  ${f.kind}: ${f.message}\n`);

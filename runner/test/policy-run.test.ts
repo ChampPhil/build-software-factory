@@ -187,10 +187,10 @@ describe("the check-run summary", () => {
   it("names each failure and lists its files", () => {
     const text = summarize({
       conclusion: "failure",
-      failures: [{ kind: "protected_path", files: [".github/workflows/x.yml"], message: "nope" }],
+      failures: [{ kind: "undeclared_test_edit", files: [".github/workflows/x.yml"], message: "nope" }],
       notes: [],
     });
-    expect(text).toContain("protected_path");
+    expect(text).toContain("undeclared_test_edit");
     expect(text).toContain(".github/workflows/x.yml");
   });
 

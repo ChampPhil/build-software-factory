@@ -35,3 +35,23 @@ describe("an approval carries to a rebuilt PR only when the change is the same",
     expect(sameChange(approved, [{ filename: "app/invoices/page.tsx" }]).same).toBe(false);
   });
 });
+
+describe("factory/policy when only an approval is missing", async () => {
+  const { awaitingApproval, summarize } = await import("../src/commands/policy-run.js");
+  const fail = (kinds: string[]) => ({
+    conclusion: "failure" as const,
+    failures: kinds.map((kind) => ({ kind, message: "m", files: [".factory/sandbox/manifest.json"] })),
+    notes: [],
+  });
+
+  it("waits (yellow) when a trusted approval is all it lacks, so a fine PR never shows red", () => {
+    expect(awaitingApproval(fail(["protected_path"]) as never)).toBe(true);
+    expect(awaitingApproval(fail(["protected_path", "definition_without_approval"]) as never)).toBe(true);
+    expect(summarize(fail(["protected_path"]) as never)).toMatch(/Nothing is wrong with this PR/);
+  });
+
+  it("fails (red) when anything else is wrong too", () => {
+    expect(awaitingApproval(fail(["protected_path", "path_not_allowed_for_pipeline"]) as never)).toBe(false);
+    expect(awaitingApproval(fail(["undeclared_test_edit"]) as never)).toBe(false);
+  });
+});
