@@ -10,9 +10,9 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ["templates/workflows/**", "templates/harness/**", ".github/workflows/ghaw-compile.yml", "runner/src/cli.ts"]
+    paths: ["templates/workflows/**", "templates/harness/**", "tests/live/workflows/**", ".github/workflows/ghaw-compile.yml", "runner/src/cli.ts"]
   pull_request:
-    paths: ["templates/workflows/**", "templates/harness/**", ".github/workflows/ghaw-compile.yml", "runner/src/cli.ts"]
+    paths: ["templates/workflows/**", "templates/harness/**", "tests/live/workflows/**", ".github/workflows/ghaw-compile.yml", "runner/src/cli.ts"]
 
 permissions:
   contents: write
@@ -77,6 +77,16 @@ jobs:
       # and every call into a reusable workflow against that workflow's declared
       # inputs and secrets — which is why it runs here, after the role lock
       # files it validates those calls against exist.
+      - name: Compile the live tests
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -o pipefail
+          rm -rf /tmp/live && mkdir -p /tmp/live/.github/workflows
+          cp tests/live/workflows/*.md /tmp/live/.github/workflows/
+          (cd /tmp/live && git init -q && git config user.email ci@example.com && git config user.name ci \
+            && git add -A && git commit -qm scratch && gh aw compile --strict --approve 2>&1 | tee /tmp/compile-live.log)
+
       - name: Lint the pipeline workflows against the compiled roles
         run: |
           cp templates/workflows/*.yml /tmp/scratch/.github/workflows/
@@ -101,7 +111,9 @@ jobs:
             mkdir -p "$dir/compiled" && rm -f "$dir/compiled/"*.lock.yml
             cp "/tmp/harness-$id/.github/workflows/"*.lock.yml "$dir/compiled/"
           done
-          git add templates/compiled templates/harness
+          mkdir -p tests/live/compiled && rm -f tests/live/compiled/*.lock.yml
+          cp /tmp/live/.github/workflows/*.lock.yml tests/live/compiled/
+          git add templates/compiled templates/harness tests/live/compiled
           if git diff --cached --quiet; then echo "compiled roles unchanged"; exit 0; fi
           git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
             commit -m "Recompile the role templates with gh-aw $(gh aw version 2>/dev/null | head -1)"
