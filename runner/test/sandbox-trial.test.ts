@@ -4,10 +4,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { trialSandbox, reachedTier } from "../src/commands/sandbox.js";
 
+/** A command that passes only where the repo is: the trial's control runs it in an empty directory. */
+const OWN = "test -f candidate.json";
+
 function manifest(over: Record<string, unknown>): Record<string, unknown> {
   return {
     schema: "sandbox/1", tier: "renders", tier_reason: null,
-    commands: { install: "true", build: "true", run: null, test: "true" },
+    commands: { install: "true", build: OWN, run: null, test: OWN },
     app_url: null, env: [], services: [], egress: [], stubs: [], dropped: [],
     capabilities: { exercised: ["x"], not_exercised: [] },
     episode: [{ attempt: 1, tried: "t", observed: "o", changed: null }],
@@ -26,10 +29,18 @@ function setup(m: Record<string, unknown>): { dir: string; path: string; out: st
 const SERVER = `node -e "require('http').createServer((q,r)=>r.end(process.env.GREETING||'none')).listen(43117)"`;
 
 describe("a trial measures the tier; it does not take the manifest's word", () => {
+  it("does not count commands that pass with no code under them: a guarded no-op is static", async () => {
+    const guarded = "if [ -f go.mod ]; then go test ./...; else echo 'no go.mod yet'; fi";
+    const { dir, path, out } = setup(manifest({ tier: "build_and_test", commands: { install: null, build: guarded, run: null, test: guarded } }));
+    const r = await trialSandbox({ manifestPath: path, workspace: dir, out, log: () => {} });
+    expect(r.reached).toBe("static");
+    expect(r.steps.find((s) => s.step === "control")?.tail).toContain("also pass in an empty directory");
+  });
+
   it("reaches renders when the app answers and a screenshot is taken", async () => {
     const { dir, path, out } = setup(
       manifest({
-        commands: { install: "true", build: "true", run: SERVER, test: "true" },
+        commands: { install: "true", build: OWN, run: SERVER, test: OWN },
         app_url: "http://127.0.0.1:43117/",
         env: [{ name: "GREETING", kind: "self", value: "hello", why: "w" }],
       }),
@@ -50,7 +61,7 @@ describe("a trial measures the tier; it does not take the manifest's word", () =
 
   it("is build_and_test when the app never answers, and says the claim was not met", async () => {
     const { dir, path, out } = setup(
-      manifest({ commands: { install: "true", build: "true", run: "sleep 30", test: "true" }, app_url: "http://127.0.0.1:43118/" }),
+      manifest({ commands: { install: "true", build: OWN, run: "sleep 30", test: OWN }, app_url: "http://127.0.0.1:43118/" }),
     );
     const r = await trialSandbox({ manifestPath: path, workspace: dir, out, appWaitMs: 3000, screenshot: () => true, log: () => {} });
     expect(r.reached).toBe("build_and_test");
@@ -89,7 +100,7 @@ describe("freezing", () => {
   it("takes the best measured round, at the tier it reached rather than the one claimed", async () => {
     const a = setup(manifest({ commands: { install: "true", build: "true", run: null, test: "exit 1" } }));
     await trialSandbox({ manifestPath: a.path, workspace: a.dir, out: a.out, log: () => {} });
-    const b = setup(manifest({ commands: { install: "true", build: "true", run: null, test: "true" } }));
+    const b = setup(manifest({ commands: { install: "true", build: OWN, run: null, test: OWN } }));
     await trialSandbox({ manifestPath: b.path, workspace: b.dir, out: b.out, log: () => {} });
     const { freezeManifest } = await import("../src/commands/sandbox.js");
     const { manifest: m, chosen } = freezeManifest(

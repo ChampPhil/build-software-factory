@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { connect } from "node:net";
 import { dirname, join } from "node:path";
 import { resolveRead } from "../lib/config.js";
@@ -230,7 +231,7 @@ export function tierAtLeast(a: Tier, b: Tier): boolean {
 }
 
 export interface StepOutcome {
-  readonly step: "install" | "build" | "test" | "run" | "screenshot";
+  readonly step: "install" | "build" | "test" | "run" | "screenshot" | "control";
   readonly command: string | null;
   readonly ok: boolean;
   readonly exit: number | null;
@@ -261,6 +262,9 @@ export function reachedTier(steps: readonly StepOutcome[], appOk: boolean, scree
   const failed = (s: StepOutcome["step"]): boolean => steps.some((x) => x.step === s && !x.ok);
   const ran = (s: StepOutcome["step"]): boolean => steps.some((x) => x.step === s && x.command !== null);
   if (failed("install") || failed("build") || failed("test")) return "static";
+  // The control: the same build and test, run in an empty directory, also
+  // passed. Commands that pass with no code under them test nothing here.
+  if (failed("control")) return "static";
   // Nothing to build or test still counts: a repo with no test suite can
   // build_and_test when it builds, and a repo with neither is static.
   if (!ran("build") && !ran("test") && !ran("install")) return "static";
@@ -347,6 +351,24 @@ export async function trialSandbox(opts: {
     }
     if (steps.every((s) => s.ok) && run("install", m.commands.install) && run("build", m.commands.build)) {
       run("test", m.commands.test);
+    }
+    // A command can pass without exercising anything — guarded on a file the
+    // repo does not have, or an echo. The same build and test are run once
+    // more in an empty directory: if they pass there too, they are not
+    // building or testing this repo, whatever the manifest says. Language
+    // blind: it asks only whether the commands depend on the code.
+    const real = [m.commands.build, m.commands.test].filter((c): c is string => c !== null);
+    if (real.length > 0 && steps.every((s) => s.ok)) {
+      const empty = mkdtempSync(join(tmpdir(), "bsf-control-"));
+      const t0 = Date.now();
+      const passedEmpty = real.every((c) => spawnSync("bash", ["-c", c], { cwd: empty, env: runEnv, encoding: "utf8", timeout: 10 * 60 * 1000 }).status === 0);
+      steps.push({
+        step: "control", command: real.join(" && "), ok: !passedEmpty, exit: null,
+        seconds: Math.round((Date.now() - t0) / 1000),
+        tail: passedEmpty
+          ? "the build and test commands also pass in an empty directory, so they do not build or test this repo"
+          : "the build and test commands fail in an empty directory: they depend on this repo's code",
+      });
     }
   }
 
