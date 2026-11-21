@@ -270,6 +270,24 @@ export async function runIntakeCommand(opts: IntakeRunOptions): Promise<IntakeRu
   const cursor = cursorDoc?.cursor ?? 0;
   const ledger = await store.ledger(opts.now);
 
+  // An issue whose own intake run never got to record it — GitHub keeps one
+  // pending run per concurrency group and cancels the rest, so three issues
+  // opened together started three runs and two were dropped — is picked up
+  // here from the issue list, so no request is lost however the runs fall.
+  if (opts.triggers.issues) {
+    const missed = await missedIssues(opts.gh, store, queued, ledger, opts.now, opts.policy.trust.associations).catch(() => []);
+    if (missed.length > 0) {
+      queued.push(...missed);
+      await store.data.commitWithRetry(
+        async () => {
+          const text = (await store.data.read(INCOMING)) ?? "";
+          return [{ path: INCOMING, content: `${text}${missed.map((e) => JSON.stringify(e)).join("\n")}\n` }];
+        },
+        `intake: recover ${missed.length} issue(s) whose events were dropped`,
+      );
+    }
+  }
+
   const openItems: LedgerOpenItem[] = ledger.open.map((o) => ({
     work_item: o.work_item,
     status: o.status,
@@ -400,4 +418,73 @@ export async function runIntakeCommand(opts: IntakeRunOptions): Promise<IntakeRu
   }
 
   return { result, dispatched, commit, decision };
+}
+
+/* ----------------------------------------------------------- missed issues */
+
+const CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+
+/** The time a ULID-based id (wi_…) was made, in ms; null when it is not one. */
+export function ulidTime(id: string): number | null {
+  const u = id.replace(/^[a-z]+_/, "").slice(0, 10).toUpperCase();
+  if (u.length !== 10) return null;
+  let t = 0;
+  for (const ch of u) {
+    const v = CROCKFORD.indexOf(ch);
+    if (v < 0) return null;
+    t = t * 32 + v;
+  }
+  return t;
+}
+
+const RECOVERY_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Open issues from the last day that no event, open item or recent work item
+ * knows about: requests whose own intake run was dropped before it recorded
+ * them.
+ */
+export async function missedIssues(
+  gh: GitHub,
+  store: FactoryStore,
+  queued: readonly IncomingEvent[],
+  ledger: { readonly open: readonly { readonly source_ref?: string | null }[] },
+  now: string,
+  trusted: readonly string[],
+): Promise<IncomingEvent[]> {
+  const since = Date.parse(now) - RECOVERY_WINDOW_MS;
+  const issues = await gh.get<
+    { number: number; title: string; body?: string | null; created_at: string; pull_request?: unknown; author_association?: string; user?: { login?: string; type?: string }; labels?: { name?: string }[] }[]
+  >(`repos/${gh.repo}/issues?state=open&sort=created&direction=desc&per_page=50`);
+  const recent = issues.filter((i) => i.pull_request === undefined && Date.parse(i.created_at) >= since);
+  if (recent.length === 0) return [];
+
+  const known = new Set<string>();
+  for (const e of queued) if (e.ref !== undefined && e.ref !== null) known.add(e.ref);
+  for (const o of ledger.open) if (o.source_ref != null) known.add(o.source_ref);
+  for (const path of await store.data.list("work-items/")) {
+    const t = ulidTime(path.slice("work-items/".length));
+    if (t === null || t < since - 60_000) continue;
+    const doc = await store.data.readJson<{ source?: { ref?: string | null } }>(path);
+    const ref = doc?.source?.ref;
+    if (typeof ref === "string") known.add(ref);
+  }
+
+  const out: IncomingEvent[] = [];
+  for (const i of recent) {
+    if (known.has(`#${i.number}`)) continue;
+    // A bot's issue is never a request (intake ignores it), so it would come
+    // back as "missed" on every run.
+    if (i.user?.type === "Bot" || /\[bot\]$/.test(i.user?.login ?? "")) continue;
+    const ev = normalizeEvent("issues", { action: "opened", issue: i, sender: i.user } as Payload, now);
+    if (ev === null) continue;
+    out.push({
+      ...ev,
+      id: ev.id + out.length,
+      // The issue's own time, so its work item sorts where it was asked.
+      at: i.created_at,
+      actor_association: (await effectiveAssociation(gh, ev.actor, ev.actor_association ?? "NONE", trusted)) as typeof ev.actor_association,
+    });
+  }
+  return out;
 }
