@@ -527,8 +527,12 @@ export function inadequacyKey(r: InadequacyReport): string {
 
 /* ------------------------------------------------------------- host access */
 
-/** The one runner port a host-access role may reach; see scripts/host-variants.mjs. */
+/** The runner ports a host-access role may reach: the app, then up to three services. See scripts/host-variants.mjs. */
 export const HOST_APP_PORT = 8787;
+export const HOST_SERVICE_PORTS = [8788, 8789, 8790] as const;
+
+/** The environment for the agent's own shell: every service address rewritten to where the container reaches it. */
+export const AGENT_ENV = ".factory/sandbox/.agent.env";
 
 /**
  * Whether the sandbox needs the runner itself: services, or stubs answering
@@ -539,11 +543,23 @@ export function needsHost(m: SandboxManifest): boolean {
   return m.services.length > 0 || (m.stubs ?? []).some((s) => (s.hosts ?? []).length > 0);
 }
 
+/** The closed environment as the agent's container sees it: 127.0.0.1:<service> becomes host.docker.internal:<forward>. */
+export function agentEnv(m: SandboxManifest, env: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = { ...env };
+  m.services.slice(0, HOST_SERVICE_PORTS.length).forEach((svc, i) => {
+    const to = `host.docker.internal:${HOST_SERVICE_PORTS[i]}`;
+    const re = new RegExp(`(127\\.0\\.0\\.1|localhost):${svc.port}(?![0-9])`, "g");
+    for (const k of Object.keys(out)) out[k] = (out[k] ?? "").replace(re, to);
+  });
+  return out;
+}
+
 /**
- * Run the app on the runner, in the closed environment, and expose it on
- * HOST_APP_PORT for the agent's container. The agent edits the workspace the
- * runner serves from, so a dev server reloads with every change. Writes
- * where the agent finds it.
+ * Bring the sandbox within the agent's reach. Each service is forwarded on
+ * one of the agent's ports, and the agent's shell gets an environment that
+ * points there. The app, if the manifest runs one, runs on the runner in the
+ * closed environment and restarts whenever the workspace changes — the agent
+ * edits the same files — so what it opens is always its latest change.
  */
 export async function serveOnHost(opts: {
   readonly manifest: SandboxManifest;
@@ -551,39 +567,77 @@ export async function serveOnHost(opts: {
   readonly env: Record<string, string>;
   readonly infoFile: string;
   readonly log: (l: string) => void;
-}): Promise<{ url: string } | null> {
+}): Promise<{ url: string | null; services: readonly string[] }> {
   const m = opts.manifest;
-  if (m.commands.run === null || m.app_url == null) return null;
-  const target = new URL(m.app_url);
-  const appPort = Number(target.port || (target.protocol === "https:" ? 443 : 80));
+  const forwards: string[] = [];
+  m.services.slice(0, HOST_SERVICE_PORTS.length).forEach((svc, i) => {
+    forward(HOST_SERVICE_PORTS[i] as number, svc.port);
+    forwards.push(`${svc.name}: host.docker.internal:${HOST_SERVICE_PORTS[i]}`);
+  });
+  if (m.services.length > HOST_SERVICE_PORTS.length) {
+    opts.log(`only the first ${HOST_SERVICE_PORTS.length} services are within the agent's reach; the rest run for the app only`);
+  }
+  writeFileSync(join(opts.workspace, AGENT_ENV), toEnvFile(agentEnv(m, opts.env)), { mode: 0o600 });
+  excludeFromGit(opts.workspace, AGENT_ENV);
+
   const logDir = join(process.env["RUNNER_TEMP"] ?? tmpdir(), "bsf-app");
   mkdirSync(logDir, { recursive: true });
-  const out = openSync(join(logDir, "app.log"), "a");
-  opts.log(`running the app on the runner: ${m.commands.run}`);
-  const child = spawn("bash", ["-c", m.commands.run], { cwd: opts.workspace, env: { ...shellBase(), ...opts.env }, detached: true, stdio: ["ignore", out, out] });
-  child.unref();
-  const deadline = Date.now() + 240_000;
-  let status: number | null = null;
-  while (Date.now() < deadline) {
-    status = await httpStatus(m.app_url);
-    if (status !== null && status < 500) break;
-    await new Promise((r) => setTimeout(r, 2000));
+  let url: string | null = null;
+  if (m.commands.run !== null && m.app_url != null) {
+    const target = new URL(m.app_url);
+    const appPort = Number(target.port || (target.protocol === "https:" ? 443 : 80));
+    opts.log(`running the app on the runner, restarted on every change: ${m.commands.run}`);
+    const out = openSync(join(logDir, "app.log"), "a");
+    const sup = spawn(process.execPath, ["--input-type=module", "-e", SUPERVISOR_SOURCE, m.commands.run, opts.workspace], {
+      cwd: opts.workspace, env: { ...shellBase(), ...opts.env }, detached: true, stdio: ["ignore", out, out],
+    });
+    sup.unref();
+    const deadline = Date.now() + 240_000;
+    let status: number | null = null;
+    while (Date.now() < deadline) {
+      status = await httpStatus(m.app_url);
+      if (status !== null && status < 500) break;
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+    if (status === null || status >= 500) {
+      opts.log(`the app did not answer at ${m.app_url} (see ${logDir}/app.log)`);
+    } else {
+      forward(HOST_APP_PORT, appPort);
+      url = `${target.protocol}//host.docker.internal:${HOST_APP_PORT}${target.pathname}${target.search}`;
+      opts.log(`the app answers at ${m.app_url}; the agent reaches it at ${url}`);
+    }
   }
-  if (status === null || status >= 500) {
-    opts.log(`the app did not answer at ${m.app_url} (see ${logDir}/app.log); the agent will start its own`);
-    return null;
-  }
-  // A plain TCP forward from every interface to the app, which may listen
-  // on 127.0.0.1 only; the agent's container reaches the runner through it.
-  const fwd = spawn(process.execPath, ["--input-type=module", "-e", FORWARD_SOURCE, String(HOST_APP_PORT), String(appPort)], { detached: true, stdio: "ignore" });
-  fwd.unref();
-  const url = `${target.protocol}//host.docker.internal:${HOST_APP_PORT}${target.pathname}${target.search}`;
   mkdirSync(dirname(opts.infoFile), { recursive: true });
-  writeFileSync(opts.infoFile, `${JSON.stringify({ url, runner_url: m.app_url, log: join(logDir, "app.log") }, null, 2)}\n`);
-  opts.log(`the app answers at ${m.app_url}; the agent reaches it at ${url}`);
-  return { url };
+  writeFileSync(
+    opts.infoFile,
+    `${JSON.stringify({ url, services: forwards, env_file: AGENT_ENV, restarts_on_change: url !== null, log: join(logDir, "app.log") }, null, 2)}\n`,
+  );
+  return { url, services: forwards };
+}
+
+function forward(listen: number, to: number): void {
+  spawn(process.execPath, ["--input-type=module", "-e", FORWARD_SOURCE, String(listen), String(to)], { detached: true, stdio: "ignore" }).unref();
+}
+
+function excludeFromGit(workspace: string, path: string): void {
+  const exclude = join(workspace, ".git/info/exclude");
+  if (!existsSync(join(workspace, ".git"))) return;
+  mkdirSync(join(workspace, ".git/info"), { recursive: true });
+  const current = existsSync(exclude) ? readFileSync(exclude, "utf8") : "";
+  if (!current.split("\n").includes(path)) appendFileSync(exclude, `${path}\n`);
 }
 
 const FORWARD_SOURCE = `import net from "node:net";
 const [listen, to] = process.argv.slice(1).map(Number);
 net.createServer((c) => { const u = net.connect(to, "127.0.0.1"); c.pipe(u).pipe(c); u.on("error", () => c.destroy()); c.on("error", () => u.destroy()); }).listen(listen, "0.0.0.0");`;
+
+/** Runs the app and restarts it, debounced, when a file it serves from changes. */
+const SUPERVISOR_SOURCE = `import { spawn } from "node:child_process";
+import { watch } from "node:fs";
+const [cmd, dir] = process.argv.slice(1);
+const IGNORE = /(^|\\/)(\\.git|node_modules|\\.venv|venv|target|bin|obj|dist|build|\\.next|coverage|__pycache__|\\.factory\\/sandbox)(\\/|$)/;
+let child = null, timer = null;
+const start = () => { child = spawn("bash", ["-c", cmd], { cwd: dir, stdio: "inherit", detached: true }); console.log("[bsf] app started"); };
+const restart = () => { try { process.kill(-child.pid, "SIGTERM"); } catch {} setTimeout(start, 1500); console.log("[bsf] a file changed; restarting the app"); };
+start();
+watch(dir, { recursive: true }, (_e, f) => { if (!f || IGNORE.test(f)) return; clearTimeout(timer); timer = setTimeout(restart, 1500); });`;

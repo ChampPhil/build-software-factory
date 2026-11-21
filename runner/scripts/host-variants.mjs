@@ -19,6 +19,8 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const HOST_APP_PORT = 8787;
+/** The app, then up to three services forwarded for the agent's own shell. */
+export const HOST_PORTS = [8787, 8788, 8789, 8790];
 export const ROLES = ["builder", "verifier"];
 const DIR = join(dirname(fileURLToPath(import.meta.url)), "../../templates/workflows");
 
@@ -34,11 +36,11 @@ export function hostVariant(source, role) {
   const insert =
     "\nsandbox:\n  agent:\n" +
     "    # Host-access variant, derived by runner/scripts/host-variants.mjs: the app\n" +
-    "    # runs on the runner with its services and stubs, and this is the one\n" +
-    "    # port the agent may reach it on. Chosen only when the frozen manifest\n" +
+    "    # runs on the runner with its services and stubs, and these are the only\n" +
+    "    # ports the agent may reach there. Chosen only when the frozen manifest\n" +
     "    # needs the runner; it is weaker isolation, and setup says so.\n" +
     "    runtime: docker-sudo-iptables\n" +
-    `    allow-host-ports: [${HOST_APP_PORT}]\n`;
+    `    allow-host-ports: [${HOST_PORTS.join(", ")}]\n`;
   fm = fm.replace("\nsandbox:\n  agent:\n", insert);
   fm = fm.replace(/^name: (.*)$/m, (_m, n) => `name: ${n.replace(/^"|"$/g, "")} (host access)`);
   return `${fm}${body}`;

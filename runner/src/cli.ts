@@ -1453,7 +1453,7 @@ async function sandboxCommandCli(second: string | undefined, args: Args): Promis
         infoFile: "/tmp/gh-aw/agent/bsf/app.json",
         log: (l) => process.stdout.write(`${l}\n`),
       });
-      setOutput("app_url", served?.url ?? "");
+      setOutput("app_url", served.url ?? "");
     }
     return 0;
   }
