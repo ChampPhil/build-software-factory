@@ -1398,6 +1398,15 @@ async function practiceCommand(second: string | undefined, rest: readonly string
 
 async function sandboxCommandCli(second: string | undefined, args: Args): Promise<number> {
   if (second === "start") {
+    // --if-present: the gates run on every PR, including those opened before
+    // setup has frozen a sandbox. There the tests gate decides (the repo's
+    // own test check, or a failure saying setup has not finished); starting
+    // nothing is not itself an error.
+    if (args["if-present"] === true && loadManifest(process.cwd()).kind === "missing") {
+      process.stdout.write("no sandbox yet: setup has not frozen one on the default branch\n");
+      setOutput("tier", "none");
+      return 0;
+    }
     const r = await startSandbox({
       root: process.cwd(),
       workspace: process.env["GITHUB_WORKSPACE"] ?? process.cwd(),
