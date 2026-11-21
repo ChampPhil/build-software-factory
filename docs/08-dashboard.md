@@ -146,7 +146,7 @@ The Factory page shows the whole factory definition in readable form and lets a 
 | **Autonomy** | The three auto-merge toggles, with each pipeline's revert rate and scorer pass rate as context | Toggle on/off |
 | **Models** | The model for each role, with cost per run and score from the last benchmark | Pick a model per role |
 | **Schedules** | Gardening time and max PRs per night; review cadence and thresholds | Edit values |
-| **Budget** | Monthly model budget and Actions minutes limit, each pipeline's share of both and its use, projection, the 110% product-work limit | Edit limits and shares |
+| **Budget** | Monthly model budget and Actions minutes limit, each pipeline's share and its use (spent, and held by running steps), projection | Edit limits and shares |
 | **Roles and context** | Each role's prompt and the four context files, rendered, with the source id on each factory-added line | View (edits go through a definition PR in GitHub) |
 | **Trust and triggers** | Trusted associations, accept label, enabled trigger sources, Slack/Linear/Sentry connection status | Enable/disable triggers |
 | **Enforcement** | Plan detected, branch protection on/off, audit mode, private data storage, session capture on/off and why | Turn on audit revert PRs |

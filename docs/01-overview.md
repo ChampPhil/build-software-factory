@@ -45,7 +45,7 @@ Every part of the factory exists to enforce these principles.
   - Human "code review" shifts to reviewing verification artifacts: screenshots, diagrams, videos.
   - Runtime verification is required; formal verification is used where it's needed.
 - **Open, adaptable and defined in code.**
-  - *Open* → supports open-weight and frontier models, and any agent harness.
+  - *Open* → built from open tools (gh-aw, memex, Semgrep, Playwright), with no hosted service. Its agents run on Claude Code, the one harness whose spend its budget is proven to stop.
   - *Adaptable* → works with the infrastructure, tools and conventions the team already has.
   - *Defined in code* → a strict, version-controlled definition of the factory, including its skills and workflows.
 - **Every agent and human trace is recorded and used for improvement.**

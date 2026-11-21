@@ -53,10 +53,16 @@ this to the user; it is the reason they can leave it running.
 gh-aw updates. Without it, lock files are updated by re-running this skill.
 Offer it; do not insist.
 
-## 3. Model API keys
+## 3. The model API key
 
-One repo secret per harness the user enabled. `gh secret set` reads from stdin,
-so the key never appears in a process list.
+One repo secret, `ANTHROPIC_API_KEY`: the factory's agents all run on Claude
+Code. `gh secret set` reads from stdin, so the key never appears in a process
+list.
+
+Suggest, once, that they make this key in its own Anthropic Console workspace
+with a monthly spend limit at or a little above the factory's budget. The
+factory's budget already stops before it can be passed; the workspace limit is
+Anthropic stopping it too, if anything were ever wrong in the factory.
 
 ## 4. Estimate the budget
 
@@ -72,7 +78,15 @@ it overrun, and says so. Show the user that number. It is the one most likely
 to surprise them.
 
 The user confirms or changes the budget, the minutes limit and the shares
-(default: product 60%, gardening 25%, review and benchmarks 15%).
+(default: $35 a month; product 60%, gardening 25%, review and benchmarks 15%).
+
+Say what the budget guarantees, in these words or close to them: **the
+factory will stop before it spends more than this, even if that means
+stopping with some money left.** Each agent step reserves the most it could
+cost before it starts (its credit cap, plus one request past it), and does not
+start if that could pass the month's budget or its pipeline's share. Afterwards
+it is charged what it measured. So the last few dollars of a month may go
+unused; they are never overspent.
 
 ## 5. Scorers
 

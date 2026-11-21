@@ -28,7 +28,7 @@ The factory reuses mature tools wherever one fits its constraints (free, nothing
 | Job | Reused tool | What the factory adds |
 | --- | --- | --- |
 | Running agents inside Actions: read-only sandbox, network firewall, writes only through checked outputs, threat detection, secret redaction | **GitHub Agentic Workflows (gh-aw)**, MIT, maintained by GitHub, generally available on Free, Team and Enterprise | One gh-aw workflow per role; the deterministic orchestration around them |
-| Harness execution | gh-aw's engines (built-in for Claude Code and pi; its custom engine for Kilo Code, Cursor CLI and Hermes Agent) | Engine definitions for the three without a built-in engine |
+| Harness execution | gh-aw's built-in `claude` engine (Claude Code), the only harness whose spend gh-aw's credit cap is proven to stop | Nothing; the adapter registry records why the others are not supported |
 | Tokens, cost, past local sessions | **memex** (MIT) plus a **LiteLLM** price table | Nothing |
 | Trust rules for who may trigger an agent | gh-aw's role checks; rules modelled on **anthropics/claude-code-action**'s actor and permission checks | The `factory:accept` flow for outside and integration-bot issues |
 | Per-job GitHub App tokens | **actions/create-github-app-token** | Nothing |
@@ -170,7 +170,15 @@ Setup offers this App as two more clicks. A user who declines gets the skill's r
 
 ## Agent CLI adapters
 
-Every supported harness (Hermes Agent, Claude Code, Kilo Code, pi, Cursor CLI) runs as a **gh-aw engine**, so the runner never depends on a specific harness and never launches agents itself.
+**The factory runs its agents on Claude Code only.** Every harness would run as a gh-aw engine, so the runner never launches agents itself; what decides support is whether gh-aw's per-step credit cap stops the harness, because the budget (§Budget) is built on that cap. Each was tested live with a 2-credit cap:
+
+| Harness | Cap test | Supported |
+| --- | --- | --- |
+| Claude Code | `bsf-fixtures/go-cli` run 44946845429: the proxy refused the second request (`403 Maximum AI credits exceeded (6.078150 / 2)`) and the agent stopped, $0.061 spent | yes |
+| Cursor CLI | run 44940807705: 49 tool calls and about $0.58 spent, 29 times the cap. Cursor's requests go to Cursor's own servers, so gh-aw's proxy never meters them | no |
+| pi, Kilo Code, Hermes Agent | not run | no, until a cap test passes |
+
+The engine notes below record what was learned about each while they were candidates.
 
 | Harness | How gh-aw runs it |
 | --- | --- |
@@ -182,9 +190,7 @@ Every supported harness (Hermes Agent, Claude Code, Kilo Code, pi, Cursor CLI) r
 - **`allowed-files` is not usable as a per-pipeline allowlist.** It takes a literal array and is *exclusive*: every file in a patch must match it, so anything unlisted is refused, including ordinary source files. It also accepts no expression. The per-pipeline path allowlist therefore stays with `factory/policy` and gh-aw's `protected-files`, and no role sets `allowed-files`.
 - **Adapters are engine definitions, not `engine.command`** (changed during the build; see Build Plan §Spike). gh-aw accepts a complete engine definition whose `engine.behaviors` carries `installation`, `execution`, `capabilities`, `network.provider-domains` and a `log-parser`. gh-aw then installs the CLI, runs it, and parses its log into the unified session artifact, keeping its own retry, timeout and tool-policy behaviour. `engine.command` would run the binary but leave the factory owning install steps and log parsing; `engine.harness` would replace prompt delivery and its retry behaviour with ours. The definition is the middle option and the one gh-aw's own third-party samples use.
 - **"Adding a harness = one adapter entry" holds only for a well-behaved CLI.** gh-aw's own OpenCode sample needed a ~200-line `harness-script` on top of the definition, plus a custom log parser, and is labelled an unsupported repository sample. A CLI whose headless mode emits clean JSONL needs the definition alone; one that does not needs a harness script, which is a different size of job. Each adapter in `/adapters` records what it still needs, and no harness is shippable until a conformance run proves its step yields token data.
-- **Switching harness is one installer flag.** gh-aw fixes the engine at compile time, so each harness ships its own compiled role workflows: `templates/harness/<id>/workflows` is generated from the Claude Code set by `runner/scripts/harness-variants.mjs` (engine swapped, the harness's shared import added, StepReports tagged with the harness), and CI compiles it into `templates/harness/<id>/compiled`. `install-factory.mjs --harness cursor-cli` lays that set over the default and records the harness in `factory.yaml`; a later plain upgrade keeps it, and `--harness claude-code` switches back. Model ids differ per harness, so switching to Cursor sets every role to Cursor's `auto` (the owner may name a Cursor model per role), and switching back restores the Claude defaults.
-- **Threat detection stays on Claude Haiku whatever the harness**, with its own `ANTHROPIC_API_KEY`, so a Cursor factory still needs the Anthropic key for that one cheap step.
-- **The budget cannot see Cursor's spend.** Cursor bills through its own account and its log carries tokens but no cost, and `auto` names no model a price table could price. Cursor StepReports therefore say `cost_source: "unknown"` with real token counts (go-cli #22: triage 45k+6k, spec 241k+17k, builder 94k+12k tokens), and `budget.monthly_usd` limits only the Anthropic-billed steps. A Cursor user caps spend in Cursor's own dashboard.
+- **Only Claude Code is installed.** The installer has no harness flag; a repo whose `factory.yaml` names another harness (an earlier version allowed Cursor) is switched back with its models, and `bsf budget reserve` refuses to start any agent step on another harness.
 - **Only the App's safe-output token is a write path.** Each role workflow sets `safe-outputs.github-app` to the factory App, so every safe output is applied with that token and its pushes start `factory-gates`.
 
 ```ts
@@ -209,9 +215,69 @@ interface HarnessAdapter {
 - **An unknown cost is never written as zero.** The budget pauses pipelines on spend, so a fabricated zero quietly raises the ceiling on what the factory may spend. gh-aw's session specification states the same rule — absence is not zero — and the step report carries a `usage_source` so a missing cost is diagnosable rather than invisible.
 - **Past local sessions: memex.** This is the job gh-aw cannot do, and memex's real reason to be here. Setup's correction mining and `bsf contribute-corrections` read past sessions on the user's own machine for all five harnesses, which memex covers with token counters for each (`~/.local/share/kilo/kilo.db` or `$XDG_DATA_HOME/kilo/kilo.db` for Kilo Code, a local `state.db` for Hermes). One limit worth stating: memex reads Hermes's usage counters and metadata but not its message content, so Hermes sessions can be costed and cannot be mined for corrections.
 - **`StepReport` is mandatory and identical for every harness:** exit status, normalized transcript path, files changed, tokens in/out/cached, cost in USD, duration (format in Schemas & Contracts). A harness whose step yields no token data fails conformance and isn't shippable.
-- **One key for four harnesses.** Claude Code, Kilo Code, pi and Hermes Agent all accept an Anthropic API key directly; Cursor CLI needs a Cursor account and its own key.
+- **One key.** The factory needs one Anthropic API key, `ANTHROPIC_API_KEY`, for every agent step and threat-detection check.
 - **Dependencies are pinned.** gh-aw, memex and each harness CLI are pinned to exact versions in the runner release, and the adapter conformance suite runs a real step per harness on every release, so a change in any of them shows up as a failing test, not wrong numbers.
 - **Adding a harness** = one adapter entry (its gh-aw engine and memex source) plus a conformance run — *when gh-aw already has an engine for it.* That covers more than the five this spec names: gh-aw has built-in engines for Codex, Copilot, Gemini and Antigravity, and maintained definitions for OpenCode, goose, Kiro, aider, crush, Factory, LangGraph, mini-swe-agent and DeepSeek. `adapters.ts` lists them, with whether memex also reads each one's local sessions. When gh-aw has no engine, adding a harness is an integration of unknown size instead, and the two in that position are recorded as such.
+
+## Budget
+
+The budget is a ceiling, not an estimate: **the factory stops before it can
+spend past it, even if that means stopping with money left.** It is kept in
+one file on the data ref, `budget.json` (schema `budget/2`): this month's spend
+per pipeline, the holds of steps still running, and the keys already charged.
+
+**Before an agent step** (`bsf budget reserve`, the role workflow's first
+step after fetching the trusted runner, before the sandbox starts) the step
+holds its ceiling: its gh-aw `max-ai-credits` cap, plus the most one request
+can cost, for the agent and again for its threat-detection check. One request
+is added because gh-aw checks the cap before each request, so the request that
+crosses it still finishes: in the live cap test the cap was 2 credits and the
+run stopped at 6.08. The most one request can cost is bounded by two settings
+every role sets, `CLAUDE_CODE_DISABLE_1M_CONTEXT` (a 200k window, so with one
+capped tool result on top no request sends more than 250k tokens) and
+`CLAUDE_CODE_MAX_OUTPUT_TOKENS=32000`, priced at the dearest list rate
+(`runner/src/lib/prices.ts`, Anthropic's published prices). The step starts
+only if this month's spend, the holds of steps still running and its own hold
+fit within the monthly budget and within its pipeline's share; otherwise it
+exits before the agent is invoked and says why on the job summary. A model
+with no list price cannot be bounded, so a step on one does not start.
+
+**After the step**, the role uploads what it measured (`bsf budget measure`):
+the agent's cost, taken as the larger of what its session reported and what
+its tokens cost at list price. The caller's next job, `factory-budget-settle`,
+which every following agent step waits for, adds the threat-detection run's
+cost from that job's own usage record and replaces the hold with the measured
+charge. Whatever cannot be measured is charged at its full hold, never as
+zero, and a hold that is never settled (a cancelled run) is charged in full by
+the rollup after four hours.
+
+**Every write is a compare-and-swap** on the data ref: the new `budget.json`
+is committed on the very commit it was read from, and the non-forced ref
+update fails if anyone wrote in between, so the writer re-reads and decides
+again. Two runs reading the same last dollars cannot both be told yes.
+
+**Work that cannot fit waits.** Dispatch treats a pipeline as paused when
+what is left of the total or of its share cannot cover the largest single step
+its run would hold (for product work on the defaults, the Opus spec), and a
+run's plan checks the same before claiming its item. Queued work then stays
+queued until the month turns or the budget is raised, instead of starting runs
+that would be refused halfway.
+
+**Shares.** Gardening (25% by default) and review and benchmarks (15%) stay
+within their share. Product work may use whatever they leave, up to the whole
+budget. Setup is charged against the total only.
+
+**Actions minutes are not counted by the factory.** GitHub's own Actions
+spending limit, $0 by default, already stops runners at a plan's included
+minutes. On a private Free repository that is 2,000 a month;
+`estimate-spend.mjs` estimates what the factory will use.
+
+**Proven live** on `bsf-fixtures/go-cli` (doc 12): a $0.01 budget refused the
+first step before its agent started and charged nothing; with $15, the
+builder was refused before it started because its hold would have passed
+product work's share as the rules stood then (product work may now use the
+whole budget); and across every step of the proof the factory
+charged at or above what each step really cost.
 
 ## Data flow
 
@@ -255,7 +321,7 @@ The factory enforces its rules with its own gates, and uses GitHub's branch prot
 8. **Human PRs keep their normal flow.** They run the deterministic gates (static rules, tests, coverage) and merge however the team already merges, through those checks. Agent runtime verification runs on a human PR only when someone adds `factory:verify`. Where the repo already has a CI test check that runs on the factory's branches, Gate 2 reads its result instead of re-running the tests; if that result hasn't arrived within 15 minutes, the gate runs the tests itself.
 9. **Audit where it isn't.** On free private repos, `factory-audit` re-runs the gates on every push to main and flags any bypass on the dashboard, with an optional revert PR.
 10. **Fork PRs.** PRs from forks run only the gates that need no secrets; agent work never starts from a fork.
-11. **Budget shares.** The budget has two limits: model spend in USD and Actions minutes. Each pipeline has a share of both (default product work 60%, gardening 25%, review and benchmarks 15%) and pauses when either share is used. Product work may also use what the others left unspent, up to 110% of either limit, then pauses too. The minutes limit defaults to the plan's included minutes (2,000 a month on Free private repos; standard runners are free on public repos, so no minutes limit there).
+11. **A budget that cannot be passed.** Every agent step reserves its worst case before it starts and is charged what it measured afterwards; gardening and review stay within their shares and product work may use the rest, never past the total (§Budget).
 
 ## What a person sees on a PR
 

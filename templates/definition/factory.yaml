@@ -41,8 +41,10 @@ limits:
     max_runs: 5
 
 budget:
-  # The most the factory spends on models in a month. Each pipeline pauses
-  # when it has used its share (below).
+  # The most the factory spends on models in a month: a ceiling, not an
+  # estimate. Every agent step reserves the most it could cost before it
+  # starts, and does not start if that could pass this or its share (below),
+  # so the factory may stop with a little left but never spends past it.
   monthly_usd: 35
   # Defaults to the plan's included minutes; null on public repos, where
   # standard runners are free.
@@ -51,6 +53,8 @@ budget:
     product_work: 60
     gardening: 25
     review_and_benchmarks: 15
+  # Kept for compatibility and not read: product work may use what the
+  # other shares leave, and nothing passes monthly_usd.
   product_work_hard_stop_pct: 110
 
 triggers:

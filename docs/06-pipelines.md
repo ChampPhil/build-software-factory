@@ -45,7 +45,7 @@ The factory runs three fixed pipelines (product work, gardening, hardening) plus
 | Conflict on an open factory PR | Conflict resolution |
 
 5. **Dispatch** `factory-run` if a concurrency slot is free (default 5); otherwise the item stays `queued`, high priority first, then oldest first. Every `factory-run` ends by dispatching the next queued item, and every rollup (including the daily sweep) dispatches queued items when slots are free, so the queue drains without a timer even if a run crashes.
-6. **Budget shares:** each pipeline has a share of both monthly limits, model spend and Actions minutes (default product work 60%, gardening 25%, review and benchmarks 15%). When either of a pipeline's shares is used, its items stay queued; product work may also use unspent shares, up to 110% of either limit.
+6. **Budget shares:** gardening (25% by default) and review and benchmarks (15%) each stay within their share of the monthly budget; product work may use what they leave, never past the total. A pipeline whose largest step no longer fits what is left keeps its items queued until it does (doc 07, §Budget).
 
 ## The factory-clear loop
 

@@ -109,11 +109,15 @@ export function used(doc: BudgetDoc, share: Share | null): { total: number; shar
   return { total: round4(sum(spent) + sum(held)), share: round4(shareSpent + shareHeld) };
 }
 
-/** A share's limit: its percentage, with product work allowed up to its hard stop. */
+/**
+ * A share's limit. Gardening and review stay within their percentage. Product
+ * work, the work people asked for, may also use what they leave unspent, up
+ * to the whole budget and never past it: the total is a ceiling whatever the
+ * shares say.
+ */
 export function shareLimitUsd(limits: BudgetLimits, share: Share): number {
-  const pct = limits.shares[share] ?? 0;
-  const base = (limits.monthlyUsd * pct) / 100;
-  return share === "product_work" ? Math.min(limits.monthlyUsd, (base * limits.productHardStopPct) / 100) : base;
+  if (share === "product_work") return limits.monthlyUsd;
+  return (limits.monthlyUsd * (limits.shares[share] ?? 0)) / 100;
 }
 
 export interface ReserveRequest {

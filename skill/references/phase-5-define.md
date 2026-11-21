@@ -2,7 +2,9 @@
 
 Write the factory definition and install the workflows.
 
-1. **`factory.yaml`**: the user's harness, a model per step, **all auto-merge
+1. **`factory.yaml`**: `harness: claude-code` (the only harness the factory
+   runs on: it is the one whose spend the budget can stop), a model per step
+   from the template, each one Anthropic has a list price for, **all auto-merge
    toggles off**, nightly gardening, review every 3 days, retry cap 3,
    concurrency 5, the budget and shares from phase 6, the sandbox posture from
    phase 2, and the repo's own test check if it has one.
@@ -24,8 +26,9 @@ Write the factory definition and install the workflows.
    `github-actions` ecosystem, limited to the runner, with a 3-day cooldown. If
    the repo already has a `dependabot.yml`, add the entry **without touching
    the others**.
-8. **Local session hooks** for the user's harness and any others found in the
-   repo. Each hook asks its developer once, on first run on their machine,
+8. **Local session hooks** for Claude Code, and for any other agent CLI the
+   repo's developers use, found in the repo (these only capture past sessions
+   for correction mining; they run no factory step). Each hook asks its developer once, on first run on their machine,
    whether to capture their sessions, and stores the answer locally. **No
    answer means no capture.** On a public repo without the private data repo,
    install the hooks but leave capture off.

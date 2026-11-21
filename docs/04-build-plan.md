@@ -98,7 +98,7 @@ Adds the two codebase pipelines, conflict handling, the free-private fallback an
 - [ ] A conflict between two factory PRs is resolved and re-cleared without human help when the intents don't contradict, and escalated with both specs when they do.
 - [ ] On a free private repo, a direct push to main that skips the gates appears on the dashboard within 5 minutes.
 - [ ] A reworded duplicate of an open issue is linked to the original by triage and produces no PR; a "still broken" report about merged work becomes a linked high-priority follow-up.
-- [ ] When gardening's budget share is used, gardening pauses while product work continues, up to 110% of the total budget.
+- [ ] When gardening's budget share is used, gardening pauses while product work continues, up to the total budget and never past it.
 - [ ] On a private Free-plan fixture, gardening pauses before the month's included Actions minutes run out.
 - [ ] A request posted in Slack with `/github open` produces a draft PR; an issue created by Linear's bot produces one after a one-click accept on Home.
 - [ ] A correction whose fix is a context line arrives as a definition PR without a benchmark run.

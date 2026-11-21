@@ -221,7 +221,7 @@ The skill reuses whatever the repo already has (Dockerfile, devcontainer, setup 
 **How the factory uses it.**
 
 - **The setup tool is itself a skill** → the user runs it in their own agent CLI.
-- **Agents run inside GitHub Actions** using whichever harness the user picks (any model, any harness), through GitHub Agentic Workflows (gh-aw), GitHub's open-source framework for this. Each agent job is read-only; anything it wants to change (code, comments, labels) is handed over as a "safe output" that gh-aw checks for prompt injection and leaked secrets before applying it.
+- **Agents run inside GitHub Actions** on Claude Code (the one harness whose spending the factory can cap), through GitHub Agentic Workflows (gh-aw), GitHub's open-source framework for this. Each agent job is read-only; anything it wants to change (code, comments, labels) is handed over as a "safe output" that gh-aw checks for prompt injection and leaked secrets before applying it.
 - **Seven fixed roles** (triage, spec, builder, verifier, gardener, hardener, scorer) all read the same **shared context**: the feature map, runbook, fundamentals and history.
 - **Builder and verifier are separate** so no agent grades its own work.
 - **Hooks capture local work** → a hook committed to the repo saves each local agent session's transcript (with secrets redacted) to the factory's data. It asks each developer once, on their own machine, before capturing anything, and it only stores transcripts where the public can't read them: on a public repo, that means the private data repo.

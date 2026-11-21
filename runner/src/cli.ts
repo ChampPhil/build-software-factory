@@ -1560,7 +1560,7 @@ async function budgetStatusCommand(): Promise<number> {
     return 0;
   }
   const spent = Object.values(doc.spent_usd).reduce((a, b) => a + b, 0);
-  const held = used(doc, null).total - spent;
+  const held = Math.max(0, Math.round((used(doc, null).total - spent) * 10_000) / 10_000);
   process.stdout.write(
     `${doc.month}: spent $${spent.toFixed(4)}, held by running steps $${held.toFixed(4)}, ` +
       `left $${(limit - spent - held).toFixed(4)} of $${limit.toFixed(2)}\n`,

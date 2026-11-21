@@ -25,7 +25,7 @@ The setup skill (`build-software-factory`) turns an existing repo into a running
 The skill checks these before starting and tells the user exactly what's missing.
 
 1. **A git repo hosted on GitHub**, with the user's `gh` CLI signed in and admin rights on the repo.
-2. **One supported agent CLI** (Hermes Agent, Claude Code, Kilo Code, pi or Cursor CLI) running the skill.
+2. **Claude Code** running the skill. The factory's agents also run on Claude Code: it is the one harness whose spend gh-aw's credit cap is proven to stop (doc 07, §Agent CLI adapters).
 3. **A supported language** among TypeScript, JavaScript, Python, Go, Java, Rust, C# and Ruby. Repos mixing several are fine.
 4. **A clean working tree on main.** If there are uncommitted changes, the skill stops and asks the user to commit or stash them.
 5. Nothing else on their machine: phase 2 builds and checks the sandbox on GitHub's runners, so no Docker and no language toolchain.
@@ -124,14 +124,14 @@ Phases run in order, with one exception: cleanup can finish after switch-on, as 
 
 The skill writes the factory definition and installs the workflows.
 
-1. **`factory.yaml`** with defaults: the user's harness, a model per step, all auto-merge toggles off, nightly gardening, review every 3 days, retry cap 3, concurrency 5, the budget and its shares from phase 6, and the repo's own test check (if any).
+1. **`factory.yaml`** with defaults: `harness: claude-code`, a model per step, all auto-merge toggles off, nightly gardening, review every 3 days, retry cap 3, concurrency 5, the budget and its shares from phase 6, and the repo's own test check (if any).
 2. **`policy.yaml`** with trust settings, guardrail paths (including existing tool configs found in phase 1) and per-pipeline path rules.
 3. **Seven role files** from templates, with the repo name, languages and conventions filled in.
 4. **Context files:** `feature-map.md` generated from the folder structure, `runbook.md` from phase 2, `fundamentals.md` from the dominant patterns and accepted context candidates, `history.md` seeded from mined corrections.
 5. **Rubrics** from templates (one per pipeline plus shared).
 6. **The workflows:** one gh-aw workflow per role (`factory-role-<role>.md`), compiled with `gh aw compile` into `.lock.yml` files (the skill installs the `gh aw` CLI extension locally if it's missing), and the eleven trigger workflows under `.github/workflows/factory-*.yml`, pinned to the runner's commit SHA with the version in a trailing comment (`runner@<sha> # v0.1.0`). None of them runs on a polling timer except nightly gardening, the daily review check and the daily rollup sweep.
 7. **Runner upgrades:** a `.github/dependabot.yml` entry for the `github-actions` ecosystem, limited to `build-software-factory/runner` and with a 3-day cooldown after each release. From then on GitHub's Dependabot opens an upgrade PR whenever a new runner is released; the user approves it with one click. If the repo already has a `dependabot.yml`, the skill adds its entry without touching the others.
-8. **Local session hooks** for the user's harness (and any others detected in the repo). Each hook asks its developer once, on first run on their machine, whether to capture their sessions, and stores the answer locally; no answer means no capture. The setup user answers for themselves during setup. On a public repo without the private data repo, the hooks are installed but capture stays off.
+8. **Local session hooks** for Claude Code (and any other agent CLI its developers use, detected in the repo, for correction mining only). Each hook asks its developer once, on first run on their machine, whether to capture their sessions, and stores the answer locally; no answer means no capture. The setup user answers for themselves during setup. On a public repo without the private data repo, the hooks are installed but capture stays off.
 9. **Trigger sources:** if the GitHub app for Slack or Linear's GitHub integration is already installed, the skill notes it; otherwise it prints the two-minute steps to connect them (both free).
 
 ## Phase 6: Instrument
@@ -140,7 +140,7 @@ The skill sets up everything the factory needs to record itself and measure its 
 
 1. **Create the `factory-data` and `factory-media` refs** (`refs/factory/data`, `refs/factory/media`; or, if the user chose private data storage, a private repo with the same refs) with an empty `index.json` and `ledger.json`. On a public repo, the skill offers the private data repo here, as the only way to keep session transcripts. If the user picks it, the skill installs the App on it too and adds every collaborator with write access on the main repo as a collaborator on the data repo, so their session hooks can push.
 2. **Create the factory GitHub App** through GitHub's manifest flow: the skill opens GitHub's App creation page pre-filled with the name, permissions (no `workflows`) and events; the user clicks **Create**; a short-lived local server receives the confirmation; the skill opens the install page for this repo and the user clicks **Install**; the skill stores the App's ID and private key as repo secrets.
-3. **Store model API keys** as repo secrets (`gh secret set`), one per harness the user enabled.
+3. **Store the Anthropic API key** as the repo secret `ANTHROPIC_API_KEY` (`gh secret set`), and suggest making it in its own Console workspace with a monthly spend limit just above the factory's budget.
 4. **Estimate spend:** from the last 90 days of PRs and issues, estimate monthly product runs; add nightly gardening (up to 5 runs a night while baselines remain), scheduled reviews and benchmark runs; estimate Actions minutes and model cost for each, and compare the minutes with the plan's included minutes (a private Free-plan repo gets 2,000 a month; public repos have no limit on standard runners). If gardening would exceed its minutes share, the skill lowers the default PRs per night. The user confirms or changes the suggested model budget, minutes limit and shares (default product work 60%, gardening 25%, review and benchmarks 15%).
 5. **Scorers** are installed with their rubrics; they first run at the first scheduled review.
 6. **Record the starting point:** current guardrail counts, coverage floor and open issue count go into `index.json`, so the dashboard can show progress from day one.

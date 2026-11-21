@@ -46,7 +46,7 @@ budget:
     product_work: 60
     gardening: 25
     review_and_benchmarks: 15     # scheduled review, scorers, benchmark runs
-  product_work_hard_stop_pct: 110 # product work may use unspent shares, up to 110% of either limit
+  product_work_hard_stop_pct: 110 # kept for compatibility; no longer read: product work may use what the other shares leave, never past the total
 triggers:
   issues: true
   comments: true

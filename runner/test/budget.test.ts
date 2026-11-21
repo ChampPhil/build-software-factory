@@ -60,9 +60,9 @@ describe("reserve", () => {
   });
 
   it("refuses a step that could pass the monthly budget, even with money left", () => {
-    const doc: BudgetDoc = { ...emptyBudget(NOW), spent_usd: { product_work: 20 } };
+    const doc: BudgetDoc = { ...emptyBudget(NOW), spent_usd: { product_work: 30 } };
     const r = reserve(doc, step(), LIMITS, NOW);
-    // $20 spent + ~$6.3 for this step is over the product share (60% x 110% of $35 = $23.10).
+    // $30 spent + ~$6.3 for this step could pass the $35 budget, with $5 still left.
     expect(r.ok).toBe(false);
     expect(r.reason).toMatch(/could cost up to/);
   });
@@ -71,11 +71,11 @@ describe("reserve", () => {
     const first = okDoc(reserve(null, step({ key: "a" }), LIMITS, NOW));
     const second = reserve(first, step({ key: "b" }), LIMITS, NOW);
     const third = reserve(okDoc(second), step({ key: "c" }), LIMITS, NOW);
-    // Each Sonnet builder holds ~$6.31; three fit in the $23.10 product
-    // share, a fourth would not.
+    // Each Sonnet builder holds ~$6.31; five fit in $35, a sixth would not.
     expect(third.ok).toBe(true);
-    const fourth = reserve(okDoc(third), step({ key: "d" }), LIMITS, NOW);
-    expect(fourth.ok).toBe(false);
+    let doc = okDoc(third);
+    for (const k of ["d", "e"]) doc = okDoc(reserve(doc, step({ key: k }), LIMITS, NOW));
+    expect(reserve(doc, step({ key: "f" }), LIMITS, NOW).ok).toBe(false);
   });
 
   it("refuses a model with no list price rather than guess its cost", () => {
@@ -94,6 +94,28 @@ describe("reserve", () => {
     expect(twice.ok && twice.doc.inflight.length).toBe(1);
     const charged = settle(once, { key: step().key, agentUsd: 1, detectionUsd: 0.01 }, NOW).doc;
     expect(reserve(charged, step(), LIMITS, NOW).ok).toBe(false);
+  });
+
+  it("keeps gardening within its share while product work may use what is left", () => {
+    const doc: BudgetDoc = { ...emptyBudget(NOW), spent_usd: { gardening: 5 } };
+    // Gardening's share is 25% of $35 = $8.75: $5 + a ~$6.3 builder does not fit.
+    expect(reserve(doc, step({ pipeline: "gardening" }), LIMITS, NOW).ok).toBe(false);
+    expect(reserve(doc, step(), LIMITS, NOW).ok).toBe(true);
+  });
+
+  it("never lets the shares add up past the budget", () => {
+    let doc: BudgetDoc | null = null;
+    let spent = 0;
+    for (let i = 0; i < 40; i++) {
+      for (const pipeline of ["product_work", "gardening", "review"]) {
+        const r = reserve(doc, step({ key: `${pipeline}${i}`, pipeline }), LIMITS, NOW);
+        if (!r.ok) continue;
+        doc = settle(r.doc, { key: `${pipeline}${i}`, agentUsd: 2, detectionUsd: 0.01 }, NOW).doc;
+        spent += 2.01;
+      }
+    }
+    expect(used(doc!, null).total).toBeLessThanOrEqual(35);
+    expect(spent).toBeLessThanOrEqual(35);
   });
 
   it("charges setup against the total only", () => {
@@ -279,7 +301,7 @@ describe("whether a run can start", () => {
     const spec = largestHoldUsd("product_work", MODELS)!;
     // The Opus spec (cap $3 + $2.64 + detection) is product work's largest step.
     expect(spec).toBeCloseTo(ceilingUsd(300, "claude-opus-5-5")! + ceilingUsd(50, "claude-haiku-5-5")!, 4);
-    const doc: BudgetDoc = { ...emptyBudget(NOW), spent_usd: { product_work: 23.1 - spec + 0.01 } };
+    const doc: BudgetDoc = { ...emptyBudget(NOW), spent_usd: { product_work: 35 - spec + 0.01 } };
     expect(canStart(doc, LIMITS, "product_work", MODELS, NOW).ok).toBe(false);
     expect(canStart(null, LIMITS, "product_work", MODELS, NOW).ok).toBe(true);
     // A retry runs only builder and verifier, so it needs less.

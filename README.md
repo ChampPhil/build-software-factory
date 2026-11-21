@@ -8,26 +8,64 @@ people have already made to agents become static rules, and changes to the
 factory's own definition have to beat a frozen benchmark before they are
 adopted.
 
-> **Status: in development.** The deterministic half is built and tested; the
-> parts that need a running factory on a real repository are listed in
-> [`docs/11-acceptance-v0.1.md`](docs/11-acceptance-v0.1.md) with what is proven
-> and what is not. Nothing here has run a full production loop yet.
+> **Status: beta.** It has run end to end on nine fixture repositories and on
+> one real app; what is proven, and how, is in
+> [`docs/12-acceptance-v1.0.md`](docs/12-acceptance-v1.0.md).
 
-## Three steps
+## Quickstart
 
-```bash
-# 1. In your repo, with Docker running and the `gh` CLI signed in:
-npx build-software-factory setup
+You need: a GitHub repository you are an admin of, the
+[`gh` CLI](https://cli.github.com) signed in (`gh auth login`), Node 20 or
+later, [Claude Code](https://code.claude.com), and an Anthropic API key.
+Nothing else runs on your machine: the sandbox the agents verify in is built
+and proved in your repository's GitHub Actions.
 
-# 2. Approve the setup pull request it opens.
+**1. Get the factory and give Claude Code its setup skill.**
 
-# 3. Open an issue. The factory picks it up.
+PowerShell (Windows):
+
+```powershell
+git clone https://github.com/ChampPhil/build-software-factory "$HOME\build-software-factory"
+New-Item -ItemType Directory -Force "$HOME\.claude\skills" | Out-Null
+New-Item -ItemType Junction -Path "$HOME\.claude\skills\build-software-factory" -Target "$HOME\build-software-factory\skill"
 ```
 
-Setup reads the repository first — languages, tools, tests, and the
-corrections you have already made to agents in past local sessions — and shows
-you what it proposes before it changes anything. It stops rather than
-continuing with a factory that cannot verify its own work.
+bash (macOS, Linux):
+
+```bash
+git clone https://github.com/ChampPhil/build-software-factory ~/build-software-factory
+mkdir -p ~/.claude/skills
+ln -s ~/build-software-factory/skill ~/.claude/skills/build-software-factory
+```
+
+The skill is linked rather than copied because its scripts install the
+factory's templates from the clone beside it.
+
+**2. In your repository, ask Claude Code to set it up.**
+
+```
+cd path/to/your-repo
+claude
+> Set up the software factory on this repo.
+```
+
+**3. Do the five things only you can do.** Claude Code does everything else
+and tells you at each step what it found and what it needs.
+
+| You | When |
+| --- | --- |
+| Click **Create**, then **Install**, on two GitHub App pages it opens | Phase 6: the factory's App, which is what its agents act as |
+| Paste your Anthropic API key once | It is stored as the repo secret `ANTHROPIC_API_KEY`, never in a file |
+| Answer a few questions about the product | They become the agents' standing instructions, which you can change later |
+| Merge the **bootstrap PR** | It installs the runner and workflows; setup then runs on its own in Actions |
+| Merge the **setup PR** | It shows the app running in the sandbox and every gate passing; merging switches the factory on |
+
+**4. Open an issue.** The factory triages it, writes a spec, builds it,
+verifies it in the sandbox and opens a PR with the proof. You review and merge.
+
+Later, comment `/practice <anything>` on any issue or PR to add a standing
+instruction every agent follows, and `/retry` to hand back something the
+factory stopped on.
 
 ## What it does
 
@@ -56,35 +94,55 @@ be told to *require* them.
 On a free private repository nothing can stop a direct push to main, so the
 factory watches main instead of pretending otherwise.
 
-## What it costs
+## What it costs, and the budget
 
-Two meters, both yours: your model API key and your Actions minutes.
+Two meters, both yours: your Anthropic API key, and your GitHub Actions
+minutes. The factory has a monthly budget in dollars (default **$35**) split
+into shares (product work 60%, gardening 25%, review and benchmarks 15%), set
+in `.factory/definition/factory.yaml`.
 
-Measured by `bsf estimate-spend` against a real repository — a Next.js app with
-roughly 50 issues a quarter, on the default models and a nightly gardening run:
+**The factory stops before it can spend past the budget, even if that means
+stopping with money left.** Before any agent step starts, it reserves the most
+that step could cost: its gh-aw credit cap, plus one request past it (the cap
+is checked before each request, so the request that crosses it still
+finishes), for the agent and for its threat-detection check, at Anthropic's
+list prices. The step starts only if what is already spent this month, what
+running steps have reserved, and its own reservation all fit within the budget
+and its pipeline's share. When the step ends it is charged what it measured
+(the larger of its session's reported cost and its tokens at list price), and
+anything it could not measure is charged at the full reservation. When even
+the largest step of a pipeline no longer fits, that pipeline's work waits in
+the queue until next month or until you raise the budget.
 
-| | Per month |
-| --- | --- |
-| Model spend | ~$150 |
-| Actions minutes | ~2,500 |
+Measured on the fixtures with the default models: triage (Haiku 5.5) about
+$0.01, a spec (Opus 5.5) about $0.50–0.70, a build (Sonnet 5.5) about
+$0.50–3, verification (Haiku 5.5) a few cents. With the $35 default and one
+gardening PR a night, that is roughly a dozen small product changes a month.
 
-That is above a Free private repository's 2,000 included minutes, which is why
-`estimate-spend` suggests one gardening PR a night rather than five for that
-plan. Public repositories get standard runners free, so minutes are not a
-limit there. The factory has a budget in dollars and in minutes, each pipeline
-has a share of both, and a pipeline pauses when its share is used — a factory
-that quietly spent its way past a budget would be worse than one that stops.
+As a second line of defence, make the key in its own
+[Anthropic Console](https://console.anthropic.com) workspace with a monthly
+spend limit a little above the factory's budget: then Anthropic stops the
+spending too, whatever happens in the factory.
 
-Run it on your own repository before you decide:
+**The factory runs its agents on Claude Code only.** gh-aw's per-step credit
+cap, which the budget is built on, was tested live with a 2-credit cap: it
+stopped Claude Code after one request, and did not stop Cursor CLI at all
+(49 tool calls, about 29 times the cap), because Cursor's requests never
+reach gh-aw's metering proxy. A harness whose spend cannot be stopped cannot
+run under a budget, so it is not supported.
+
+Actions minutes are separate. A private repository on GitHub Free gets 2,000
+a month; public repositories get standard runners free. To estimate both for
+your repository before you start:
 
 ```bash
-npx build-software-factory estimate-spend --repo owner/name
+node $HOME/build-software-factory/skill/scripts/estimate-spend.mjs --repo owner/name   # works in PowerShell and bash
 ```
 
 ## Built on
 
 The factory reuses mature tools wherever one fits its constraints — free,
-nothing hosted, works on free GitHub plans, harness-agnostic, MIT-compatible —
+nothing hosted, works on free GitHub plans, MIT-compatible —
 and writes custom code only where nothing does.
 
 [**gh-aw**](https://github.com/githubnext/gh-aw) runs the agents (sandbox,
@@ -125,8 +183,8 @@ this exists:
 3. **It works on a free plan.** No hosted service, no Enterprise features
    required: a fallback merge queue, audit-after-the-fact where branch
    protection is unavailable, and a dashboard with no backend.
-4. **Five harnesses.** Claude Code, Cursor CLI, pi, Kilo Code and Hermes Agent,
-   through gh-aw engine definitions rather than a fork of each.
+4. **A budget it cannot overspend.** Each agent step reserves its worst case
+   before it starts, so the monthly cap is a ceiling rather than an estimate.
 
 ## The docs
 
@@ -145,20 +203,23 @@ the other way round.
 | [08 Dashboard](docs/08-dashboard.md) | The nine pages and what each answers |
 | [09 Schemas](docs/09-schemas.md) | Every file the factory writes, and how they are versioned |
 | [10 gh-aw spike](docs/10-spike-gh-aw.md) | What was learned by building against gh-aw |
-| [11 Acceptance](docs/11-acceptance-v0.1.md) | What is proven, how, and what is not |
+| [11 Acceptance v0.1](docs/11-acceptance-v0.1.md) | The first milestone's evidence |
+| [12 Acceptance v1.0](docs/12-acceptance-v1.0.md) | What is proven live, how, and what is not |
+| [13 Security review](docs/13-security-review.md) | Threats considered and how each is handled |
 
 ## Developing
 
 ```bash
 npm ci
-npm test          # 919 runner tests, 75 dashboard tests
+npm test          # the runner's and the dashboard's tests
 npm run lint
 npm run typecheck
 npm run schema-check   # the schemas against their frozen shape
 ```
 
-`CONTRIBUTING.md` covers adding a rule pack or a harness adapter, which are
-the two things most likely to be worth adding.
+`CONTRIBUTING.md` covers adding a rule pack. A new harness is only worth
+adding once a live test shows gh-aw's credit cap stops it (see
+`tests/live`).
 
 ## Licence
 

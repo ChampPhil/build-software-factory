@@ -61,10 +61,20 @@ The definition needs `installation`, `execution`, `capabilities`,
 `network.provider-domains` and a `log-parser`. `adapters/README.md` has the
 shape and the two that exist as examples.
 
-**The bar: the log parser produces a session the cost accounting can read.**
-A harness whose tokens are not read ends up with an unknown cost, and the
-factory writes `cost_source: unknown` rather than zero — a fabricated zero
-quietly raises the ceiling on what the factory may spend.
+**The bar has two parts, and both are proven live, not argued:**
+
+1. **gh-aw's credit cap stops it.** The factory's budget is built on the cap:
+   each step reserves its cap plus one request before it starts. Copy
+   `tests/live/workflows/claude-cap-test.md` for the new engine, run it with
+   a 2-credit cap, and the proxy must refuse the agent's second request. Cursor
+   CLI fails this (its requests go to Cursor's own servers, which gh-aw's proxy
+   never sees), which is why the factory runs on Claude Code only. Record the
+   result in the adapter's `spendCap` in `adapters/adapters.ts`; only a harness
+   marked `enforced` counts as ready.
+2. **Its cost can be measured.** The log parser produces a session the cost
+   accounting can read, and the harness's models have list prices in
+   `runner/src/lib/prices.ts`. A step whose cost cannot be read is charged its
+   whole reservation, never zero.
 
 ## Changing a schema
 
