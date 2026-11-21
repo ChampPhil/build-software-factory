@@ -28,7 +28,7 @@ The skill checks these before starting and tells the user exactly what's missing
 2. **One supported agent CLI** (Hermes Agent, Claude Code, Kilo Code, pi or Cursor CLI) running the skill.
 3. **A supported language** among TypeScript, JavaScript, Python, Go, Java, Rust, C# and Ruby. Repos mixing several are fine.
 4. **A clean working tree on main.** If there are uncommitted changes, the skill stops and asks the user to commit or stash them.
-5. **Docker available locally** (only for checking the sandbox in phase 2; the factory itself uses GitHub's runners).
+5. Nothing else on their machine: phase 2 builds and checks the sandbox on GitHub's runners, so no Docker and no language toolchain.
 
 The skill detects the GitHub plan and repo visibility up front, because they decide enforcement: public repos and paid plans get branch protection, free private repos get the audit fallback. It tells the user which one applies and that GitHub Pro unlocks hard enforcement. On a public repo it also explains that local session transcripts will only be captured if they choose the private data repo in phase 6.
 
@@ -91,7 +91,7 @@ The skill produces a reproducible, isolated sandbox where an agent can build the
 1. **Reuse first:** an existing devcontainer, Dockerfile or setup script becomes the base of the sandbox, which is always described as a standard `devcontainer.json` so any devcontainer tool can open it.
 2. **Otherwise generate** a `devcontainer.json` (with a Dockerfile if needed) from the assessment: language runtimes, package install, services the app needs (databases, caches) as sidecar containers, a headless browser for runtime verification.
 3. **Write the runbook** (`context/runbook.md`): build, run, test, verify and seed-data commands, each tested.
-4. **Prove it works:** build the sandbox locally with Docker, run the test suite, start the app, and have a verifier agent open it in a browser through Playwright MCP, with Playwright taking the screenshot.
+4. **Prove it works:** `factory-setup` brings the sandbox up on a runner, runs the test suite, starts the app and screenshots it with Playwright; the measured tier is what the setup PR records.
 5. **Secrets the app needs to run** (for example a test database URL) are listed for the user; the skill stores them as repo secrets and the sandbox reads them as environment variables.
 
 **Done when** the app starts in the sandbox and the screenshot shows it working. If it can't get there, the skill stops and shows the user the failing step instead of continuing with a factory that can't verify anything.

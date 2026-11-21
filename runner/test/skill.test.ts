@@ -149,7 +149,7 @@ describe("preflight.mjs", () => {
     const { out } = node("preflight.mjs", ["--json", "--skip-docker"]);
     const parsed = JSON.parse(out) as { checks: { id: string }[]; repo: string | null };
     const ids = parsed.checks.map((c) => c.id);
-    for (const id of ["git-repo", "clean-tree", "gh-auth", "language", "docker", "existing-factory"]) {
+    for (const id of ["git-repo", "clean-tree", "gh-auth", "language", "existing-factory"]) {
       expect(ids, `no ${id} check`).toContain(id);
     }
   });
@@ -324,16 +324,10 @@ describe("preflight's prerequisite checks", () => {
     expect(src).toContain("localhost");
   });
 
-  it("runs both before anything that takes time", () => {
-    // The call sites, not the definitions, which appear earlier in the file.
-    const node = src.indexOf("checkNode();");
-    const browser = src.indexOf("checkBrowser();");
-    const docker = src.indexOf("checkDocker(args.skipDocker)");
-    expect(node).toBeGreaterThan(0);
-    expect(browser).toBeGreaterThan(0);
-    // Docker's check pulls an image; the cheap checks come first.
-    expect(node).toBeLessThan(docker);
-    expect(browser).toBeLessThan(docker);
+  it("asks nothing of the user's machine beyond git, gh and node", () => {
+    // Phase 2 runs on GitHub's runners. A Docker check here blocked setup on
+    // every laptop without Docker, for a step that no longer happens locally.
+    expect(src).not.toMatch(/checkDocker|"docker"/);
   });
 });
 

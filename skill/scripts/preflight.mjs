@@ -6,7 +6,7 @@
  * Exits 0 when setup can proceed, 1 when something blocks it, 2 on a bad
  * invocation. Prints JSON with --json so the skill can read the findings.
  *
- * Usage: node preflight.mjs [--repo owner/name] [--json] [--skip-docker]
+ * Usage: node preflight.mjs [--repo owner/name] [--json]
  */
 
 import { execFileSync } from "node:child_process";
@@ -30,6 +30,7 @@ function parseArgs(argv) {
     const a = argv[i];
     if (a === "--repo") args.repo = argv[++i];
     else if (a === "--json") args.json = true;
+    // --skip-docker is accepted for old instructions; there is no Docker check.
     else if (a === "--skip-docker") args.skipDocker = true;
     else if (a === "--help" || a === "-h") args.help = true;
     else {
@@ -316,34 +317,6 @@ function checkLanguage() {
   return langs;
 }
 
-/* ------------------------------------------------------------------- docker */
-
-function checkDocker(skip) {
-  if (skip) {
-    record("docker", true, "skipped");
-    return;
-  }
-  if (run("docker", ["--version"]) === null) {
-    record(
-      "docker",
-      false,
-      "Docker is not installed",
-      "phase 2 builds the sandbox locally to prove it works; the factory itself uses GitHub's runners",
-    );
-    return;
-  }
-  if (run("docker", ["info", "--format", "{{.ServerVersion}}"]) === null) {
-    record(
-      "docker",
-      false,
-      "the Docker daemon is not responding",
-      "start Docker Desktop, or the docker service, and run setup again",
-    );
-    return;
-  }
-  record("docker", true, "Docker is running");
-}
-
 /* ------------------------------------------------------- existing factory */
 
 function checkExistingFactory() {
@@ -365,7 +338,6 @@ Check everything setup needs before it changes anything.
 
   --repo owner/name   Override the repo detected from the origin remote
   --json              Print the findings as JSON
-  --skip-docker       Skip the Docker check (phase 2 will still need it)
 `);
   process.exit(0);
 }
@@ -378,7 +350,6 @@ checkOnDefaultBranch(repo ?? null);
 checkGh(repo ?? null);
 const plan = checkPlanAndVisibility(repo ?? null);
 const languages = checkLanguage();
-checkDocker(args.skipDocker);
 const existing = checkExistingFactory();
 
 const blocking = checks.filter((c) => !c.ok);
