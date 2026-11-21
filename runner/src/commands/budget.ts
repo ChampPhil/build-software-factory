@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { worstRequestUsd, listCostUsd } from "../lib/prices.js";
-import { parseJsonl, usageFromSession, type SessionUsage } from "../lib/session.js";
+import type { SessionUsage } from "../lib/session.js";
 
 /**
  * The monthly budget, as a hard ceiling (doc 07, §Budget).
@@ -321,7 +321,7 @@ export function scanUsage(text: string): { credits: number | null; tokens: { tok
     const nums: Record<string, number> = {};
     for (const [k, x] of Object.entries(o)) if (typeof x === "number" && Number.isFinite(x)) nums[norm(k)] = x;
     for (const k of ["ai_credits", "aic", "total_ai_credits", "cumulative_ai_credits"]) {
-      if (nums[k] !== undefined) credits = Math.max(credits ?? 0, nums[k]!);
+      if (nums[k] !== undefined) credits = Math.max(credits ?? 0, nums[k]);
     }
     const inTok = nums["input_tokens"];
     const outTok = nums["output_tokens"];
