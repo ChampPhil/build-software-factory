@@ -484,7 +484,12 @@ async function main(argv: readonly string[]): Promise<number> {
       if (second !== "record") die("usage: bsf guardrails record [--out PATH]");
       const { runStaticTools, baselinesFrom, measuredCounts } = await import("./commands/gates-run.js");
       const out = typeof args["out"] === "string" ? args["out"] : ".factory/guardrails/baselines.json";
-      const { results, unavailable } = await runStaticTools(process.cwd());
+      // Setup records this from its own candidate sandbox, in the checkout:
+      // the checkers it declared are part of what it is baselining.
+      const candidate = loadManifestAt(join(process.cwd(), ".factory/sandbox/manifest.json"));
+      const checks = candidate.kind === "ok" ? candidate.manifest.static_checks ?? [] : [];
+      const env = closedEnv(process.cwd());
+      const { results, unavailable } = await runStaticTools(process.cwd(), env === null ? { checks } : { checks, env });
       const existing = existsSync(out)
         ? (JSON.parse(readFileSync(out, "utf8")) as import("./lib/types.js").Baselines)
         : ({ schema: "baselines/1", rules: {} } as import("./lib/types.js").Baselines);
@@ -750,13 +755,14 @@ async function gatesStatic(args: Args): Promise<number> {
     coverageBefore: await loadCoverage(beforeLoader),
     coverageAfter: await loadCoverage(disk),
     changedFiles: changedFilesSince(base),
+    declared: await declaredChecks(),
   });
 
   process.stdout.write(`${result.summary}\n`);
   await maybeReportCheck(
     args,
     result.conclusion,
-    result.conclusion === "success" ? "No new violations" : "Static rules failed",
+    result.conclusion === "success" ? "No new violations" : result.conclusion === "neutral" ? "Nothing checked" : "Static rules failed",
     result.summary,
     "factory/gate-static",
   );
@@ -767,17 +773,20 @@ async function gatesStatic(args: Args): Promise<number> {
 async function gatesCoverage(args: Args): Promise<number> {
   const root = process.cwd();
   const base = baseRef(args);
+  const loaded = loadManifest(root);
+  const report = loaded.kind === "ok" ? loaded.manifest.coverage_report : undefined;
   const result = await runCoverageGate({
     root,
     current: await loadCoverage(new DiskLoader(root)),
     changedFiles: changedFilesSince(base),
+    ...(report === undefined ? {} : { report }),
   });
 
   process.stdout.write(`${result.summary}\n`);
   await maybeReportCheck(
     args,
     result.conclusion,
-    result.conclusion === "success" ? "Coverage held" : "Coverage failed",
+    result.conclusion === "success" ? "Coverage held" : result.conclusion === "neutral" ? "No coverage report" : "Coverage failed",
     result.summary,
     "factory/gate-coverage",
   );
@@ -880,16 +889,29 @@ type SandboxCommand =
   | { readonly kind: "none" }
   | { readonly kind: "command"; readonly command: string };
 
-function sandboxCommand(name: "test" | "build", root = process.cwd()): SandboxCommand {
+/**
+ * The checkers declared in the default branch's sandbox, with the closed
+ * environment the sandbox start wrote, so they run like the tests do.
+ */
+async function declaredChecks(): Promise<{ checks: readonly import("./commands/sandbox.js").StaticCheck[]; env?: Record<string, string> }> {
+  const loaded = loadManifest(process.cwd());
+  const checks = loaded.kind === "ok" ? loaded.manifest.static_checks ?? [] : [];
+  if (checks.length === 0) return { checks };
+  const { closedEnv } = await import("./commands/sandbox.js");
+  const env = closedEnv(process.env["GITHUB_WORKSPACE"] ?? process.cwd());
+  return env === null ? { checks } : { checks, env };
+}
+
+function sandboxCommand(name: "test" | "build" | "coverage", root = process.cwd()): SandboxCommand {
   const loaded = loadManifest(root);
   if (loaded.kind === "missing") return { kind: "no_manifest" };
   if (loaded.kind === "invalid") return { kind: "invalid", errors: loaded.errors };
   const c = loaded.manifest.commands[name];
-  return c === null || c.trim() === "" ? { kind: "none" } : { kind: "command", command: c };
+  return c === null || c === undefined || c.trim() === "" ? { kind: "none" } : { kind: "command", command: c };
 }
 
 /** Just the command, for callers that treat "none" and "unknown" alike. */
-function sandboxCommandText(name: "test" | "build"): string | null {
+function sandboxCommandText(name: "test" | "build" | "coverage"): string | null {
   const c = sandboxCommand(name);
   return c.kind === "command" ? c.command : null;
 }
@@ -2252,8 +2274,11 @@ async function gatesTests(args: Args): Promise<number> {
     command:
       test.kind === "command"
         ? (() => {
+            // The coverage command is the tests run so they also write the
+            // report the coverage gate reads: one run, not two.
+            const run = sandboxCommandText("coverage") ?? test.command;
             const build = sandboxCommandText("build");
-            return build === null ? test.command : `${build} && ${test.command}`;
+            return build === null ? run : `${build} && ${run}`;
           })()
         : null,
     root: process.cwd(),

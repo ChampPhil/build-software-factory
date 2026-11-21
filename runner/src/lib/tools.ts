@@ -326,7 +326,21 @@ export interface CoverageNumbers {
  * repo's own output over re-instrumenting means the number the gate uses is
  * the number the team sees.
  */
-export function readCoverage(root: string): CoverageNumbers | null {
+/**
+ * The coverage report: where setup declared it (the sandbox's
+ * coverage_report), else the places common tools write one.
+ */
+export function readCoverage(
+  root: string,
+  declared?: { readonly path: string; readonly format: "lcov" | "cobertura" | "istanbul-summary" },
+): CoverageNumbers | null {
+  if (declared !== undefined) {
+    const file = isAbsolute(declared.path) ? declared.path : join(root, declared.path);
+    if (!existsSync(file)) return null;
+    if (declared.format === "lcov") return fromLcov(root, file);
+    if (declared.format === "cobertura") return fromCoberturaish(root, file);
+    return fromIstanbulSummary(root, file);
+  }
   const summary = join(root, "coverage", "coverage-summary.json");
   if (existsSync(summary)) return fromIstanbulSummary(root, summary);
   const lcov = join(root, "coverage", "lcov.info");
@@ -388,9 +402,20 @@ function fromCoberturaish(root: string, file: string): CoverageNumbers | null {
     const byFile: Record<string, { covered: number; total: number }> = {};
     // Deliberately a small regex read rather than an XML dependency: all that
     // is needed is each class's filename and its line hits.
+    // A class's filename is relative to one of the report's <source> dirs
+    // (coverage.py, and most tools that write Cobertura), or absolute.
+    const sources = [...text.matchAll(/<source>([^<]+)<\/source>/g)].map((m) => (m[1] ?? "").trim());
+    const resolve = (f: string): string => {
+      if (isAbsolute(f)) return rel(root, f);
+      for (const src of sources) {
+        const abs = isAbsolute(src) ? join(src, f) : join(root, src, f);
+        if (existsSync(abs)) return rel(root, abs);
+      }
+      return rel(root, f);
+    };
     const classRe = /<class[^>]*filename="([^"]+)"[\s\S]*?<\/class>/g;
     for (const m of text.matchAll(classRe)) {
-      const path = rel(root, m[1] ?? "");
+      const path = resolve(m[1] ?? "");
       const block = m[0];
       let covered = 0;
       let total = 0;
@@ -398,7 +423,9 @@ function fromCoberturaish(root: string, file: string): CoverageNumbers | null {
         total++;
         if (Number(line[1]) > 0) covered++;
       }
-      byFile[path] = { covered, total };
+      // A file can appear as several classes (Java inner classes, C# partials).
+      const prev = byFile[path];
+      byFile[path] = prev === undefined ? { covered, total } : { covered: prev.covered + covered, total: prev.total + total };
     }
     if (Object.keys(byFile).length === 0) return null;
     return { total_pct: overall(byFile), by_file: byFile };
@@ -487,4 +514,94 @@ async function listSourceFiles(root: string): Promise<string[]> {
   };
   walk(root, 0);
   return out;
+}
+
+/* -------------------------------------------------------------------- SARIF */
+
+interface SarifLog {
+  runs?: {
+    tool?: { driver?: { name?: string } };
+    originalUriBaseIds?: Record<string, { uri?: string }>;
+    results?: {
+      ruleId?: string;
+      rule?: { id?: string };
+      level?: string;
+      message?: { text?: string };
+      suppressions?: unknown[];
+      locations?: { physicalLocation?: { artifactLocation?: { uri?: string; uriBaseId?: string }; region?: { startLine?: number } } }[];
+    }[];
+  }[];
+}
+
+/** SARIF's file URIs are file://, absolute, or relative to a base; the ratchet keys on repo-relative paths. */
+function sarifPath(root: string, uri: string, base: string | undefined): string {
+  let p = uri.startsWith("file://") ? decodeURIComponent(new URL(uri).pathname) : decodeURIComponent(uri);
+  if (!isAbsolute(p) && base !== undefined) {
+    const b = base.startsWith("file://") ? decodeURIComponent(new URL(base).pathname) : base;
+    p = join(b, p);
+  }
+  return rel(root, p);
+}
+
+/** Counts per rule per file from a SARIF log. Suppressed results do not count. */
+export function countSarif(root: string, text: string, tool: string): ToolRunResult {
+  let log: SarifLog;
+  try {
+    log = JSON.parse(text) as SarifLog;
+  } catch (e) {
+    return { tool, counts: {}, findings: [], unavailable: true, detail: `its SARIF did not parse: ${(e as Error).message}` };
+  }
+  if (!Array.isArray(log.runs)) {
+    return { tool, counts: {}, findings: [], unavailable: true, detail: "its output is not SARIF: no runs" };
+  }
+  const counts: Record<string, Record<string, number>> = {};
+  const findings: Finding[] = [];
+  for (const run of log.runs) {
+    for (const r of run.results ?? []) {
+      if ((r.suppressions ?? []).length > 0) continue;
+      const rule = r.ruleId ?? r.rule?.id ?? "unnamed";
+      const loc = r.locations?.[0]?.physicalLocation;
+      const uri = loc?.artifactLocation?.uri;
+      if (uri === undefined) continue;
+      const baseId = loc?.artifactLocation?.uriBaseId;
+      const base = baseId === undefined ? undefined : run.originalUriBaseIds?.[baseId]?.uri;
+      const file = sarifPath(root, uri, base);
+      addCount(counts, rule, file);
+      findings.push({
+        rule,
+        file,
+        ...(loc?.region?.startLine === undefined ? {} : { line: loc.region.startLine }),
+        message: r.message?.text ?? rule,
+        severity: r.level === "error" ? "error" : "warning",
+      });
+    }
+  }
+  return { tool, counts, findings, unavailable: false, detail: "" };
+}
+
+/**
+ * A checker setup declared: run its command (a finding is usually a non-zero
+ * exit, so the exit code is not the verdict) and count the SARIF it writes.
+ * No SARIF afterwards means it did not run, which is not a pass.
+ */
+export async function runSarifCheck(
+  root: string,
+  check: { readonly name: string; readonly command: string; readonly sarif: string },
+  env?: Record<string, string>,
+): Promise<ToolRunResult> {
+  const out = isAbsolute(check.sarif) ? check.sarif : join(root, check.sarif);
+  let detail = "";
+  try {
+    await exec("bash", ["-c", check.command], {
+      cwd: root, encoding: "utf8", maxBuffer: 128 * 1024 * 1024, timeout: 20 * 60_000,
+      ...(env === undefined ? {} : { env }),
+    });
+  } catch (err) {
+    const e = err as { stderr?: string; code?: unknown };
+    detail = `exit ${String(e.code)}: ${String(e.stderr ?? "").slice(-400)}`;
+  }
+  if (!existsSync(out)) {
+    return { tool: check.name, counts: {}, findings: [], unavailable: true, detail: `wrote no SARIF at ${check.sarif}${detail === "" ? "" : ` (${detail})`}` };
+  }
+  return countSarif(root, readFileSync(out, "utf8"), check.name);
 }

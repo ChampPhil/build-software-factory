@@ -55,13 +55,13 @@ Every pipeline that produces code ends in the same loop: the builder writes, the
 2. **The push starts `factory-gates`**, a separate job with no builder in it. Results are recorded against the commit, so nothing re-runs for the same commit. The path and test-edit rules are checked by `factory/policy`, which runs from main's copy of its workflow so a PR can't change it.
 3. **Gate 1 — static:**
    - path and test-edit rules: `factory/policy` runs on the draft PR from main's copy of its workflow; a factory attempt that breaks them counts as a failed Gate 1 attempt
-   - all static rules (repo tools + `.factory/guardrails/rules`)
+   - all static rules (repo tools + `.factory/guardrails/rules`), including the checkers setup declared in the sandbox's `static_checks`: each runs the repo's own checker and writes SARIF, which is counted per rule per file, so a language with no checker built into the factory is still gated
    - ratchet: no rule's count may rise in any file, read from each linter's native baseline (for example ESLint's `eslint-suppressions.json`) or, for tools without one, from `baselines.json`
    - weakening check
    - suppression control
 4. **Gate 2 — verification** (in a fresh sandbox):
    - full test suite (or, where the repo already has a CI test check that runs on factory branches, that check's result on the same commit; if it hasn't reported within 15 minutes, the gate runs the tests itself)
-   - coverage: diff coverage ≥ 80% (the main check), total ≥ floor (one point below the highest total reached), skips within cap
+   - coverage, from the report the sandbox's `commands.coverage` writes at `coverage_report` (the tests gate runs that command instead of `commands.test`, once): diff coverage ≥ 80% (the main check), total ≥ floor (one point below the highest total reached), skips within cap
    - formal checks where installed
    - mutation testing on changed lines (from v0.2), with each language's existing tool (StrykerJS, Stryker.NET, cargo-mutants, Infection and the rule pack's equivalents)
    - **agent runtime verification**: the verifier starts the app per the runbook, exercises the change with real dev tools (a browser through Playwright MCP, console, network, database), and Playwright records the screenshots, video and traces

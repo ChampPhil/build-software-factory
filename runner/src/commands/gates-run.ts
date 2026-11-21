@@ -18,7 +18,9 @@ import {
   runGoVet,
   runRubocop,
   runSemgrep,
+  runSarifCheck,
 } from "../lib/tools.js";
+import type { SandboxManifest, StaticCheck } from "./sandbox.js";
 
 /**
  * Gate 1 (static) and Gate 2 (coverage), wired to the repo's own tools.
@@ -38,6 +40,8 @@ export interface StaticGateInput {
   readonly coverageBefore: Coverage;
   readonly coverageAfter: Coverage;
   readonly changedFiles: readonly string[];
+  /** Checkers setup declared in the default branch's sandbox, and the env to run them in. */
+  readonly declared?: { readonly checks: readonly StaticCheck[]; readonly env?: Record<string, string> };
   /** Rules whose config got less strict, where a rule pack can tell. */
   readonly loosenedRules?: readonly string[];
 }
@@ -124,9 +128,20 @@ function gemfileHas(root: string, gem: string): boolean {
 }
 
 /** Every static checker that applies to this repo, run once: what the gate judges and what setup baselines. */
-export async function runStaticTools(root: string): Promise<{ results: ToolRunResult[]; unavailable: { tool: string; detail: string }[] }> {
+export async function runStaticTools(
+  root: string,
+  declared: { readonly checks: readonly StaticCheck[]; readonly env?: Record<string, string> } = { checks: [] },
+): Promise<{ results: ToolRunResult[]; unavailable: { tool: string; detail: string }[] }> {
   const results: ToolRunResult[] = [];
   const unavailable: { tool: string; detail: string }[] = [];
+  // The checkers setup declared for this repo, each writing SARIF: how a
+  // language with no checker built in here (Java's PMD, C#'s analyzers) is
+  // gated at all.
+  for (const check of declared.checks) {
+    const r = await runSarifCheck(root, check, declared.env);
+    if (r.unavailable) unavailable.push({ tool: check.name, detail: r.detail });
+    else results.push(r);
+  }
 
   if (existsSync(join(root, "node_modules", "eslint", "bin", "eslint.js"))) {
     const r = await runEslint(root);
@@ -177,7 +192,7 @@ export function baselinesFrom(existing: Baselines, measured: RuleCounts, now: st
 
 export async function runStaticGate(input: StaticGateInput): Promise<StaticGateResult> {
   const { root } = input;
-  const { results, unavailable } = await runStaticTools(root);
+  const { results, unavailable } = await runStaticTools(root, input.declared);
 
   const measured = measuredCounts(results);
   const before = withIntroducedBaselines(
@@ -294,10 +309,27 @@ export async function runCoverageGate(args: {
   readonly root: string;
   readonly current: Coverage;
   readonly changedFiles: readonly string[];
+  /** Where setup declared the report, from the default branch's sandbox. */
+  readonly report?: SandboxManifest["coverage_report"];
 }): Promise<CoverageGateResult> {
-  const coverage = readCoverage(args.root);
+  const coverage = readCoverage(args.root, args.report);
   const skips = await countSkips(args.root);
 
+  if (coverage === null && args.report !== undefined) {
+    // Setup declared where the report goes and the trial saw it written. Its
+    // absence now means the coverage run did not finish, which is not a pass.
+    return {
+      conclusion: "failure",
+      diff_pct: null,
+      total_pct: null,
+      skips,
+      failures: [`no ${args.report.format} report at ${args.report.path}`],
+      next: null,
+      summary:
+        `The sandbox's coverage command writes a ${args.report.format} report at \`${args.report.path}\`, and there is none, ` +
+        "so coverage could not be measured. The tests gate shows whether the run finished.",
+    };
+  }
   if (coverage === null) {
     // No report at all. On a repo with no tests this is the expected state at
     // setup, so it is reported rather than failed — the floor is 0% and

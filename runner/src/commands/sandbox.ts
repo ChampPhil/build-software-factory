@@ -3,6 +3,7 @@ import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { applyInterception, startStubs, type InterceptedStub } from "./stubs.js";
+import { readCoverage, runSarifCheck } from "../lib/tools.js";
 import { connect } from "node:net";
 import { dirname, join } from "node:path";
 import { resolveRead } from "../lib/config.js";
@@ -26,7 +27,10 @@ export interface SandboxManifest {
     readonly run: string | null;
     readonly test: string | null;
     readonly seed?: string | null;
+    readonly coverage?: string | null;
   };
+  readonly coverage_report?: { readonly path: string; readonly format: "lcov" | "cobertura" | "istanbul-summary" };
+  readonly static_checks?: readonly StaticCheck[];
   readonly app_url?: string | null;
   readonly env: readonly {
     readonly name: string;
@@ -43,6 +47,14 @@ export interface SandboxManifest {
     readonly why: string;
   }[];
   readonly stubs?: readonly InterceptedStub[];
+}
+
+/** A checker the repo's own toolchain runs, declared by setup, writing SARIF. */
+export interface StaticCheck {
+  readonly name: string;
+  readonly command: string;
+  readonly sarif: string;
+  readonly why?: string;
 }
 
 export const MANIFEST_PATH = ".factory/sandbox/manifest.json";
@@ -258,6 +270,15 @@ export interface TrialReport {
   readonly screenshot: string | null;
   /** One line for a person: what happened, in the order it happened. */
   readonly summary: string;
+  /** The coverage and static checks the candidate declared, and whether each worked. */
+  readonly checks?: readonly CheckOutcome[];
+}
+
+export interface CheckOutcome {
+  readonly kind: "coverage" | "static";
+  readonly name: string;
+  readonly ok: boolean;
+  readonly detail: string;
 }
 
 /**
@@ -390,6 +411,41 @@ export async function trialSandbox(opts: {
     }
   }
 
+  // The checks the gates will run, run here first: a coverage command that
+  // writes no report, or a checker that writes no SARIF, would make every
+  // gate after setup fail. Whatever fails here is dropped at freeze.
+  const checks: CheckOutcome[] = [];
+  if (steps.every((s) => s.ok)) {
+    if (m.commands.coverage != null && m.commands.coverage.trim() !== "") {
+      const report = m.coverage_report;
+      if (report === undefined) {
+        checks.push({ kind: "coverage", name: "coverage", ok: false, detail: "commands.coverage is set but coverage_report says nowhere to read it" });
+      } else {
+        log(`trial coverage: ${m.commands.coverage}`);
+        const r = spawnSync("bash", ["-c", m.commands.coverage], { cwd: opts.workspace, env: runEnv, encoding: "utf8", maxBuffer: 64 * 1024 * 1024, timeout: 30 * 60 * 1000 });
+        const numbers = readCoverage(opts.workspace, report);
+        const files = numbers === null ? 0 : Object.keys(numbers.by_file).length;
+        checks.push({
+          kind: "coverage", name: "coverage", ok: r.status === 0 && files > 0,
+          detail: r.status !== 0
+            ? `exit ${String(r.status)}: ${tailOf(`${r.stdout ?? ""}\n${r.stderr ?? ""}`)}`
+            : files === 0
+              ? `no ${report.format} report with any file in it at ${report.path}`
+              : `${report.format} report at ${report.path}: ${files} file(s), ${numbers?.total_pct ?? 0}% of lines`,
+        });
+      }
+    }
+    for (const check of m.static_checks ?? []) {
+      log(`trial static check ${check.name}: ${check.command}`);
+      const r = await runSarifCheck(opts.workspace, check, runEnv);
+      const n = Object.values(r.counts).reduce((a, f) => a + Object.values(f).reduce((x, y) => x + y, 0), 0);
+      checks.push({
+        kind: "static", name: check.name, ok: !r.unavailable,
+        detail: r.unavailable ? r.detail : `SARIF at ${check.sarif}: ${n} finding(s) across ${Object.keys(r.counts).length} rule(s)`,
+      });
+    }
+  }
+
   // Start the app and see whether it answers.
   let appStatus: number | null = null;
   let shot: string | null = null;
@@ -427,9 +483,12 @@ export async function trialSandbox(opts: {
     failedStep === undefined
       ? `reached ${reached}${reached === m.tier ? ", as claimed" : `; the manifest claimed ${m.tier}`}`
       : `reached ${reached}: ${failedStep.step} failed${failedStep.command === null ? "" : ` (${failedStep.command})`}`;
+  const failedChecks = checks.filter((c) => !c.ok);
   const report: TrialReport = {
     schema: "sandbox-trial/1", claimed: m.tier, reached, steps, app_url: url, app_status: appStatus,
-    screenshot: shot, summary,
+    screenshot: shot,
+    summary: failedChecks.length === 0 ? summary : `${summary}; ${failedChecks.map((c) => `${c.name} check failed`).join(", ")}`,
+    ...(checks.length === 0 ? {} : { checks }),
   };
   writeFileSync(opts.out, `${JSON.stringify(report, null, 2)}\n`);
   log(summary);
@@ -478,8 +537,31 @@ export function freezeManifest(rounds: readonly Round[], now: string): {
   const b: { i: number; tier: Tier; m: Record<string, unknown>; t: TrialReport } = best;
   const agentEpisode = Array.isArray(b.m["episode"]) ? (b.m["episode"] as { attempt: number }[]) : [];
   const next = agentEpisode.reduce((n, e) => Math.max(n, e.attempt), 0) + 1;
+  // A declared check the trial could not make work is not frozen: the gates
+  // would fail every PR on it. It is recorded as dropped, with what happened.
+  const kept: Record<string, unknown> = { ...b.m };
+  const droppedChecks: { from: string; what: string; why: string }[] = [];
+  for (const c of b.t.checks ?? []) {
+    if (c.ok) continue;
+    if (c.kind === "coverage") {
+      const commands = { ...(kept["commands"] as Record<string, unknown>) };
+      droppedChecks.push({ from: "trial", what: `commands.coverage: ${String(commands["coverage"])}`, why: c.detail });
+      delete commands["coverage"];
+      kept["commands"] = commands;
+      delete kept["coverage_report"];
+    } else {
+      const list = (kept["static_checks"] as { name: string; command: string }[] | undefined) ?? [];
+      const gone = list.find((x) => x.name === c.name);
+      kept["static_checks"] = list.filter((x) => x.name !== c.name);
+      droppedChecks.push({ from: "trial", what: `static check ${c.name}: ${gone?.command ?? ""}`, why: c.detail });
+    }
+  }
+  if (Array.isArray(kept["static_checks"]) && (kept["static_checks"] as unknown[]).length === 0) delete kept["static_checks"];
+  if (droppedChecks.length > 0) {
+    kept["dropped"] = [...((kept["dropped"] as unknown[] | undefined) ?? []), ...droppedChecks];
+  }
   const manifest: Record<string, unknown> = {
-    ...b.m,
+    ...kept,
     tier: b.tier,
     tier_reason:
       b.tier === "renders" ? null : b.t.claimed === b.tier ? (b.m["tier_reason"] ?? b.t.summary) : `measured: ${b.t.summary}`,
