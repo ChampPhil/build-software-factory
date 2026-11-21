@@ -1512,7 +1512,7 @@ async function budgetSettleCommand(args: Args): Promise<number> {
     (current) => {
       const base = current !== null && current.schema === "budget/2" ? current : null;
       const out = settleBudget(base, { key, agentUsd, detectionUsd: detUsd, ...(pipeline === undefined ? {} : { pipeline }) }, now);
-      return { next: base !== null && base.settled.includes(key) ? null : out.doc, result: out };
+      return { next: out.doc === base || (base !== null && base.settled.includes(key)) ? null : out.doc, result: out };
     },
     `budget: settle ${key}`,
   );

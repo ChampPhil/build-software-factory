@@ -208,6 +208,11 @@ export function settle(current: BudgetDoc | null, input: SettleInput, now: strin
   const doc = rollMonth(current ?? emptyBudget(now), now);
   if (doc.settled.includes(input.key)) return { doc, chargedUsd: 0, reason: `${input.key} was already charged` };
   const held = doc.inflight.find((f) => f.key === input.key);
+  // A step whose hold was refused never started: there is nothing to charge
+  // and nothing to record, unless something was measured after all.
+  if (held === undefined && input.agentUsd === null && input.detectionUsd === null) {
+    return { doc, chargedUsd: 0, reason: `${input.key} never started (its hold was refused); nothing to charge` };
+  }
   const pipeline = held?.pipeline ?? input.pipeline ?? "unknown";
   // Absence is not zero: an unread cost is charged at the most it could be.
   const agent = input.agentUsd ?? held?.agent_ceiling_usd ?? 0;

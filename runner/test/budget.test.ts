@@ -122,6 +122,13 @@ describe("settle", () => {
     expect(r.chargedUsd).toBeCloseTo(ceilingUsd(400, "claude-sonnet-5-5")! + 0.01, 4);
   });
 
+  it("records nothing for a step whose hold was refused", () => {
+    const r = settle(null, { key: "refused", agentUsd: null, detectionUsd: null }, NOW);
+    expect(r.chargedUsd).toBe(0);
+    expect(r.reason).toMatch(/never started/);
+    expect(r.doc.spent_usd).toEqual({});
+  });
+
   it("charges nothing twice", () => {
     const held = okDoc(reserve(null, step(), LIMITS, NOW));
     const once = settle(held, { key: step().key, agentUsd: 1, detectionUsd: 0 }, NOW).doc;
