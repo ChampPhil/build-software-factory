@@ -1085,7 +1085,6 @@ async function runCommand(second: string | undefined, args: Args, third?: string
     setOutput("roles", roles.join(","));
     setOutput("needs_triage", String(roles.includes("triage")));
     setOutput("needs_hardener", String(roles.includes("hardener")));
-    setOutput("needs_gardener", String(roles.includes("gardener")));
     setOutput("needs_spec", String(roles.includes("spec")));
     setOutput("protected_files_policy", protectedFilesPolicy);
     setOutput("proceed", String(!plan.escalate));
@@ -1234,7 +1233,8 @@ async function rollupCommand(args: Args): Promise<number> {
   process.stdout.write(
     `${report.metrics.runs} run(s) in the last ${report.metrics.window_days} days; ` +
       `${report.metrics.merged} merged; $${report.metrics.spend_usd.toFixed(2)} spent\n` +
-      `${report.dispatchReason}\n`,
+      `${report.dispatchReason}\n` +
+      (report.amendment === undefined ? "" : `${report.amendment}\n`),
   );
   if (report.paused.length > 0) {
     process.stdout.write(`paused: ${report.paused.join(", ")}\n`);
@@ -1508,7 +1508,7 @@ async function sandboxCommandCli(second: string | undefined, args: Args): Promis
       process.stdout.write("no sandbox report: the sandbox was enough for this step\n");
       return 0;
     }
-    const { inadequacyProblems, inadequacyKey } = await import("./commands/sandbox.js");
+    const { inadequacyProblems } = await import("./commands/sandbox.js");
     let report: unknown;
     try {
       report = JSON.parse(readFileSync(from, "utf8"));
@@ -1520,56 +1520,14 @@ async function sandboxCommandCli(second: string | undefined, args: Args): Promis
     type InadequacyReport = import("./commands/sandbox.js").InadequacyReport;
     const r = report as InadequacyReport;
     const gh = new GitHub({ repo: requireRepo() });
-    const { FactoryStore, json } = await import("./lib/store.js");
+    const { FactoryStore } = await import("./lib/store.js");
+    const { recordReport, sweepReports } = await import("./commands/sandbox-reports.js");
     const store = new FactoryStore(gh);
-    const key = inadequacyKey(r);
-    const path = `sandbox-reports/${key}.json`;
-    const seen = await store.data.readJson<{ reported_at: string; reports: number; dispatched_at?: string }>(path);
-    const workItem = typeof args["work-item"] === "string" ? args["work-item"] : undefined;
-    const entry = {
-      ...r,
-      ...(workItem === undefined ? {} : { work_item: workItem }),
-      reported_at: seen?.reported_at ?? nowIso(),
-      reports: (seen?.reports ?? 0) + 1,
-      ...(seen?.dispatched_at === undefined ? {} : { dispatched_at: seen.dispatched_at }),
-    };
-    await store.put([{ path, content: json(entry) }], `sandbox report ${key}: ${r.needs.slice(0, 60)}`);
-
-    // One amendment at a time. Roles working in parallel report the same
-    // shortfall in their own words, and each starting setup ran the same
-    // redesign several times over. While a setup run or an amendment PR is
-    // open, a report waits; the next amendment takes every report waiting.
-    const active = await Promise.all(
-      ["queued", "in_progress", "waiting", "pending"].map((st) =>
-        gh
-          .get<{ total_count?: number }>(`repos/${gh.repo}/actions/workflows/factory-setup.yml/runs?status=${st}&per_page=1`)
-          .then((x) => x.total_count ?? 0, () => 0),
-      ),
-    );
-    const openPrs = await gh
-      .get<{ head: { ref: string } }[]>(`repos/${gh.repo}/pulls?state=open&per_page=100`)
-      .then((ps) => ps.filter((p) => p.head.ref.startsWith("factory/setup-")).length, () => 0);
-    if (active.some((n) => n > 0) || openPrs > 0) {
-      process.stdout.write("an amendment is already under way or awaiting review; this report waits for the next one\n");
-      return 0;
-    }
-    const pending: (InadequacyReport & { key: string })[] = [];
     const now = nowIso();
-    const marks: { path: string; content: string }[] = [];
-    for (const p of await store.data.list("sandbox-reports/")) {
-      const d = await store.data.readJson<InadequacyReport & { dispatched_at?: string }>(p);
-      if (d === null || d.dispatched_at !== undefined) continue;
-      const k = p.replace(/^sandbox-reports\//, "").replace(/\.json$/, "");
-      pending.push({ role: d.role, needs: d.needs, paths: d.paths, why: d.why, key: k });
-      marks.push({ path: p, content: json({ ...d, dispatched_at: now }) });
-    }
-    if (pending.length === 0) {
-      process.stdout.write("already handed to an amendment\n");
-      return 0;
-    }
-    await store.put(marks, `sandbox reports: ${pending.length} handed to an amendment`);
-    await gh.dispatchWorkflow("factory-setup.yml", undefined, { amend: JSON.stringify({ reports: pending }) });
-    process.stdout.write(`started factory-setup to amend the sandbox for ${pending.length} report(s)\n`);
+    const workItem = typeof args["work-item"] === "string" ? args["work-item"] : undefined;
+    await recordReport(store, r, workItem, now);
+    const sweep = await sweepReports({ gh, store, ledger: await store.ledger(now), now });
+    process.stdout.write(`${sweep.why}\n`);
     return 0;
   }
   if (second === "check") {

@@ -86,6 +86,35 @@ export function withZeroBaselines(baselines: Baselines, measured: RuleCounts): R
   return out;
 }
 
+/**
+ * A rule the PR introduces — absent from the default branch's baselines and
+ * recorded in the PR's — arrives with the violations already in the code. In
+ * files the PR does not touch those are not new: the default branch has them
+ * too, and the rule only now sees them. So there the PR's recorded counts are
+ * the line. In any file the PR changes the line stays at zero, so a PR cannot
+ * add a violation and record it in the same breath.
+ */
+export function withIntroducedBaselines(
+  before: RuleCounts,
+  baselineBefore: Baselines,
+  baselineAfter: Baselines,
+  changedFiles: readonly string[],
+): RuleCounts {
+  const had = countsFromBaselines(baselineBefore);
+  const recorded = countsFromBaselines(baselineAfter);
+  const changed = new Set(changedFiles);
+  const out: Record<string, Record<string, number>> = {};
+  for (const [rule, byFile] of Object.entries(before)) out[rule] = { ...byFile };
+  for (const [rule, byFile] of Object.entries(recorded)) {
+    if (had[rule] !== undefined) continue;
+    const line = (out[rule] ??= {});
+    for (const [file, n] of Object.entries(byFile)) {
+      if (!changed.has(file)) line[file] = n;
+    }
+  }
+  return out;
+}
+
 function gemfileHas(root: string, gem: string): boolean {
   try {
     return new RegExp(`gem\\s+["']${gem}["']`).test(readFileSync(join(root, "Gemfile"), "utf8"));
@@ -151,7 +180,12 @@ export async function runStaticGate(input: StaticGateInput): Promise<StaticGateR
   const { results, unavailable } = await runStaticTools(root);
 
   const measured = measuredCounts(results);
-  const before = withZeroBaselines(input.baselineBefore, measured);
+  const before = withIntroducedBaselines(
+    withZeroBaselines(input.baselineBefore, measured),
+    input.baselineBefore,
+    input.baselineAfter,
+    input.changedFiles,
+  );
   const ratchet = checkRatchet(before, measured);
 
   const weakening = checkWeakening(

@@ -1,6 +1,7 @@
 import { effectiveAssociation } from "../lib/github.js";
 import { GitHub, type PullFile, type ReviewResponse } from "../lib/github.js";
 import { loadPolicy, type Loader } from "../lib/config.js";
+import { FactoryStore } from "../lib/store.js";
 import { runPolicy, type PolicyResult } from "./policy.js";
 import type { Association, Pipeline, PullRequestFacts } from "../lib/types.js";
 
@@ -78,8 +79,24 @@ export async function gatherPullFacts(
     declared_test_edits: declaredTestEdits,
   };
 
-  const pipeline = pipelineFromLabels(labels);
+  const pipeline = (await pipelineFromLedger(gh, pr.number)) ?? pipelineFromLabels(labels);
   return pipeline === undefined ? facts : { ...facts, pipeline };
+}
+
+/**
+ * The pipeline a factory PR belongs to is the pipeline of the work item it was
+ * built for, as the data ref records it. That record is the factory's own; a
+ * label is not, since anyone who can triage can add one.
+ */
+export async function pipelineFromLedger(gh: GitHub, pr: number): Promise<Pipeline | undefined> {
+  try {
+    const ledger = await new FactoryStore(gh).ledger(new Date().toISOString());
+    const queued = ledger.merge_queue.find((q) => q.pr === pr);
+    const item = ledger.open.find((o) => o.pr === pr);
+    return (queued?.pipeline ?? item?.pipeline) as Pipeline | undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /**

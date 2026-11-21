@@ -152,6 +152,18 @@ describe("criterion: a PR that edits .factory/definition/ from the product pipel
     const withApproval = runPolicy(ctx({ pipeline: "definition", changed_files: files, reviews: [humanApproval] }));
     expect(withApproval.conclusion).toBe("success");
   });
+
+  it("a PR from no pipeline (a person's, or setup's) is held to the same approval, not refused outright", () => {
+    // The setup PR wrote the context files and was failed as "the unknown
+    // pipeline", which no approval could fix.
+    const files = [".factory/definition/context/runbook.md"];
+    const without = runPolicy(ctx({ pipeline: undefined, author: "philip", author_association: "OWNER", changed_files: files }));
+    expect(without.conclusion).toBe("failure");
+    if (without.conclusion === "failure") {
+      expect(without.failures.map((f) => f.kind)).toEqual(["definition_without_approval"]);
+    }
+    expect(runPolicy(ctx({ pipeline: undefined, author: "philip", author_association: "OWNER", changed_files: files, reviews: [humanApproval] })).conclusion).toBe("success");
+  });
 });
 
 describe("criterion: a fork PR that edits factory-gates.yml to always pass still fails", () => {

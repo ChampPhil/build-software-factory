@@ -158,8 +158,11 @@ export function runPolicy(ctx: PolicyContext): PolicyResult {
   const definitionHits = filesMatching(pr.changed_files, policy.paths.definition);
   if (definitionHits.length > 0) {
     const rule = policy.pipelines["definition"];
+    // A PR from no pipeline (a person's, or the factory's own setup) may
+    // change the definition with a trusted human's approval, like the
+    // definition pipeline. A pipeline that may not change it never may.
     const pipelineMayChangeDefinition =
-      pr.pipeline !== undefined && allowed(policy.pipelines[pr.pipeline]?.may_change ?? [], "definition");
+      pr.pipeline === undefined || allowed(policy.pipelines[pr.pipeline]?.may_change ?? [], "definition");
     if (!pipelineMayChangeDefinition) {
       failures.push({
         kind: "path_not_allowed_for_pipeline",

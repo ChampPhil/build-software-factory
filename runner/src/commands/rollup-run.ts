@@ -1,5 +1,6 @@
 import type { GitHub } from "../lib/github.js";
 import { FactoryStore, INDEX, LEDGER, BUDGET, json } from "../lib/store.js";
+import { sweepReports } from "./sandbox-reports.js";
 import type { Change } from "../lib/dataref.js";
 import { MEDIA_REF } from "../lib/dataref.js";
 import {
@@ -52,6 +53,8 @@ export interface RollupReport {
   readonly dispatchReason: string;
   readonly paused: readonly Pipeline[];
   readonly commit: string | null;
+  /** What the sandbox-report sweep did. */
+  readonly amendment?: string;
 }
 
 /** Read every run file and work item on the data ref. */
@@ -157,8 +160,19 @@ export async function runRollupCommand(opts: RollupOptions): Promise<RollupRepor
     }
   }
 
+  // A sandbox report that waited — for its change to merge, or for the open
+  // amendment to finish — goes to the next amendment from here.
+  let amendment: string | undefined;
+  try {
+    const sweep = await sweepReports({ gh: opts.gh, store, ledger: nextLedger, now: opts.now, ...(opts.plan === true ? { plan: true } : {}) });
+    amendment = sweep.why;
+  } catch (e) {
+    amendment = `sandbox reports not swept: ${(e as Error).message}`;
+  }
+
   return {
     metrics: result.metrics,
+    amendment,
     dispatched,
     dispatchReason: result.dispatchReason,
     paused,

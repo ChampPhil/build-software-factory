@@ -16,7 +16,9 @@ export type Role = "triage" | "spec" | "builder" | "verifier" | "gardener" | "ha
 /** The role sequence per pipeline. */
 const SEQUENCE: Readonly<Record<Pipeline, readonly Role[]>> = {
   product_work: ["triage", "spec", "builder", "verifier"],
-  gardening: ["gardener", "builder", "verifier"],
+  // The gardener picks the work once a night, in factory-garden; each item it
+  // files is then built and verified like any other.
+  gardening: ["builder", "verifier"],
   hardening: ["hardener", "spec", "builder", "verifier"],
   // A conflict is a rebase and a re-clear: no new intent to triage or spec.
   conflict: ["builder", "verifier"],
