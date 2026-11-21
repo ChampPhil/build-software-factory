@@ -283,19 +283,78 @@ function filesUnder(dir: string): readonly string[] {
 }
 
 /**
- * What threat detection cost, from its uploaded artifact: gh-aw's own usage
- * log for the detection run first, then its proxy's metering. One source,
- * never both, since they count the same requests. Null when neither is there.
+ * Totals from a usage file whose exact layout gh-aw owns: every object in it
+ * is searched for token counts and AI-credit totals under any of the names
+ * gh-aw uses. Credits are cumulative in gh-aw's own records, so the largest
+ * is taken; tokens are summed only from per-request records.
  */
-export function detectionUsd(dir: string, model: string): number | null {
-  const files = filesUnder(dir);
-  const pick = (re: RegExp): string | undefined => files.find((f) => re.test(f));
-  for (const [re, from] of [[/detection_usage\.jsonl$/, "agent_session"], [/token-usage\.jsonl$/, "token_usage"]] as const) {
-    const f = pick(re);
-    if (f === undefined) continue;
-    const usage = usageFromSession(parseJsonl(readFileSync(f, "utf8")), from);
-    const usd = measuredUsd(model, usage);
-    if (usd !== null) return usd;
+export function scanUsage(text: string): { credits: number | null; tokens: { tokensIn: number; tokensOut: number; cacheRead: number; cacheWrite: number } | null } {
+  const objects: unknown[] = [];
+  const trimmed = text.trim();
+  if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+    try {
+      objects.push(JSON.parse(trimmed));
+    } catch {
+      /* JSONL, read line by line below */
+    }
   }
+  if (objects.length === 0) {
+    for (const line of text.split("\n")) {
+      try {
+        if (line.trim() !== "") objects.push(JSON.parse(line));
+      } catch {
+        /* a truncated line */
+      }
+    }
+  }
+  let credits: number | null = null;
+  const t = { tokensIn: 0, tokensOut: 0, cacheRead: 0, cacheWrite: 0 };
+  let sawTokens = false;
+  const norm = (k: string): string => k.replace(/([a-z])([A-Z])/g, "$1_$2").toLowerCase();
+  const visit = (v: unknown, depth: number): void => {
+    if (depth > 6 || v === null || typeof v !== "object") return;
+    if (Array.isArray(v)) {
+      for (const x of v) visit(x, depth + 1);
+      return;
+    }
+    const o = v as Record<string, unknown>;
+    const nums: Record<string, number> = {};
+    for (const [k, x] of Object.entries(o)) if (typeof x === "number" && Number.isFinite(x)) nums[norm(k)] = x;
+    for (const k of ["ai_credits", "aic", "total_ai_credits", "cumulative_ai_credits"]) {
+      if (nums[k] !== undefined) credits = Math.max(credits ?? 0, nums[k]!);
+    }
+    const inTok = nums["input_tokens"];
+    const outTok = nums["output_tokens"];
+    if (inTok !== undefined || outTok !== undefined) {
+      sawTokens = true;
+      t.tokensIn += inTok ?? 0;
+      t.tokensOut += outTok ?? 0;
+      t.cacheRead += nums["cache_read_input_tokens"] ?? nums["cache_read_tokens"] ?? 0;
+      t.cacheWrite += nums["cache_creation_input_tokens"] ?? nums["cache_write_tokens"] ?? nums["cache_creation_tokens"] ?? 0;
+      return; // a per-request record: its children are breakdowns of the same tokens
+    }
+    for (const x of Object.values(o)) visit(x, depth + 1);
+  };
+  for (const o of objects) visit(o, 0);
+  return { credits, tokens: sawTokens ? t : null };
+}
+
+/**
+ * What threat detection cost, from its uploaded artifact: the larger of
+ * gh-aw's own credit total and the tokens at list price. Null when the
+ * artifact holds neither, and the caller then charges the ceiling.
+ */
+export function detectionUsd(dir: string, model: string, log: (line: string) => void = () => {}): number | null {
+  const files = filesUnder(dir).filter((f) => /detection_usage\.jsonl?$|token-usage\.jsonl$/.test(f));
+  // gh-aw's detection record first; the proxy's metering only when it is absent.
+  files.sort((a, b) => Number(/token-usage/.test(a)) - Number(/token-usage/.test(b)));
+  for (const f of files) {
+    const scan = scanUsage(readFileSync(f, "utf8"));
+    const fromCredits = scan.credits === null ? null : scan.credits / 100;
+    const fromTokens = scan.tokens === null ? null : listCostUsd(model, scan.tokens);
+    log(`detection usage ${f.slice(dir.length + 1)}: credits ${scan.credits ?? "none"}, tokens ${scan.tokens === null ? "none" : JSON.stringify(scan.tokens)}`);
+    if (fromCredits !== null || fromTokens !== null) return round4(Math.max(fromCredits ?? 0, fromTokens ?? 0));
+  }
+  log(`no detection usage found under ${dir} (${filesUnder(dir).length} file(s))`);
   return null;
 }

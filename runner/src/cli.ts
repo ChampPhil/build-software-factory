@@ -1501,7 +1501,7 @@ async function budgetSettleCommand(args: Args): Promise<number> {
   }
   let detUsd = creditsToUsd(str("detection-aic"));
   const detDir = str("detection-dir");
-  if (detUsd === null && detDir !== undefined) detUsd = detectionUsd(detDir, str("detection-model") ?? "claude-haiku-5-5");
+  if (detUsd === null && detDir !== undefined) detUsd = detectionUsd(detDir, str("detection-model") ?? "claude-haiku-5-5", (l) => process.stdout.write(`${l}\n`));
   const gh = new GitHub({ repo: requireRepo() });
   const { FactoryStore } = await import("./lib/store.js");
   const store = new FactoryStore(gh);

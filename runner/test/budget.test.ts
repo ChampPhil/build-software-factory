@@ -257,3 +257,17 @@ describe("updateJson", () => {
     expect(JSON.parse((await store.read("c.json"))!)).toEqual({ n: 2 });
   });
 });
+
+describe("reading gh-aw's usage files", () => {
+  it("takes the cumulative credit total and the per-request tokens, under either naming", async () => {
+    const { scanUsage } = await import("../src/commands/budget.js");
+    const jsonl = [
+      JSON.stringify({ model: "claude-haiku-5-5", inputTokens: 2, outputTokens: 178, cacheReadTokens: 0, cacheWriteTokens: 48795, aiCredits: 0.618858 }),
+      JSON.stringify({ model: "claude-haiku-5-5", input_tokens: 2, output_tokens: 191, cache_read_input_tokens: 48795, cache_creation_input_tokens: 543, ai_credits: 0.68401 }),
+    ].join("\n");
+    const r = scanUsage(jsonl);
+    expect(r.credits).toBeCloseTo(0.68401, 6);
+    expect(r.tokens).toEqual({ tokensIn: 4, tokensOut: 369, cacheRead: 48795, cacheWrite: 49338 });
+    expect(scanUsage("{}").tokens).toBeNull();
+  });
+});
