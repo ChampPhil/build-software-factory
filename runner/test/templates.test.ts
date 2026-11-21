@@ -437,5 +437,12 @@ describe("factory-gates on the PR that installs the factory", () => {
     const plan = text.slice(text.indexOf("\n  plan:\n"), text.indexOf("\n  static:\n"));
     expect(plan).toMatch(/if \[ ! -f \.factory-trusted\/\.factory\/bin\/bsf \]; then[\s\S]*installed=false[\s\S]*exit 0/);
     expect(plan).toContain("if: steps.trusted.outputs.installed == 'true'");
+    expect(plan).toContain("judge: ${{ steps.trusted.outputs.installed == 'false' && 'false' ||");
+  });
+
+  it("judges by default: only an explicit 'false' skips the gates, so an older runner without the output still judges", () => {
+    const text = readFileSync(join(TEMPLATES, "workflows", "factory-gates.yml"), "utf8");
+    expect(text).not.toContain("outputs.judge == 'true'");
+    expect(text.match(/outputs\.judge != 'false'/g)?.length).toBe(4);
   });
 });
