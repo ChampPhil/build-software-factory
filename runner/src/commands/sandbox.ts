@@ -569,6 +569,9 @@ export async function serveOnHost(opts: {
   readonly log: (l: string) => void;
 }): Promise<{ url: string | null; services: readonly string[] }> {
   const m = opts.manifest;
+  // One app per runner: an app or forward left from an earlier start would
+  // keep the agent's ports, and the agent would be shown the old app.
+  stopServing();
   const forwards: string[] = [];
   m.services.slice(0, HOST_SERVICE_PORTS.length).forEach((svc, i) => {
     forward(HOST_SERVICE_PORTS[i] as number, svc.port);
@@ -588,7 +591,7 @@ export async function serveOnHost(opts: {
     const appPort = Number(target.port || (target.protocol === "https:" ? 443 : 80));
     opts.log(`running the app on the runner, restarted on every change: ${m.commands.run}`);
     const out = openSync(join(logDir, "app.log"), "a");
-    const sup = spawn(process.execPath, ["--input-type=module", "-e", SUPERVISOR_SOURCE, m.commands.run, opts.workspace], {
+    const sup = spawn(process.execPath, ["--input-type=module", "-e", SUPERVISOR_SOURCE, m.commands.run, opts.workspace, SUPERVISOR_MARK], {
       cwd: opts.workspace, env: { ...shellBase(), ...opts.env }, detached: true, stdio: ["ignore", out, out],
     });
     sup.unref();
@@ -615,8 +618,19 @@ export async function serveOnHost(opts: {
   return { url, services: forwards };
 }
 
+const SUPERVISOR_MARK = "bsf-app-supervisor";
+const FORWARD_MARK = "bsf-port-forward";
+
 function forward(listen: number, to: number): void {
-  spawn(process.execPath, ["--input-type=module", "-e", FORWARD_SOURCE, String(listen), String(to)], { detached: true, stdio: "ignore" }).unref();
+  spawn(process.execPath, ["--input-type=module", "-e", FORWARD_SOURCE, String(listen), String(to), FORWARD_MARK], { detached: true, stdio: "ignore" }).unref();
+}
+
+/** Stops the app and the forwards `serveOnHost` started. The supervisor takes its app down with it. */
+export function stopServing(): void {
+  spawnSync("pkill", ["-TERM", "-f", `${SUPERVISOR_MARK}$`]);
+  spawnSync("pkill", ["-TERM", "-f", `${FORWARD_MARK}$`]);
+  // Give the old listeners a moment to let go of their ports.
+  spawnSync("sleep", ["0.5"]);
 }
 
 function excludeFromGit(workspace: string, path: string): void {
@@ -638,6 +652,7 @@ const [cmd, dir] = process.argv.slice(1);
 const IGNORE = /(^|\\/)(\\.git|node_modules|\\.venv|venv|target|bin|obj|dist|build|\\.next|coverage|__pycache__|\\.factory\\/sandbox)(\\/|$)/;
 let child = null, timer = null;
 const start = () => { child = spawn("bash", ["-c", cmd], { cwd: dir, stdio: "inherit", detached: true }); console.log("[bsf] app started"); };
+process.on("SIGTERM", () => { try { process.kill(-child.pid, "SIGTERM"); } catch {} process.exit(0); });
 const restart = () => { try { process.kill(-child.pid, "SIGTERM"); } catch {} setTimeout(start, 1500); console.log("[bsf] a file changed; restarting the app"); };
 start();
 watch(dir, { recursive: true }, (_e, f) => { if (!f || IGNORE.test(f)) return; clearTimeout(timer); timer = setTimeout(restart, 1500); });`;

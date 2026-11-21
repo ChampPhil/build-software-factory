@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { GitHub } from "../lib/github.js";
-import { FactoryStore, LEDGER, json, workItemPath } from "../lib/store.js";
+import { FactoryStore, LEDGER, json, workItemPath, type Ledger } from "../lib/store.js";
 import type { Change } from "../lib/dataref.js";
 import type { Baselines } from "../lib/types.js";
 import { fingerprint, sourceKind } from "./intake.js";
@@ -149,6 +149,8 @@ export interface GardenOptions {
   readonly freeSlots?: number;
   readonly ref?: string;
   readonly plan?: boolean;
+  /** False when the items were already chosen (the gardener's picks): no re-scan. */
+  readonly scan?: boolean;
 }
 
 export interface GardenReport {
@@ -173,9 +175,10 @@ export async function runGardenCommand(opts: GardenOptions): Promise<GardenRepor
   // would mean two PRs racing on the same files.
   const alreadyFixing = new Set(ledger.open.flatMap((o) => o.fixes ?? []));
 
+  const scanning = opts.scan !== false;
   const found = [
-    ...baselinedDrift(opts.baselines),
-    ...(await untestedRecent(opts.root, opts.windowDays ?? 14, opts.sourceGlobs ?? [])),
+    ...(scanning ? baselinedDrift(opts.baselines) : []),
+    ...(scanning ? await untestedRecent(opts.root, opts.windowDays ?? 14, opts.sourceGlobs ?? []) : []),
     ...(opts.extra ?? []),
   ];
 
@@ -188,10 +191,25 @@ export async function runGardenCommand(opts: GardenOptions): Promise<GardenRepor
     return true;
   });
 
-  const picked = eligible
+  // Items that touch the same files race each other: two PRs, one conflict,
+  // and a reviewer judging the same change twice. Files already claimed by an
+  // open gardening item count as taken, and so do files claimed by an item
+  // picked earlier tonight. An item naming no files is repo-wide and takes
+  // everything.
+  const taken = await openGardeningScopes(store, ledger);
+  const picked: DriftItem[] = [];
+  for (const item of eligible
     .slice()
-    .sort((a, b) => ORDER[a.kind] - ORDER[b.kind] || b.occurrences - a.occurrences)
-    .slice(0, Math.max(0, opts.maxPrs));
+    .sort((a, b) => ORDER[a.kind] - ORDER[b.kind] || b.occurrences - a.occurrences)) {
+    if (picked.length >= Math.max(0, opts.maxPrs)) break;
+    const scope = scopeOf(item.files);
+    if (taken.some((t) => scopesOverlap(t, scope))) {
+      skipped.push({ problem_class: item.problem_class, reason: "overlaps files another gardening item is changing" });
+      continue;
+    }
+    taken.push(scope);
+    picked.push(item);
+  }
 
   const changes: Change[] = [];
   const filed: string[] = [];
@@ -249,4 +267,47 @@ export async function runGardenCommand(opts: GardenOptions): Promise<GardenRepor
   }
 
   return { scan: { items: found, skipped }, picked, filed, dispatched };
+}
+
+/** The files a gardening item changes; `null` means the whole repo. */
+export type GardenScope = ReadonlySet<string> | null;
+
+export function scopeOf(files: readonly string[]): GardenScope {
+  const clean = files.map((f) => f.trim().replace(/^\.\//, "")).filter((f) => f !== "");
+  return clean.length === 0 ? null : new Set(clean);
+}
+
+export function scopesOverlap(a: GardenScope, b: GardenScope): boolean {
+  if (a === null || b === null) return true;
+  for (const f of a) {
+    if (b.has(f)) return true;
+    // A folder named in one item covers the files under it in the other.
+    for (const g of b) {
+      const dir = (x: string) => (x.endsWith("/") ? x : `${x}/`);
+      if (g.startsWith(dir(f)) || f.startsWith(dir(g))) return true;
+    }
+  }
+  return false;
+}
+
+/** The files listed in a gardening work item's body ("Files:" section). */
+export function filesInBody(body: string): string[] {
+  const at = body.lastIndexOf("\nFiles:\n");
+  if (at < 0) return [];
+  return body
+    .slice(at + "\nFiles:\n".length)
+    .split("\n")
+    .map((l) => /^- (.+)$/.exec(l.trim())?.[1]?.trim() ?? "")
+    .filter((f) => f !== "");
+}
+
+async function openGardeningScopes(store: FactoryStore, ledger: Ledger): Promise<GardenScope[]> {
+  const scopes: GardenScope[] = [];
+  for (const o of ledger.open) {
+    if (o.pipeline !== "gardening") continue;
+    const item = await store.get<{ body?: string }>(workItemPath(o.work_item), "work-item").catch(() => null);
+    // An item that cannot be read claims nothing, so it cannot block gardening forever.
+    scopes.push(item === null ? new Set<string>() : scopeOf(filesInBody(item.body ?? "")));
+  }
+  return scopes;
 }

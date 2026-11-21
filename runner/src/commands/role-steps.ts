@@ -138,6 +138,7 @@ export async function gardenFile(opts: {
     // its picks, so nothing is re-scanned here.
     baselines: { schema: "baselines/1", rules: {} },
     maxPrs: opts.maxPrs,
+    scan: false,
     extra: accepted,
     ...(opts.freeSlots === undefined ? {} : { freeSlots: opts.freeSlots }),
     ...(opts.plan === true ? { plan: true } : {}),
@@ -147,6 +148,7 @@ export async function gardenFile(opts: {
     await fileHardeningItem(opts.gh, opts.now, cls, "a gardening hand-off: found in three runs");
   }
 
+  for (const s of report.scan.skipped) rejected.push({ problem_class: s.problem_class, why: s.reason });
   return { filed: report.filed, dispatched: report.dispatched, handedOff, rejected };
 }
 

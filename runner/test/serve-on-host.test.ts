@@ -1,8 +1,8 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterAll } from "vitest";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { needsHost, serveOnHost, agentEnv, HOST_APP_PORT, type SandboxManifest } from "../src/commands/sandbox.js";
+import { needsHost, serveOnHost, stopServing, agentEnv, HOST_APP_PORT, type SandboxManifest } from "../src/commands/sandbox.js";
 
 const base: SandboxManifest = {
   schema: "sandbox/1", tier: "renders",
@@ -52,4 +52,5 @@ describe("a sandbox that needs the runner", () => {
     expect(env["DATABASE_URL"]).toBe("postgresql://u:p@host.docker.internal:8788/d");
     expect(env["OTHER"]).toBe("localhost:54321");
   });
+  afterAll(() => stopServing());
 });

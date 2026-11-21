@@ -1517,27 +1517,59 @@ async function sandboxCommandCli(second: string | undefined, args: Args): Promis
     }
     const problems = inadequacyProblems(report);
     if (problems.length > 0) die(`the sandbox report was rejected:\n  - ${problems.join("\n  - ")}`);
-    const r = report as import("./commands/sandbox.js").InadequacyReport;
+    type InadequacyReport = import("./commands/sandbox.js").InadequacyReport;
+    const r = report as InadequacyReport;
     const gh = new GitHub({ repo: requireRepo() });
     const { FactoryStore, json } = await import("./lib/store.js");
     const store = new FactoryStore(gh);
     const key = inadequacyKey(r);
     const path = `sandbox-reports/${key}.json`;
-    const seen = await store.data.readJson<{ reported_at: string; reports: number }>(path);
+    const seen = await store.data.readJson<{ reported_at: string; reports: number; dispatched_at?: string }>(path);
     const workItem = typeof args["work-item"] === "string" ? args["work-item"] : undefined;
     const entry = {
       ...r,
       ...(workItem === undefined ? {} : { work_item: workItem }),
       reported_at: seen?.reported_at ?? nowIso(),
       reports: (seen?.reports ?? 0) + 1,
+      ...(seen?.dispatched_at === undefined ? {} : { dispatched_at: seen.dispatched_at }),
     };
     await store.put([{ path, content: json(entry) }], `sandbox report ${key}: ${r.needs.slice(0, 60)}`);
-    if (seen !== null) {
-      process.stdout.write(`already reported (${entry.reports} times); the amendment it started is the one to review\n`);
+
+    // One amendment at a time. Roles working in parallel report the same
+    // shortfall in their own words, and each starting setup ran the same
+    // redesign several times over. While a setup run or an amendment PR is
+    // open, a report waits; the next amendment takes every report waiting.
+    const active = await Promise.all(
+      ["queued", "in_progress", "waiting", "pending"].map((st) =>
+        gh
+          .get<{ total_count?: number }>(`repos/${gh.repo}/actions/workflows/factory-setup.yml/runs?status=${st}&per_page=1`)
+          .then((x) => x.total_count ?? 0, () => 0),
+      ),
+    );
+    const openPrs = await gh
+      .get<{ head: { ref: string } }[]>(`repos/${gh.repo}/pulls?state=open&per_page=100`)
+      .then((ps) => ps.filter((p) => p.head.ref.startsWith("factory/setup-")).length, () => 0);
+    if (active.some((n) => n > 0) || openPrs > 0) {
+      process.stdout.write("an amendment is already under way or awaiting review; this report waits for the next one\n");
       return 0;
     }
-    await gh.dispatchWorkflow("factory-setup.yml", undefined, { amend: JSON.stringify({ ...r, key }) });
-    process.stdout.write(`the sandbox cannot exercise "${r.needs}"; started factory-setup to amend it\n`);
+    const pending: (InadequacyReport & { key: string })[] = [];
+    const now = nowIso();
+    const marks: { path: string; content: string }[] = [];
+    for (const p of await store.data.list("sandbox-reports/")) {
+      const d = await store.data.readJson<InadequacyReport & { dispatched_at?: string }>(p);
+      if (d === null || d.dispatched_at !== undefined) continue;
+      const k = p.replace(/^sandbox-reports\//, "").replace(/\.json$/, "");
+      pending.push({ role: d.role, needs: d.needs, paths: d.paths, why: d.why, key: k });
+      marks.push({ path: p, content: json({ ...d, dispatched_at: now }) });
+    }
+    if (pending.length === 0) {
+      process.stdout.write("already handed to an amendment\n");
+      return 0;
+    }
+    await store.put(marks, `sandbox reports: ${pending.length} handed to an amendment`);
+    await gh.dispatchWorkflow("factory-setup.yml", undefined, { amend: JSON.stringify({ reports: pending }) });
+    process.stdout.write(`started factory-setup to amend the sandbox for ${pending.length} report(s)\n`);
     return 0;
   }
   if (second === "check") {
