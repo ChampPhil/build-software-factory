@@ -539,6 +539,18 @@ async function main(argv: readonly string[]): Promise<number> {
       if (second !== "plan") die("usage: bsf gates plan|static|coverage|tests|record");
       const ev = gateEvent();
       const commit = typeof args["commit"] === "string" ? args["commit"] : ev.sha;
+      // A label is a reason to judge only when it is the one that asks for
+      // verification. Others — the factory's own factory:cleared among them —
+      // change nothing about the change, and re-judging on them recorded a
+      // second, different verdict on a commit already judged; the App's label
+      // events also cannot check the PR out for the verifier.
+      const verifyLabelName = typeof args["verify-label"] === "string" ? args["verify-label"] : "factory:verify";
+      const judge = ev.action !== "labeled" || ev.label === verifyLabelName;
+      setOutput("judge", String(judge));
+      if (!judge) {
+        process.stdout.write(`the ${ev.label} label changes nothing about this change; not judging it again\n`);
+        return 0;
+      }
       if (commit === "" || commit === "HEAD") die("no commit: pass --commit SHA or run inside Actions");
       // The factory's own change is a factory/ branch its App opened. Anyone
       // can name a branch factory/, so the author has to be a bot as well.
@@ -616,6 +628,8 @@ function baseRef(args: Args): string {
 interface GateEvent {
   /** The commit a verdict belongs to: a PR's head, not the merge commit Actions checks out. */
   readonly sha: string;
+  readonly action?: string;
+  readonly label?: string;
   readonly pr: number;
   readonly headRef: string;
   readonly authorIsBot: boolean;
@@ -627,6 +641,8 @@ function gateEvent(): GateEvent {
   let p: {
     pull_request?: { number?: number; head?: { sha?: string; ref?: string }; user?: { type?: string; login?: string }; labels?: { name?: string }[] };
     merge_group?: { head_sha?: string; head_ref?: string };
+    action?: string;
+    label?: { name?: string };
   } = {};
   const path = process.env["GITHUB_EVENT_PATH"];
   if (path !== undefined && existsSync(path)) {
@@ -640,6 +656,8 @@ function gateEvent(): GateEvent {
   if (pr?.head?.sha !== undefined) {
     return {
       sha: pr.head.sha,
+      ...(p.action === undefined ? {} : { action: p.action }),
+      ...(p.label?.name === undefined ? {} : { label: p.label.name }),
       pr: pr.number ?? 0,
       headRef: pr.head.ref ?? "",
       authorIsBot: pr.user?.type === "Bot" || /\[bot\]$/.test(pr.user?.login ?? ""),
