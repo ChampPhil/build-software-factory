@@ -46,7 +46,7 @@ import { planRun, afterGates } from "./commands/run-plan.js";
 import { buildStepReport, writeStepReport, changedFilesFromGit, type Harness } from "./commands/step-report.js";
 import { pausedPipelines, type BudgetState } from "./commands/rollup.js";
 import { loadFactory } from "./lib/config.js";
-import { startSandbox, loadManifest, loadManifestAt, trialSandbox, freezeManifest } from "./commands/sandbox.js";
+import { startSandbox, loadManifest, loadManifestAt, trialSandbox, freezeManifest, needsHost, serveOnHost, closedEnv } from "./commands/sandbox.js";
 import { fetchWorkItem, writeSpec, fetchArtifact, storeMedia } from "./commands/role-io.js";
 import { gardenScan, gardenFile, hardenContext, reviewCollect, reviewWrite } from "./commands/role-steps.js";
 import { runTestsGate } from "./commands/tests-gate.js";
@@ -587,6 +587,10 @@ async function main(argv: readonly string[]): Promise<number> {
       setOutput("coverage", String(plan.coverage));
       setOutput("commit", commit);
       setOutput("pr_number", String(ev.pr));
+      {
+        const loadedM = loadManifest(process.cwd());
+        setOutput("host_access", String(loadedM.kind === "ok" && needsHost(loadedM.manifest)));
+      }
       // The verifier checks a factory change against its work item's spec.
       // The run links its PR to the item as soon as the build opens it; wait
       // a little for that link rather than verify against nothing.
@@ -1050,6 +1054,10 @@ async function runCommand(second: string | undefined, args: Args, third?: string
     setOutput("proceed", String(!plan.escalate));
     setOutput("escalate", String(plan.escalate));
     setOutput("attempt", String(plan.attempt));
+    {
+      const loadedM = loadManifest(process.cwd());
+      setOutput("host_access", String(loadedM.kind === "ok" && needsHost(loadedM.manifest)));
+    }
     setOutput("first_step", roles[0] === "verifier" ? "verifier" : (roles[0] ?? "builder"));
     // Escalation is an outcome, not a crash: the jobs downstream read
     // `proceed`, and failing this job would bury the reason under red.
@@ -1417,6 +1425,24 @@ async function sandboxCommandCli(second: string | undefined, args: Args): Promis
         `${r.envNames.length} variable(s) in ${r.envFile}\n`,
     );
     setOutput("tier", r.tier);
+    // --serve: a role that looks at the app. Where the sandbox needs the
+    // runner, the app runs here, with its services and stubs, and the role's
+    // host-access variant reaches it; the agent finds the address in
+    // app.json. Elsewhere the agent runs the app itself, as before.
+    const loaded = loadManifest(process.cwd());
+    const host = loaded.kind === "ok" && needsHost(loaded.manifest);
+    setOutput("host_access", String(host));
+    if (args["serve"] === true && loaded.kind === "ok" && host) {
+      const workspace = process.env["GITHUB_WORKSPACE"] ?? process.cwd();
+      const served = await serveOnHost({
+        manifest: loaded.manifest,
+        workspace,
+        env: closedEnv(workspace) ?? {},
+        infoFile: "/tmp/gh-aw/agent/bsf/app.json",
+        log: (l) => process.stdout.write(`${l}\n`),
+      });
+      setOutput("app_url", served?.url ?? "");
+    }
     return 0;
   }
   if (second === "report") {

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { applyInterception, startStubs, type InterceptedStub } from "./stubs.js";
 import { connect } from "node:net";
@@ -524,3 +524,66 @@ export function inadequacyKey(r: InadequacyReport): string {
   const norm = `${r.needs.toLowerCase().replace(/\s+/g, " ").trim()}|${[...r.paths].sort().join(",")}`;
   return createHash("sha256").update(norm).digest("hex").slice(0, 16);
 }
+
+/* ------------------------------------------------------------- host access */
+
+/** The one runner port a host-access role may reach; see scripts/host-variants.mjs. */
+export const HOST_APP_PORT = 8787;
+
+/**
+ * Whether the sandbox needs the runner itself: services, or stubs answering
+ * at a third party's own address. Then the app is run on the runner and the
+ * role uses its host-access variant to reach it.
+ */
+export function needsHost(m: SandboxManifest): boolean {
+  return m.services.length > 0 || (m.stubs ?? []).some((s) => (s.hosts ?? []).length > 0);
+}
+
+/**
+ * Run the app on the runner, in the closed environment, and expose it on
+ * HOST_APP_PORT for the agent's container. The agent edits the workspace the
+ * runner serves from, so a dev server reloads with every change. Writes
+ * where the agent finds it.
+ */
+export async function serveOnHost(opts: {
+  readonly manifest: SandboxManifest;
+  readonly workspace: string;
+  readonly env: Record<string, string>;
+  readonly infoFile: string;
+  readonly log: (l: string) => void;
+}): Promise<{ url: string } | null> {
+  const m = opts.manifest;
+  if (m.commands.run === null || m.app_url == null) return null;
+  const target = new URL(m.app_url);
+  const appPort = Number(target.port || (target.protocol === "https:" ? 443 : 80));
+  const logDir = join(process.env["RUNNER_TEMP"] ?? tmpdir(), "bsf-app");
+  mkdirSync(logDir, { recursive: true });
+  const out = openSync(join(logDir, "app.log"), "a");
+  opts.log(`running the app on the runner: ${m.commands.run}`);
+  const child = spawn("bash", ["-c", m.commands.run], { cwd: opts.workspace, env: { ...shellBase(), ...opts.env }, detached: true, stdio: ["ignore", out, out] });
+  child.unref();
+  const deadline = Date.now() + 240_000;
+  let status: number | null = null;
+  while (Date.now() < deadline) {
+    status = await httpStatus(m.app_url);
+    if (status !== null && status < 500) break;
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+  if (status === null || status >= 500) {
+    opts.log(`the app did not answer at ${m.app_url} (see ${logDir}/app.log); the agent will start its own`);
+    return null;
+  }
+  // A plain TCP forward from every interface to the app, which may listen
+  // on 127.0.0.1 only; the agent's container reaches the runner through it.
+  const fwd = spawn(process.execPath, ["--input-type=module", "-e", FORWARD_SOURCE, String(HOST_APP_PORT), String(appPort)], { detached: true, stdio: "ignore" });
+  fwd.unref();
+  const url = `${target.protocol}//host.docker.internal:${HOST_APP_PORT}${target.pathname}${target.search}`;
+  mkdirSync(dirname(opts.infoFile), { recursive: true });
+  writeFileSync(opts.infoFile, `${JSON.stringify({ url, runner_url: m.app_url, log: join(logDir, "app.log") }, null, 2)}\n`);
+  opts.log(`the app answers at ${m.app_url}; the agent reaches it at ${url}`);
+  return { url };
+}
+
+const FORWARD_SOURCE = `import net from "node:net";
+const [listen, to] = process.argv.slice(1).map(Number);
+net.createServer((c) => { const u = net.connect(to, "127.0.0.1"); c.pipe(u).pipe(c); u.on("error", () => c.destroy()); c.on("error", () => u.destroy()); }).listen(listen, "0.0.0.0");`;

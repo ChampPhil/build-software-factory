@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
@@ -140,7 +141,8 @@ describe("role workflows", () => {
   };
 
   it("there is one workflow per role", () => {
-    const files = readdirSync(WORKFLOWS).filter((f) => f.startsWith("factory-role-"));
+    // Plus the host-access variants, which are derived, not separate roles.
+    const files = readdirSync(WORKFLOWS).filter((f) => f.startsWith("factory-role-") && !f.endsWith("-host.md"));
     expect(files).toHaveLength(ROLES.length);
     for (const r of ROLES) expect(files).toContain(`factory-role-${r}.md`);
   });
@@ -443,6 +445,14 @@ describe("factory-gates on the PR that installs the factory", () => {
   it("judges by default: only an explicit 'false' skips the gates, so an older runner without the output still judges", () => {
     const text = readFileSync(join(TEMPLATES, "workflows", "factory-gates.yml"), "utf8");
     expect(text).not.toContain("outputs.judge == 'true'");
-    expect(text.match(/outputs\.judge != 'false'/g)?.length).toBe(4);
+    expect(text.match(/outputs\.judge != 'false'/g)?.length).toBe(5);
+  });
+});
+
+describe("host-access role variants", () => {
+  it("are exactly what scripts/host-variants.mjs derives from the base roles", () => {
+    const r = spawnSync(process.execPath, [join(ROOT, "runner/scripts/host-variants.mjs"), "--check"], { encoding: "utf8" });
+    expect(r.stderr).toBe("");
+    expect(r.status).toBe(0);
   });
 });
