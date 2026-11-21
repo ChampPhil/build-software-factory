@@ -671,13 +671,18 @@ export async function serveOnHost(opts: {
   if (m.commands.run !== null && m.app_url != null) {
     const target = new URL(m.app_url);
     const appPort = Number(target.port || (target.protocol === "https:" ? 443 : 80));
-    opts.log(`running the app on the runner, restarted on every change: ${m.commands.run}`);
+    // An app whose run command serves a build (`next start`, a compiled
+    // server) needs the build first, and again after every change: the
+    // supervisor runs both, in order, each time it starts the app.
+    const command = m.commands.build === null ? m.commands.run : `${m.commands.build} && ${m.commands.run}`;
+    opts.log(`running the app on the runner, rebuilt and restarted on every change: ${command}`);
     const out = openSync(join(logDir, "app.log"), "a");
-    const sup = spawn(process.execPath, ["--input-type=module", "-e", SUPERVISOR_SOURCE, m.commands.run, opts.workspace, SUPERVISOR_MARK], {
+    const sup = spawn(process.execPath, ["--input-type=module", "-e", SUPERVISOR_SOURCE, command, opts.workspace, SUPERVISOR_MARK], {
       cwd: opts.workspace, env: { ...shellBase(), ...opts.env }, detached: true, stdio: ["ignore", out, out],
     });
     sup.unref();
-    const deadline = Date.now() + 240_000;
+    // Room for a build: a Next.js production build takes a minute or two.
+    const deadline = Date.now() + 480_000;
     let status: number | null = null;
     while (Date.now() < deadline) {
       status = await httpStatus(m.app_url);
