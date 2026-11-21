@@ -1843,6 +1843,140 @@
         "pattern": "^\\.github/"
       }
     },
+    "pr-report.json": {
+      "/": {
+        "type": "object",
+        "properties": [
+          "blocks",
+          "conceptual",
+          "focus",
+          "schema",
+          "summary",
+          "technical"
+        ],
+        "required": [
+          "blocks",
+          "schema",
+          "summary"
+        ],
+        "additionalProperties": false
+      },
+      "/properties/schema": {
+        "const": "\"pr-report/1\""
+      },
+      "/properties/summary": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 3
+      },
+      "/properties/summary/items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "/properties/blocks": {
+        "type": "array"
+      },
+      "/properties/blocks/items/oneOf/0": {
+        "type": "object",
+        "properties": [
+          "caption",
+          "file",
+          "poster",
+          "type"
+        ],
+        "required": [
+          "caption",
+          "file",
+          "type"
+        ],
+        "additionalProperties": false
+      },
+      "/properties/blocks/items/oneOf/0/properties/type": {
+        "const": "\"file\""
+      },
+      "/properties/blocks/items/oneOf/0/properties/file": {
+        "type": "string",
+        "pattern": "^(?!/)(?!.*\\.\\.)[^\\s]+$"
+      },
+      "/properties/blocks/items/oneOf/0/properties/caption": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 300
+      },
+      "/properties/blocks/items/oneOf/0/properties/poster": {
+        "type": "string",
+        "pattern": "^(?!/)(?!.*\\.\\.)[^\\s]+$"
+      },
+      "/properties/blocks/items/oneOf/1": {
+        "type": "object",
+        "properties": [
+          "mermaid",
+          "title",
+          "type"
+        ],
+        "required": [
+          "mermaid",
+          "title",
+          "type"
+        ],
+        "additionalProperties": false
+      },
+      "/properties/blocks/items/oneOf/1/properties/type": {
+        "const": "\"diagram\""
+      },
+      "/properties/blocks/items/oneOf/1/properties/title": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "/properties/blocks/items/oneOf/1/properties/mermaid": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 20000
+      },
+      "/properties/focus": {
+        "type": "array",
+        "maxItems": 6
+      },
+      "/properties/focus/items": {
+        "type": "object",
+        "properties": [
+          "detail",
+          "files",
+          "title"
+        ],
+        "required": [
+          "detail",
+          "title"
+        ],
+        "additionalProperties": false
+      },
+      "/properties/focus/items/properties/title": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 120
+      },
+      "/properties/focus/items/properties/detail": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 1000
+      },
+      "/properties/focus/items/properties/files": {
+        "type": "array"
+      },
+      "/properties/focus/items/properties/files/items": {
+        "type": "string"
+      },
+      "/properties/technical": {
+        "type": "string",
+        "pattern": "^(?!/)(?!.*\\.\\.)[^\\s]+\\.md$"
+      },
+      "/properties/conceptual": {
+        "type": "string",
+        "pattern": "^(?!/)(?!.*\\.\\.)[^\\s]+\\.md$"
+      }
+    },
     "review.json": {
       "/": {
         "type": "object",

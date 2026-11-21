@@ -317,7 +317,7 @@ export async function storeMedia(
       continue;
     }
     const day = now.slice(0, 10);
-    changes.push({ path: `media/${day}/${runId}/${rel}`, content: readFileSync(abs, "base64") });
+    changes.push({ path: `media/${day}/${runId}/${rel}`, content: readFileSync(abs, "base64"), encoding: "base64" });
     files.push(rel);
     bytes += size;
   }

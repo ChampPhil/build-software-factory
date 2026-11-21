@@ -253,6 +253,29 @@ The factory enforces its rules with its own gates, and uses GitHub's branch prot
 10. **Fork PRs.** PRs from forks run only the gates that need no secrets; agent work never starts from a fork.
 11. **Budget shares.** The budget has two limits: model spend in USD and Actions minutes. Each pipeline has a share of both (default product work 60%, gardening 25%, review and benchmarks 15%) and pauses when either share is used. Product work may also use what the others left unspent, up to 110% of either limit, then pauses too. The minutes limit defaults to the plan's included minutes (2,000 a month on Free private repos; standard runners are free on public repos, so no minutes limit there).
 
+## What a person sees on a PR
+
+Every factory PR, setup PR and escalation is rendered by the runner from the
+roles' reports (`schema/pr-report.json`), never from text an agent wrote into
+the PR. One layout everywhere:
+
+1. **Summary** — at most three lines: what changed, why, what someone would notice.
+2. **Proof** — an ordered mix of files (screenshots, GIFs, recordings, logs,
+   API responses) and Mermaid diagrams, as many as the change needs: the
+   builder's, then the verifier's under "Checked independently by the
+   verifier". Images show inline; a video shows its poster linking to the
+   file, since GitHub plays only its own uploads; text proof shows inline.
+   When the body cannot hold it all, the rest continues in one PR comment.
+3. **Key things to focus on** — the biggest changes to be aware of.
+4. **Read more** — the full spec, a technical and a conceptual breakdown.
+
+Files are stored on `refs/factory/media` under `reports/<work item>/`, and each
+has a URL there. `bsf report store` stores a role's report in its post-step;
+`bsf report publish` renders the PR in `factory-run` (once with the builder's
+report, again when the verifier's is in) and reports `factory/pr-report`,
+which fails and names the part that is missing. Setup PRs are rendered with
+`bsf report setup`, the trial's screenshot of the app first.
+
 ## Merge queue and conflict mechanics
 
 Every factory PR reaches main through a merge queue that re-checks it against the latest main.

@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://build-software-factory.dev/schema/pr-report.json",
+  "title": "PR report",
+  "description": "What a role shows a person about its change. The factory renders every factory PR, setup PR and escalation from these, in one layout: a three-line summary, an ordered mix of proof files and diagrams, the key things to focus on, and links to the spec and the longer breakdowns. Doc 07.",
+  "type": "object",
+  "required": ["schema", "summary", "blocks"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": { "const": "pr-report/1" },
+    "summary": {
+      "description": "At most three lines a person reads first: what changed, why, and what they would notice.",
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 3,
+      "items": { "type": "string", "minLength": 1, "maxLength": 200 }
+    },
+    "blocks": {
+      "description": "Proof files and diagrams, in the order a person should see them. As many as the change needs.",
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": ["type", "file", "caption"],
+            "additionalProperties": false,
+            "properties": {
+              "type": { "const": "file" },
+              "file": {
+                "description": "Path of a file the role wrote, relative to its report directory: a screenshot, GIF, video, log or API response.",
+                "type": "string",
+                "pattern": "^(?!/)(?!.*\\.\\.)[^\\s]+$"
+              },
+              "caption": { "type": "string", "minLength": 1, "maxLength": 300 },
+              "poster": {
+                "description": "For a video: an image or GIF of it, shown inline and linking to the video, which GitHub does not play from a repository.",
+                "type": "string",
+                "pattern": "^(?!/)(?!.*\\.\\.)[^\\s]+$"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": ["type", "title", "mermaid"],
+            "additionalProperties": false,
+            "properties": {
+              "type": { "const": "diagram" },
+              "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+              "mermaid": { "description": "Mermaid source; GitHub draws it in place.", "type": "string", "minLength": 1, "maxLength": 20000 }
+            }
+          }
+        ]
+      }
+    },
+    "focus": {
+      "description": "The biggest changes a reviewer should be aware of.",
+      "type": "array",
+      "maxItems": 6,
+      "items": {
+        "type": "object",
+        "required": ["title", "detail"],
+        "additionalProperties": false,
+        "properties": {
+          "title": { "type": "string", "minLength": 1, "maxLength": 120 },
+          "detail": { "type": "string", "minLength": 1, "maxLength": 1000 },
+          "files": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "technical": {
+      "description": "Path of the technical breakdown (markdown), relative to the report directory: how the change works, file by file.",
+      "type": "string",
+      "pattern": "^(?!/)(?!.*\\.\\.)[^\\s]+\\.md$"
+    },
+    "conceptual": {
+      "description": "Path of the conceptual breakdown (markdown), relative to the report directory: what the change means and why it is shaped this way.",
+      "type": "string",
+      "pattern": "^(?!/)(?!.*\\.\\.)[^\\s]+\\.md$"
+    }
+  }
+}

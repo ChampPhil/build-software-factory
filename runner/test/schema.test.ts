@@ -9,6 +9,18 @@ import {
 
 /** Every doc-09 example, as a valid fixture per schema. */
 const valid: Record<SchemaName, unknown> = {
+  "pr-report": {
+    schema: "pr-report/1",
+    summary: ["Invoices can be filtered by status.", "The filter is a row of chips above the table.", "Paid invoices stay bold."],
+    blocks: [
+      { type: "file", file: "files/filtered.png", caption: "Only sent invoices after choosing Sent" },
+      { type: "diagram", title: "Where the filter lives", mermaid: "flowchart LR\n  URL --> Page --> Table" },
+      { type: "file", file: "files/walkthrough.mp4", caption: "Choosing each status", poster: "files/walkthrough.gif" },
+    ],
+    focus: [{ title: "Status comes from the URL", detail: "?status= is read on the server, so links share the filter.", files: ["app/invoices/page.tsx"] }],
+    technical: "technical.md",
+    conceptual: "conceptual.md",
+  },
   // The ts-webapp fixture's real manifest: no services, no variables, renders.
   sandbox: {
     "schema": "sandbox/1",

@@ -355,13 +355,12 @@ export async function finishRun(opts: FinishRunOptions): Promise<AfterGatesRepor
   if (report.next === "escalate") {
     const target = pr ?? issueNumber(item.source?.ref);
     if (target !== null) {
-      await opts.gh
-        .send("POST", `repos/${opts.gh.repo}/issues/${target}/comments`, {
-          body:
-            `The factory stopped on this and needs a person: ${report.reason}.\n\n` +
-            `Fix what it needs (or push to the PR yourself), then comment \`/retry\` here to hand it back.`,
-        })
-        .catch(() => undefined);
+      const body = await escalationBody(opts.gh, item.id, report.reason, failures).catch(
+        () =>
+          `The factory stopped on this and needs a person: ${report.reason}.\n\n` +
+          `Fix what it needs (or push to the PR yourself), then comment \`/retry\` here to hand it back.`,
+      );
+      await opts.gh.send("POST", `repos/${opts.gh.repo}/issues/${target}/comments`, { body }).catch(() => undefined);
     }
   }
   return report;
@@ -734,4 +733,38 @@ export async function dropItems(opts: {
     await store.put(changes, `drop ${dropped.length} item(s): ${opts.why.slice(0, 60)}`);
   }
   return { dropped, skipped, cancelledRuns, closedPrs };
+}
+
+/**
+ * An escalation, in the same layout as a PR: why it stopped first, then the
+ * proof the roles captured, the failing checks as the things to focus on, and
+ * what to do next.
+ */
+async function escalationBody(gh: GitHub, workItem: string, reason: string, failures: unknown): Promise<string> {
+  const { renderReport, reportPath } = await import("./pr-report.js");
+  type Stored = import("./pr-report.js").StoredReport;
+  const store = new FactoryStore(gh);
+  const reports: Stored[] = [];
+  for (const role of ["builder", "verifier"]) {
+    const r = await store.data.readJson<Stored>(reportPath(workItem, role));
+    if (r !== null) reports.push(r);
+  }
+  const items = ((failures as { items?: { check: string; title: string | null; summary: string | null }[] } | null)?.items ?? []);
+  const failing: Stored = {
+    role: "gates", attempt: 0, media_commit: null, media_prefix: "", inline: {}, problems: [], stored_at: "",
+    report: {
+      schema: "pr-report/1",
+      summary: ["Failing checks"],
+      blocks: [],
+      focus: items.slice(0, 6).map((i) => ({ title: `${i.check}: ${i.title ?? "failed"}`, detail: (i.summary ?? "").split("\n").find((l) => l.trim() !== "")?.slice(0, 900) ?? "See the check." })),
+    },
+  };
+  const rendered = renderReport({
+    repo: gh.repo,
+    kind: "escalation",
+    reports: [...reports, failing],
+    lead: [`The factory stopped on this and needs a person: ${reason}.`, "Fix what it needs, or push to the PR yourself, then comment `/retry` here to hand it back."],
+    footer: `Work item ${workItem}`,
+  });
+  return rendered.body;
 }

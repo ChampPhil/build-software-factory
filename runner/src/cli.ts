@@ -128,6 +128,10 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
       The nightly scan: file up to N gardening items and dispatch them.
 
   bsf conflicts scan [--no-dispatch]
+  bsf report store --role R --dir DIR --work-item WI [--attempt N]
+  bsf report publish --work-item WI --pr N
+  bsf report setup --dir D --trial-dir T --tier X --out BODY [--extra FILE]
+  bsf report check --pr N --problems FILE
   bsf conflicts context WORK_ITEM --out DIR
   bsf conflicts button --pr N
       Find open factory PRs that became conflicting; dispatch resolution runs.
@@ -522,6 +526,9 @@ async function main(argv: readonly string[]): Promise<number> {
 
     case "store-media":
       return storeMediaCommand(args);
+
+    case "report":
+      return reportCommand(second, args);
 
     case "garden-scan":
       return gardenScanCommand(args);
@@ -2160,6 +2167,70 @@ async function fetchArtifactCommand(name: string | undefined, args: Args): Promi
   const r = await fetchArtifact(new GitHub({ repo: requireRepo() }), name, out, runId);
   process.stdout.write(r.found ? `${r.name} -> ${r.wrote}\n` : `${r.name} is not in this run; wrote an empty result\n`);
   return 0;
+}
+
+async function reportCommand(second: string | undefined, args: Args): Promise<number> {
+  const gh = new GitHub({ repo: requireRepo() });
+  const workItem = typeof args["work-item"] === "string" ? args["work-item"] : "";
+  if (second === "store") {
+    // `bsf report store --role R --dir DIR --work-item WI [--attempt N]`
+    const role = typeof args["role"] === "string" ? args["role"] : "";
+    const dir = typeof args["dir"] === "string" ? args["dir"] : "";
+    if (role === "" || dir === "" || workItem === "") die("usage: bsf report store --role R --dir DIR --work-item WI [--attempt N]");
+    const attempt = Number(args["attempt"] ?? 1);
+    const { storeReport } = await import("./commands/pr-report.js");
+    const r = await storeReport({ gh, dir, role, workItem, attempt: Number.isInteger(attempt) && attempt > 0 ? attempt : 1, now: nowIso() });
+    if (r === null) {
+      process.stdout.write(`the ${role} wrote no report\n`);
+      return 0;
+    }
+    process.stdout.write(`stored the ${role}'s report: ${r.report.blocks.length} block(s)\n`);
+    for (const p of r.problems) process.stdout.write(`  problem: ${p}\n`);
+    return 0;
+  }
+  if (second === "publish") {
+    // `bsf report publish --work-item WI --pr N`
+    const pr = Number(args["pr"]);
+    if (workItem === "" || !Number.isInteger(pr) || pr <= 0) die("usage: bsf report publish --work-item WI --pr N");
+    const { publishReport } = await import("./commands/pr-report.js");
+    const r = await publishReport({ gh, workItem, pr, now: nowIso() });
+    process.stdout.write(r.problems.length === 0 ? `PR #${pr} shows its proof\n` : `PR #${pr} is missing: ${r.problems.join("; ")}\n`);
+    return 0;
+  }
+  if (second === "setup") {
+    // `bsf report setup --dir D --trial-dir T --tier X --out BODY [--extra FILE]`, where FILE is
+    // { "focus": [{ "title", "detail" }], "links": [{ "label", "url" }] } from the workflow.
+    const dir = typeof args["dir"] === "string" ? args["dir"] : "";
+    const trialDir = typeof args["trial-dir"] === "string" ? args["trial-dir"] : "";
+    const out = typeof args["out"] === "string" ? args["out"] : "";
+    if (dir === "" || out === "") die("usage: bsf report setup --dir D --trial-dir T --tier X --out BODY [--extra FILE]");
+    const extra = (typeof args["extra"] === "string" && existsSync(args["extra"])
+      ? JSON.parse(readFileSync(args["extra"], "utf8"))
+      : {}) as { focus?: { title: string; detail: string }[]; links?: { label: string; url: string }[] };
+    const { renderSetupReport } = await import("./commands/pr-report.js");
+    const r = await renderSetupReport({
+      gh, dir, trialDir, runId: process.env["GITHUB_RUN_ID"] ?? "local",
+      tier: typeof args["tier"] === "string" ? args["tier"] : "unknown",
+      extraFocus: (extra.focus ?? []).filter((f) => f.title !== "" && f.detail !== ""),
+      links: extra.links ?? [],
+      now: nowIso(),
+    });
+    writeFileSync(out, r.body);
+    writeFileSync(`${out}.problems.json`, JSON.stringify(r.problems));
+    if (r.continued !== null) writeFileSync(`${out}.continued.md`, r.continued);
+    process.stdout.write(r.problems.length === 0 ? "rendered the setup PR\n" : `rendered the setup PR; missing: ${r.problems.join("; ")}\n`);
+    return 0;
+  }
+  if (second === "check") {
+    // `bsf report check --pr N --problems FILE`
+    const pr = Number(args["pr"]);
+    const file = typeof args["problems"] === "string" ? args["problems"] : "";
+    if (!Number.isInteger(pr) || pr <= 0 || file === "") die("usage: bsf report check --pr N --problems FILE");
+    const { reportCheck } = await import("./commands/pr-report.js");
+    await reportCheck(gh, pr, JSON.parse(readFileSync(file, "utf8")) as string[]);
+    return 0;
+  }
+  die("usage: bsf report store ... | publish ... | setup ... | check ...");
 }
 
 async function storeMediaCommand(args: Args): Promise<number> {

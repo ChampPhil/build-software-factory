@@ -50,6 +50,8 @@ interface BlobResponse {
 export interface Change {
   readonly path: string;
   readonly content: string | null;
+  /** "base64": content is already base64 (an image, a clip), stored as its bytes. */
+  readonly encoding?: "utf8" | "base64";
 }
 
 export class RefMoved extends Error {
@@ -159,7 +161,9 @@ export class DataRefStore implements Loader {
         continue;
       }
       const blob = await this.gh.send<{ sha: string }>("POST", `${this.base}/git/blobs`, {
-        content: Buffer.from(c.content, "utf8").toString("base64"),
+        // Binary content arrives base64 already. Encoding it again stored
+        // every screenshot as base64 text, which no browser can show.
+        content: c.encoding === "base64" ? c.content : Buffer.from(c.content, "utf8").toString("base64"),
         encoding: "base64",
       });
       entries.push({ path: c.path, mode: "100644", type: "blob", sha: blob.sha });
