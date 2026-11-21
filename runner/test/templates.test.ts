@@ -555,6 +555,18 @@ describe("the budget in the workflows", () => {
     }
   });
 
+  it("the budget's table of caps matches every role workflow", async () => {
+    const { ROLE_CAPS, DETECTION } = await import("../src/commands/budget.js");
+    for (const f of AGENT_FILES) {
+      const doc = fm(f);
+      const role = f.replace(/^factory-(role-)?/, "").replace(/(-host)?\.md$/, "").replace("setup-agent", "setup");
+      expect(ROLE_CAPS[role], `${f}: no cap for ${role}`).toBe(doc["max-ai-credits"]);
+      const det = (doc["safe-outputs"] as { "threat-detection": { engine: { model: string }; "max-ai-credits": number } })["threat-detection"];
+      expect(det["max-ai-credits"], f).toBe(DETECTION.capCredits);
+      expect(det.engine.model, f).toBe(DETECTION.model);
+    }
+  });
+
   it("every agent step is capped, and bounds each request the way the budget's margin assumes", () => {
     for (const f of AGENT_FILES) {
       const doc = fm(f);

@@ -271,3 +271,18 @@ describe("reading gh-aw's usage files", () => {
     expect(scanUsage("{}").tokens).toBeNull();
   });
 });
+
+describe("whether a run can start", () => {
+  const MODELS = { triage: "claude-haiku-5-5", spec: "claude-opus-5-5", builder: "claude-sonnet-5-5", verifier: "claude-haiku-5-5", gardener: "claude-sonnet-5-5", hardener: "claude-sonnet-5-5", scorer: "claude-haiku-5-5" };
+  it("waits when its largest step no longer fits, though a smaller one would", async () => {
+    const { canStart, largestHoldUsd } = await import("../src/commands/budget.js");
+    const spec = largestHoldUsd("product_work", MODELS)!;
+    // The Opus spec (cap $3 + $2.64 + detection) is product work's largest step.
+    expect(spec).toBeCloseTo(ceilingUsd(300, "claude-opus-5-5")! + ceilingUsd(50, "claude-haiku-5-5")!, 4);
+    const doc: BudgetDoc = { ...emptyBudget(NOW), spent_usd: { product_work: 23.1 - spec + 0.01 } };
+    expect(canStart(doc, LIMITS, "product_work", MODELS, NOW).ok).toBe(false);
+    expect(canStart(null, LIMITS, "product_work", MODELS, NOW).ok).toBe(true);
+    // A retry runs only builder and verifier, so it needs less.
+    expect(canStart(doc, LIMITS, "product_work", MODELS, NOW, ["builder", "verifier"]).ok).toBe(true);
+  });
+});

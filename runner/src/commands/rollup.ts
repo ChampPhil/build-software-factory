@@ -195,6 +195,8 @@ export interface BudgetState {
   readonly spentUsd: Readonly<Record<string, number>>;
   readonly spentMinutes: Readonly<Record<string, number>>;
   readonly productHardStopPct: number;
+  /** When given, the pipelines that cannot start a run now, decided from the budget record. */
+  readonly paused?: readonly Pipeline[];
 }
 
 const SHARE_OF: Readonly<Record<Pipeline, "product_work" | "gardening" | "review_and_benchmarks">> = {
@@ -210,6 +212,7 @@ const SHARE_OF: Readonly<Record<Pipeline, "product_work" | "gardening" | "review
  * also use what the others left unspent, up to the hard stop (doc 07).
  */
 export function pausedPipelines(state: BudgetState): readonly Pipeline[] {
+  if (state.paused !== undefined) return state.paused;
   const paused: Pipeline[] = [];
   const totalUsd = Object.values(state.spentUsd).reduce((a, b) => a + b, 0);
   const totalMin = Object.values(state.spentMinutes).reduce((a, b) => a + b, 0);

@@ -47,7 +47,7 @@ import { buildStepReport, writeStepReport, changedFilesFromGit, type Harness } f
 import { pausedPipelines, type BudgetState } from "./commands/rollup.js";
 import {
   BUDGET_PATH, reserve as reserveBudget, settle as settleBudget, sweepStale, rollMonth, used, creditsToUsd,
-  measuredUsd, detectionUsd, type BudgetDoc, type BudgetLimits, type BudgetMeasure,
+  measuredUsd, detectionUsd, canStart, type BudgetDoc, type BudgetLimits, type BudgetMeasure,
 } from "./commands/budget.js";
 import { loadFactory } from "./lib/config.js";
 import { startSandbox, loadManifest, loadManifestAt, trialSandbox, freezeManifest, needsHost, serveOnHost, closedEnv } from "./commands/sandbox.js";
@@ -132,7 +132,7 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
       request past it, for the agent and its threat detection), or refuse and
       exit 1 if spent + held + this would pass the budget or the share.
 
-  bsf budget measure --key K --model M --detection-artifact NAME --out PATH
+  bsf budget measure --key K [--pipeline P] --model M --detection-artifact NAME --out PATH
       After the agent: write what it spent (the larger of its session's cost
       and its tokens at list price) for the settle step.
 
@@ -1066,6 +1066,12 @@ async function budgetState(cfg: FactoryConfig, gh: GitHub): Promise<BudgetState>
     for (const share of ["product_work", "gardening", "review_and_benchmarks"] as const) spentUsd[share] = used(doc, share).share;
     spentUsd["setup"] = used(doc, null).total - Object.values(spentUsd).reduce((a, b) => a + b, 0);
   }
+  // A pipeline is paused when its largest step no longer fits: its queued
+  // work then waits rather than starting runs the budget would refuse.
+  const models = (cfg.models ?? {});
+  const paused = (["product_work", "gardening", "hardening", "conflict"] as const).filter(
+    (p) => !canStart(doc, limits, p, models, nowIso()).ok,
+  );
   return {
     limitUsd: limits.monthlyUsd,
     limitMinutes: cfg.budget?.monthly_actions_minutes ?? null,
@@ -1073,6 +1079,7 @@ async function budgetState(cfg: FactoryConfig, gh: GitHub): Promise<BudgetState>
     spentUsd,
     spentMinutes: {},
     productHardStopPct: limits.productHardStopPct,
+    paused,
   };
 }
 
@@ -1171,6 +1178,24 @@ async function runCommand(second: string | undefined, args: Args, third?: string
       /* no policy in this checkout: keep the safe default */
     }
 
+    // The budget: a run whose largest step does not fit what is left waits
+    // in the queue instead of starting and being refused halfway. Dispatch
+    // applies the same rule, so a waiting item is not dispatched again until
+    // the budget allows it.
+    let budgetWait = false;
+    if (!plan.escalate && roles.length > 0 && typeof workItemId === "string") {
+      const { FactoryStore } = await import("./lib/store.js");
+      const raw = await new FactoryStore(new GitHub({ repo: requireRepo() })).data.readJson<BudgetDoc>(BUDGET_PATH).catch(() => null);
+      const doc = raw !== null && raw.schema === "budget/2" ? raw : null;
+      const check = canStart(doc, budgetLimits(cfg), pipeline, (cfg.models ?? {}), nowIso(), roles);
+      if (!check.ok) {
+        budgetWait = true;
+        process.stdout.write(`waiting for budget: ${check.reason}\n`);
+        summary(`### Waiting for budget\n\nThis run did not start: ${check.reason}. The item stays queued and starts when the budget allows (next month, or when \`budget.monthly_usd\` is raised).\n`);
+      }
+    }
+    setOutput("budget_wait", String(budgetWait));
+
     process.stdout.write(`${plan.reason}\nroles: ${roles.join(" -> ") || "(none)"}\n`);
     setOutput("pipeline", pipeline);
     setOutput("roles", roles.join(","));
@@ -1178,7 +1203,7 @@ async function runCommand(second: string | undefined, args: Args, third?: string
     setOutput("needs_hardener", String(roles.includes("hardener")));
     setOutput("needs_spec", String(roles.includes("spec")));
     setOutput("protected_files_policy", protectedFilesPolicy);
-    setOutput("proceed", String(!plan.escalate));
+    setOutput("proceed", String(!plan.escalate && !budgetWait));
     setOutput("escalate", String(plan.escalate));
     setOutput("attempt", String(plan.attempt));
     {
@@ -1470,6 +1495,7 @@ async function budgetMeasureCommand(args: Args): Promise<number> {
     schema: "budget-measure/1",
     key,
     model,
+    ...(str("pipeline") === undefined ? {} : { pipeline: str("pipeline")! }),
     agent_usd: measuredUsd(model, usage),
     detection_artifact: str("detection-artifact") ?? "",
   };
@@ -1490,11 +1516,13 @@ async function budgetSettleCommand(args: Args): Promise<number> {
   const key = str("key");
   if (key === undefined) die("usage: bsf budget settle --key K [--measured PATH] [--detection-dir DIR]");
   let agentUsd = creditsToUsd(str("agent-aic"));
+  let pipeline = str("pipeline");
   const measuredPath = str("measured");
   if (measuredPath !== undefined && existsSync(measuredPath)) {
     try {
       const m = JSON.parse(readFileSync(measuredPath, "utf8")) as BudgetMeasure;
       if (m.key === key && typeof m.agent_usd === "number") agentUsd = m.agent_usd;
+      if (m.key === key && pipeline === undefined && typeof m.pipeline === "string") pipeline = m.pipeline;
     } catch {
       /* an unreadable measure is a missing one: the ceiling is charged */
     }
@@ -1506,7 +1534,6 @@ async function budgetSettleCommand(args: Args): Promise<number> {
   const { FactoryStore } = await import("./lib/store.js");
   const store = new FactoryStore(gh);
   const now = nowIso();
-  const pipeline = str("pipeline");
   const r = await store.data.updateJson<BudgetDoc, ReturnType<typeof settleBudget>>(
     BUDGET_PATH,
     (current) => {

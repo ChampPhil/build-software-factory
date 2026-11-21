@@ -266,6 +266,7 @@ export interface BudgetMeasure {
   readonly schema: "budget-measure/1";
   readonly key: string;
   readonly model: string;
+  readonly pipeline?: string;
   readonly agent_usd: number | null;
   readonly detection_artifact: string;
 }
@@ -357,4 +358,69 @@ export function detectionUsd(dir: string, model: string, log: (line: string) => 
   }
   log(`no detection usage found under ${dir} (${filesUnder(dir).length} file(s))`);
   return null;
+}
+
+/**
+ * Each role's gh-aw credit cap, as its workflow declares it, and threat
+ * detection's. A test fails if a workflow's cap and this table disagree.
+ */
+export const ROLE_CAPS: Readonly<Record<string, number>> = {
+  triage: 30,
+  spec: 300,
+  builder: 400,
+  verifier: 200,
+  gardener: 150,
+  hardener: 300,
+  scorer: 150,
+  setup: 1000,
+};
+export const DETECTION = { model: "claude-haiku-5-5", capCredits: 50 } as const;
+
+/** The agent steps a run of each pipeline holds, one at a time. */
+const PIPELINE_ROLES: Readonly<Record<string, readonly string[]>> = {
+  product_work: ["triage", "spec", "builder", "verifier"],
+  gardening: ["builder", "verifier"],
+  hardening: ["hardener", "spec", "builder", "verifier"],
+  conflict: ["builder", "verifier"],
+};
+
+/** The largest hold any one step of a pipeline's run takes, at the configured models. */
+export function largestHoldUsd(pipeline: string, models: Readonly<Record<string, string>>, roles?: readonly string[]): number | null {
+  let worst = 0;
+  for (const role of roles ?? PIPELINE_ROLES[pipeline] ?? []) {
+    const model = models[role === "setup" ? "builder" : role];
+    if (model === undefined) return null;
+    const agent = ceilingUsd(ROLE_CAPS[role] ?? 0, model);
+    const det = ceilingUsd(DETECTION.capCredits, DETECTION.model);
+    if (agent === null || det === null) return null;
+    worst = Math.max(worst, agent + det);
+  }
+  return round4(worst);
+}
+
+/**
+ * Whether a run of this pipeline can start: its largest step must fit in
+ * what is left of the total and of its share. A run that could be refused
+ * halfway is not started, so a short budget leaves work queued, not failed.
+ */
+export function canStart(
+  current: BudgetDoc | null,
+  limits: BudgetLimits,
+  pipeline: string,
+  models: Readonly<Record<string, string>>,
+  now: string,
+  roles?: readonly string[],
+): { readonly ok: boolean; readonly reason: string } {
+  const doc = rollMonth(current ?? emptyBudget(now), now);
+  const need = largestHoldUsd(pipeline, models, roles);
+  if (need === null) return { ok: false, reason: `a ${pipeline} step uses a model with no list price` };
+  const share = shareOf(pipeline);
+  const u = used(doc, share);
+  if (u.total + need > limits.monthlyUsd) {
+    return { ok: false, reason: `its largest step can cost up to $${need.toFixed(2)}; $${(limits.monthlyUsd - u.total).toFixed(2)} of the $${limits.monthlyUsd.toFixed(2)} budget is left` };
+  }
+  if (share !== null && u.share + need > shareLimitUsd(limits, share)) {
+    return { ok: false, reason: `its largest step can cost up to $${need.toFixed(2)}; $${(shareLimitUsd(limits, share) - u.share).toFixed(2)} of ${share}'s share is left` };
+  }
+  return { ok: true, reason: `its largest step (up to $${need.toFixed(2)}) fits` };
 }
