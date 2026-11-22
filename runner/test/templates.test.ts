@@ -618,4 +618,12 @@ describe("the budget in the workflows", () => {
       }
     }
   });
+  it("a trial replaces the stubs folder instead of copying into it (an amendment's new stubs must land at the path the manifest names)", () => {
+    for (const f of ["factory-setup-trial.yml", "factory-setup.yml"]) {
+      const text = readFileSync(join(TEMPLATES, "workflows", f), "utf8");
+      const copy = text.split("\n").find((l) => l.includes("cp -R") && l.toLowerCase().includes("design") && l.includes("/stubs"));
+      expect(copy, `${f} copies no stubs`).toBeDefined();
+      expect(copy, `${f} copies stubs without clearing the old folder first`).toMatch(/rm -rf \.factory\/sandbox\/stubs/);
+    }
+  });
 });

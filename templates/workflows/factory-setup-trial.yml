@@ -59,7 +59,7 @@ jobs:
         env:
           DESIGN: ${{ runner.temp }}/design
         run: |
-          if [ -d "$DESIGN/stubs" ]; then mkdir -p .factory/sandbox && cp -R "$DESIGN/stubs" .factory/sandbox/stubs; fi
+          if [ -d "$DESIGN/stubs" ]; then mkdir -p .factory/sandbox && rm -rf .factory/sandbox/stubs && cp -R "$DESIGN/stubs" .factory/sandbox/stubs; fi
       - name: Trial
         id: trial
         env:
