@@ -16,15 +16,15 @@ live event has not occurred; **partly** says which half is which.
 | 3 | A change that lowers the score or raises cost >20% is not proposed | **Logic proven** |
 | 4 | The benchmark set includes corrected and escalated runs | **Logic proven** |
 | 5 | The cost vs quality chart shows three configurations | **Logic proven**: no benchmark was paid for |
-| 6 | Setup completes on every fixture repo | **Met** |
+| 6 | Setup completes on every fixture repo, and the sandbox matches the app | **Met**: nine fixtures, and a sign-in app's sandbox repaired itself live (below) |
 | 7 | Re-running the skill changes nothing unless asked | **Met** |
 | 8 | A schema-major upgrade arrives as a Dependabot PR, then migrates | **Deferred** until the repository is public |
-| 9 | On Philip's repo, three pipelines have each merged a PR | **Partly**: all three ran end to end; trinsports' PRs cannot be verified behind Google sign-in yet |
+| 9 | On Philip's repo, three pipelines have each merged a PR | **Partly**: all three ran end to end; the sign-in sandbox is repaired, and the last verdict waits on GitHub Actions billing (below) |
 
 Also proven live, and not a numbered criterion because it was added after the
 plan was written: **the budget cannot be exceeded** (below).
 
-1,192 runner tests pass on every push, with lint, typecheck, the schema freeze
+1,229 runner tests pass on every push, with lint, typecheck, the schema freeze
 and a gh-aw compile of every role workflow.
 
 ## The budget, and why the factory runs on Claude Code only
@@ -119,6 +119,53 @@ A product PR from the factory has merged on six of them (ts-webapp #19, py-api
 go-cli a full run from issue to a PR with every gate green ran under the new
 budget (issue #30 → PR #32).
 
+#### A sandbox that matches the app
+
+A sandbox that renders the app is not enough when the app has pages behind
+sign-in, a database and outside services. The manifest now lists each of those
+as a dependency with a stand-in and a probe (a request to the running app that
+only works if the stand-in does), and a `sign_in` command that mints a session
+for a throwaway test user, since an agent's browser can reach the app and
+nothing else. A trial round counts only if the tier is reached and every probe
+passes; a sign-in that mints nothing is dropped and reported.
+
+A role that cannot do its job on the sandbox files a report. The factory
+repairs the sandbox from the report with no person involved: one amendment at a
+time, up to two attempts per need, and one issue to the user if both fail.
+`bsf sandbox land` merges an amendment itself when it changes only
+`.factory/sandbox/`, adds no host or secret, and proves at least what main's
+sandbox did. The stuck change is then brought up to date with main and
+verified again.
+
+**Seen live on trinsports** (Google sign-in, Postgres, Google Sheets, Resend),
+with no person in the loop other than merging the factory's own upgrades:
+
+1. Trinsports' verifier could not open any page behind sign-in and reported it.
+2. The repair's first trial caught a design that could not work: the sign-in
+   script was copied to the wrong folder, so every probe failed. The factory
+   rejected the design itself. Fixed in the factory (stubs are replaced, not
+   copied into).
+3. The next trial minted a session and three probes passed (sign-in,
+   Postgres, Google Sheets). The run then died on an over-long line in the
+   agent's PR write-up. Fixed in the factory (text over a limit is cut; an
+   unusable write-up no longer blocks a working repair).
+4. The following run produced the same sandbox and the factory merged it as
+   #41 on its own, then asked for the stuck change to be verified again.
+5. That request, a label added by the factory's App, was refused at the
+   verifier's checkout. Fixed in the factory (the stuck branch is updated from
+   main, the push gh-aw allows).
+6. The updated branch was verified in the repaired sandbox: the verifier's
+   browser ran its full pass with no checkout error. The run's detection step
+   then could not start: "recent account payments have failed or your spending
+   limit needs to be increased" (GitHub Actions billing on the owner's
+   account). That is outside the factory, and the verdict is pending it.
+
+Two more things the live runs showed, both fixed: budget settle records were
+lost to concurrent writers on the data ref (each write is now checked after it
+lands and made again), and a change the sandbox could not judge was rebuilt
+three times on the same broken sandbox (it is now held in review, with no
+spend, until the repair lands).
+
 ### 7. Re-running the skill changes nothing unless asked
 
 **Met.** Reinstalling the same version on all nine fixtures produced no change
@@ -147,21 +194,19 @@ is built and frozen (`schema/SURFACE.json`, `bsf migrate`).
   when the hardener opens its PR, spec and build are now skipped. The label
   itself was documented and never implemented; it is now.
 
-Not met: nothing has merged on trinsports from these, because the verifier
-cannot check its pages. The app builds, starts and answers in the sandbox
-(fixed tonight: the sandbox ran `next start` without `next build`, and served
-the default branch rather than the PR), but every team page is behind Google
-sign-in, and the browser rejects the sandbox's stand-in for Google's TLS
-certificate. The verifier filed that as a sandbox report; the factory's way to
-act on it is a setup amendment.
+Not met: nothing has merged on trinsports from these yet. The verifier could
+not check its pages because every team page is behind Google sign-in; the
+sandbox repair above fixes that, and the re-verification of the streak PR (#40)
+is waiting on GitHub Actions billing, not on the factory.
 
-Trinsports spent $10.03 of its $35 getting here, most of it on two Opus specs
-(one for the conflict rebuild) and verifier runs that could not complete.
+Trinsports spent its $35 and then $50 budget getting here, most of it on Opus
+specs, repair rounds and verifier runs that could not complete before the
+fixes above; the budget cap held throughout.
 
 ## What is still needed
 
-1. **Google sign-in in trinsports' sandbox**, by a setup amendment (Philip's
-   call: a setup round is capped at $10), then re-verifying #16 and #17.
+1. **GitHub Actions billing on the owner's account**, then the streak PR (#40)
+   finishes its verification. Re-run the failed jobs of the last gates run.
 2. **The repository made public**, then Dependabot alerts (criterion 8).
 3. **Fifty runs** on one repository for criterion 1 as written, and a paid
    benchmark for 2 and 5, if wanted.

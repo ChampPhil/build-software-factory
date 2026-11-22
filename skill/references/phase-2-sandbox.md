@@ -109,8 +109,11 @@ sandbox changes after setup, and it needs no person:
   else waits for the user, with a comment saying which condition stopped
   it. `sandbox_repairs: reviewed` in `policy.yaml` makes every amendment
   wait.
-- **After.** The changes that reported the need are verified again against
-  the new sandbox (the `factory:verify` label).
+- **After.** The changes that reported the need are brought up to date with
+  main, which holds the new sandbox, and verified again. (A label added by the
+  factory's App is refused at the verifier's checkout, so a push is used.) Until
+  then a change the sandbox could not judge is held in review: it is not rebuilt
+  and costs nothing.
 - **When it does not work.** A need reported again after its repair landed
   is tried once more. After two amendments, it is put to the user as one
   issue saying what is missing, and not retried.

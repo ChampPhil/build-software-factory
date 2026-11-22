@@ -73,6 +73,7 @@ factory stopped on.
 | --- | --- |
 | **Intake** | An issue from someone trusted becomes a work item. Anything else waits for a one-click accept, and its text never reaches a prompt until it does. |
 | **Pipelines** | Product work, gardening, hardening, definition changes and conflict resolution, each with its own roles, path policy and budget share. |
+| **Sandbox** | Each role works against a sandbox built to match the app: its database, sign-in and outside services stand in as stubs, each with a probe that must pass. When a role finds the sandbox lacking, the factory repairs it itself and verifies the stuck change again, with no one in the loop unless the repair asks for a new host or secret. |
 | **Gates** | Static rules, tests and coverage run on every PR and decide the merge, with a per-file ratchet so a change cannot trade one new violation for one fix. |
 | **Guardrails** | Eight language rule packs, each rule carrying the bad and good example that proves it discriminates — a rule is installed only once it has failed on the bad one and passed on the good one. |
 | **Merge queue** | GitHub's native queue where the repo qualifies, a one-at-a-time fallback everywhere else, so a human PR and a factory PR cannot each pass alone and break main together. |
