@@ -872,7 +872,30 @@ async function gatesRecord(args: Args): Promise<number> {
     title: verdict.conclusion === "success" ? "Every planned gate passed" : "A planned gate did not pass",
     summary: verdict.lines.join("\n"),
   });
+  if (verdict.conclusion === "success") await clearAfterGates(commit);
   return verdict.conclusion === "success" ? 0 : 1;
+}
+
+/**
+ * A held or escalated factory change whose gates just passed (a sandbox repair
+ * brought its branch up to date and it was verified again) is cleared here,
+ * because no run is waiting to do it. Never fails the gates: a change that
+ * cannot be cleared stays as it was and the next verdict tries again.
+ */
+async function clearAfterGates(commit: string): Promise<void> {
+  try {
+    const gh = new GitHub({ repo: requireRepo() });
+    const prs = await gh.get<{ number: number; state: string; head: { sha: string } }[]>(
+      `repos/${gh.repo}/commits/${commit}/pulls?per_page=20`,
+    );
+    const pr = (Array.isArray(prs) ? prs : []).find((p) => p.state === "open" && p.head.sha === commit);
+    if (pr === undefined) return;
+    const { clearHeldChange } = await import("./commands/run-lifecycle.js");
+    const said = await clearHeldChange({ gh, pr: pr.number, now: () => new Date().toISOString() });
+    process.stdout.write(`clear: ${said}\n`);
+  } catch (e) {
+    process.stdout.write(`clear: skipped (${e instanceof Error ? e.message : String(e)})\n`);
+  }
 }
 
 /* ------------------------------------------------------------- new commands */

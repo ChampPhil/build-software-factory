@@ -131,19 +131,27 @@ Bugs the live runs found and the fixes (all in the factory, none in trinsports):
 
 Be straight with Philip about these.
 
-1. **Trinsports PR #40 has not merged.** It is verified and green but still
-   carries stale `factory:escalated` and `factory:in-progress` labels from the
-   earlier failed attempts. The factory does not clear them when a verification
-   comes from a push rather than a factory run. Look at this: either the
-   factory should clear it, or document why not.
+1. ~~Trinsports PR #40 stays a draft with stale labels~~ **Fixed; no work
+   needed.** A held or escalated change whose `factory/gates` verdict passes
+   is now cleared automatically (`clearHeldChange` in
+   `runner/src/commands/run-lifecycle.ts`, called from `bsf gates record`):
+   marked ready, `factory:escalated` and `factory:in-progress` removed,
+   `factory:cleared` added, ledger back to in review. It never fails the
+   gates, and the `record` job in `factory-gates.yml` now has
+   `pull-requests: write` and `contents: write` for it. Unit tests cover it.
+   Trinsports #40 itself was merged by Philip.
 2. **Resend has no probe** in trinsports' sandbox (email only sends from the
    ping endpoint), so that dependency shows as not proven. Acceptable, but a
    real sandbox gap.
-3. **`factory-audit` fails on every push to trinsports main**, including every
-   upgrade merge: `gate_not_run: factory/gates never reported on <sha>` and
-   the same for `factory/policy`. Pre-existing, seen on many runs. Probably the
-   audit checks the merge commit, and gates report on the PR head. This is
-   unexplained and other users will hit it. **Investigate before launch.**
+3. ~~`factory-audit` fails on every push to main~~ **Fixed; no work
+   needed.** Cause: the audit looked for `factory/gates` and `factory/policy`
+   on the merge commit, but they report on the pull request's head. `bsf audit`
+   now finds the merged PR through `commits/{sha}/pulls` and checks the gates
+   on its head; a push with no merged PR and no merge commit is still a
+   `direct_push`. Five tests in `runner/test/audit.test.ts`. A repo gets the
+   fix through the factory's normal upgrade PR (`install-factory.mjs --into`),
+   which Philip merges; until that merge, that repo's audit still fails the old
+   way.
 4. **Criterion 8** (schema-major upgrade arrives as a Dependabot PR, then
    migrates): deferred, Dependabot cannot watch a private repo's releases. Set
    up when the repo goes public. Machinery is built (`schema/SURFACE.json`,
@@ -179,9 +187,9 @@ Be straight with Philip about these.
    needs Actions billing for CI). Confirm GitHub Actions billing is active; an
    account-wide billing block earlier made every job fail to start with "recent
    account payments have failed or your spending limit needs to be increased".
-3. Investigate the `factory-audit` failure (item 3) and decide: fix or
-   document.
-4. Resolve trinsports #40 and the cleanup list (item 7) with Philip.
+3. (Items 1 and 3 of section 6, the auto-clear and the audit failure, are
+   fixed; do not reopen them unless a run shows otherwise.)
+4. Cleanup list (item 7): Philip does not care about it; skip unless asked.
 5. Do a **cold-start install test**: follow the README quickstart exactly as a
    stranger would, on a fresh repo that is not one of the nine fixtures, and
    record every point of confusion. This is the most valuable pre-launch test

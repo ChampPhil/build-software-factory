@@ -164,3 +164,56 @@ describe("a lock file with no gh-aw metadata", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 });
+
+describe("a commit that arrived through a merged pull request", () => {
+  // The gates run on the PR's head. A merge, squash or rebase commit is a new
+  // commit that no check ever reports on, so the audit has to read the head.
+  const MERGE = "m".repeat(40);
+  const HEAD = "h".repeat(40);
+  const gh = (headRuns: { name: string; conclusion: string }[], opts: { parents?: number; prs?: unknown } = {}): GitHubLike =>
+    ({
+      repo: "owner/repo",
+      get: async (path: string) => {
+        if (path === "app") throw new Error("not the App");
+        if (path.includes(`/commits/${MERGE}/check-runs`)) return { check_runs: [] };
+        if (path.includes(`/commits/${HEAD}/check-runs`)) return { check_runs: headRuns };
+        if (path.includes(`/commits/${MERGE}/pulls`)) {
+          return opts.prs ?? [{ number: 31, merged_at: "2026-11-22T00:00:00Z", merge_commit_sha: MERGE, head: { sha: HEAD } }];
+        }
+        if (path.includes(`/commits/${MERGE}`)) return { parents: Array.from({ length: opts.parents ?? 2 }, (_, i) => ({ sha: `p${i}` })), commit: { message: "Merge pull request #31" } };
+        if (path.startsWith("search/issues")) return { total_count: 0, items: [] };
+        throw new Error(`unexpected ${path}`);
+      },
+    }) as unknown as GitHubLike;
+  const audit = (g: GitHubLike) =>
+    runAuditCommand({ gh: g, commit: MERGE, root: "/nonexistent", configuredAppLogins: ["factory-bsf[bot]"] });
+  const green = [
+    { name: "factory/gates", conclusion: "success" },
+    { name: "factory/policy", conclusion: "success" },
+  ];
+
+  it("finds the gates on the PR's head, so a normal merge is not reported as a bypass", async () => {
+    const r = await audit(gh(green));
+    expect(r.findings.filter((f) => f.kind === "gate_not_run" || f.kind === "direct_push")).toEqual([]);
+  });
+
+  it("works for a squash merge, which has one parent", async () => {
+    const r = await audit(gh(green, { parents: 1 }));
+    expect(r.findings.filter((f) => f.kind === "gate_not_run" || f.kind === "direct_push")).toEqual([]);
+  });
+
+  it("still reports a gate that failed on the head the PR merged with", async () => {
+    const r = await audit(gh([{ name: "factory/gates", conclusion: "failure" }, { name: "factory/policy", conclusion: "success" }]));
+    expect(r.findings.map((f) => f.kind)).toContain("gate_failed_but_merged");
+  });
+
+  it("still reports a gate that never ran on the PR at all", async () => {
+    const r = await audit(gh([{ name: "factory/policy", conclusion: "success" }]));
+    expect(r.findings.some((f) => f.kind === "gate_not_run" && f.detail.startsWith("factory/gates"))).toBe(true);
+  });
+
+  it("still reports a one-parent commit that no merged PR brought in", async () => {
+    const r = await audit(gh(green, { parents: 1, prs: [] }));
+    expect(r.findings.map((f) => f.kind)).toContain("direct_push");
+  });
+});

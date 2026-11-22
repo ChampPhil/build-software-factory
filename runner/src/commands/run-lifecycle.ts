@@ -397,6 +397,54 @@ export async function finishRun(opts: FinishRunOptions): Promise<AfterGatesRepor
   return report;
 }
 
+/**
+ * A factory change that was held or escalated and then passed its gates on its
+ * own: after a sandbox repair the stuck branch is brought up to date and
+ * verified again, which no factory run is waiting to see. Nothing else would
+ * hand it to merge, so it stayed a draft with its stopped labels. When the
+ * gates are green on its head, it is cleared as a run would have cleared it.
+ */
+export async function clearHeldChange(opts: {
+  readonly gh: GitHub;
+  readonly pr: number;
+  readonly now: () => string;
+}): Promise<string> {
+  const store = new FactoryStore(opts.gh);
+  const now = opts.now();
+  const ledger = await store.ledger(now);
+  const open = ledger.open.find((o) => o.pr === opts.pr);
+  if (open === undefined) return `#${opts.pr} is not a factory change in the ledger`;
+  if (open.status !== "in_review" && open.status !== "escalated") return `${open.work_item} is ${open.status}, not held`;
+  const pull = await opts.gh.pull(opts.pr);
+  const checks = await gateChecks(opts.gh, pull.head.sha);
+  const agg = checks.find((c) => c.name === GATES_CHECK);
+  if (agg === undefined || agg.status !== "completed" || agg.conclusion !== "success") {
+    return `${GATES_CHECK} has not passed on ${pull.head.sha.slice(0, 7)}`;
+  }
+  const names = new Set((pull.labels ?? []).map((l) => l.name));
+  const stale = ["factory:escalated", "factory:in-progress"].filter((n) => names.has(n));
+  if (!pull.draft && stale.length === 0 && names.has("factory:cleared")) return `#${opts.pr} is already cleared`;
+
+  await opts.gh.markReady(opts.pr);
+  for (const n of stale) {
+    await opts.gh.send("DELETE", `repos/${opts.gh.repo}/issues/${opts.pr}/labels/${encodeURIComponent(n)}`).catch(() => undefined);
+  }
+  if (!names.has("factory:cleared")) {
+    await opts.gh.send("POST", `repos/${opts.gh.repo}/issues/${opts.pr}/labels`, { labels: ["factory:cleared"] }).catch(() => undefined);
+  }
+  const doc = await store.get<WorkItemDoc>(workItemPath(open.work_item), "work-item");
+  if (doc !== null && open.status === "escalated") {
+    await store.put(
+      [
+        { path: workItemPath(open.work_item), content: json({ ...doc, status: "in_review" }) },
+        { path: LEDGER, content: json(withStatus(ledger, doc, "in_review", opts.pr, now)) },
+      ],
+      `${open.work_item} cleared: its gates passed after a sandbox repair`,
+    );
+  }
+  return `cleared ${open.work_item} (#${opts.pr}): the gates passed on ${pull.head.sha.slice(0, 7)}`;
+}
+
 function issueNumber(ref: string | null | undefined): number | null {
   const m = /^#(\d+)$/.exec(ref ?? "");
   return m === null ? null : Number(m[1]);

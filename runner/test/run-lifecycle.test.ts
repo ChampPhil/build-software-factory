@@ -35,7 +35,7 @@ vi.mock("../src/lib/store.js", async (orig) => {
   return { ...real, FactoryStore };
 });
 
-const { startRun, finishRun, gateVerdicts, gateFailuresPath, reapStaleRuns, prClosed, dropItems } = await import("../src/commands/run-lifecycle.js");
+const { startRun, finishRun, gateVerdicts, gateFailuresPath, reapStaleRuns, prClosed, dropItems, clearHeldChange } = await import("../src/commands/run-lifecycle.js");
 
 const WI = "wi_01M7XHGA7F5CNWC3BD3BSP0WYW";
 const RUN = "run_01M7XHGA7F5CNWC3BD3BSP0WYX";
@@ -369,5 +369,64 @@ describe("gateVerdicts and factory/policy", () => {
     const pass = [c("factory/gate-static", "success"), c("factory/gate-tests", "success"), c("factory/gates", "success")];
     expect(gateVerdicts([...pass, c("factory/policy", "failure")]).staticGate).toBe("failed");
     expect(gateVerdicts([...pass, c("factory/policy", null, "in_progress")]).staticGate).toBe("passed");
+  });
+});
+
+describe("clearHeldChange", () => {
+  const seed = (status: string) => {
+    files.set(`work-items/${WI}.json`, JSON.stringify(item(status)));
+    files.set("ledger.json", JSON.stringify({ schema: "ledger/1", updated_at: "2026-11-20T00:00:00Z", open: [{ work_item: WI, pipeline: "product_work", status, pr: 5 }], recent: [], merge_queue: [] }));
+  };
+  const gh = (verdict: string | null, labels: string[], draft = true) => {
+    const sent: { method: string; path: string; body: unknown }[] = [];
+    return {
+      sent,
+      gh: {
+        repo: "o/r",
+        pull: async () => ({ number: 5, draft, node_id: "PR_x", head: { sha: "abc1234" }, labels: labels.map((name) => ({ name })) }),
+        get: async () => ({ check_runs: verdict === null ? [] : [{ name: "factory/gates", status: "completed", conclusion: verdict, output: { title: "t", summary: "s", text: null } }] }),
+        send: async (method: string, path: string, body: unknown) => (sent.push({ method, path, body }), {}),
+        markReady: async () => void sent.push({ method: "READY", path: "", body: null }),
+      } as never,
+    };
+  };
+  const now = () => "2026-11-22T01:00:00Z";
+
+  it("marks a held draft ready, swaps its stopped labels for cleared, and records it in review", async () => {
+    seed("escalated");
+    const { gh: g, sent } = gh("success", ["factory:escalated", "factory:in-progress"]);
+    const said = await clearHeldChange({ gh: g, pr: 5, now });
+    expect(said).toContain("cleared");
+    expect(sent.map((x) => `${x.method} ${x.path}`)).toEqual([
+      "READY ",
+      "DELETE repos/o/r/issues/5/labels/factory%3Aescalated",
+      "DELETE repos/o/r/issues/5/labels/factory%3Ain-progress",
+      "POST repos/o/r/issues/5/labels",
+    ]);
+    expect(JSON.parse(files.get(`work-items/${WI}.json`)!).status).toBe("in_review");
+  });
+
+  it("does nothing when the gates have not passed on the head", async () => {
+    seed("in_review");
+    for (const v of [null, "failure"]) {
+      const { gh: g, sent } = gh(v, ["factory:in-progress"]);
+      expect(await clearHeldChange({ gh: g, pr: 5, now })).toContain("has not passed");
+      expect(sent).toEqual([]);
+    }
+  });
+
+  it("leaves a change that is not held, or not a factory change, alone", async () => {
+    seed("running");
+    const a = gh("success", []);
+    expect(await clearHeldChange({ gh: a.gh, pr: 5, now })).toContain("not held");
+    expect(await clearHeldChange({ gh: a.gh, pr: 99, now })).toContain("not a factory change");
+    expect(a.sent).toEqual([]);
+  });
+
+  it("is a no-op once the change is ready and already cleared", async () => {
+    seed("in_review");
+    const { gh: g, sent } = gh("success", ["factory:cleared"], false);
+    expect(await clearHeldChange({ gh: g, pr: 5, now })).toContain("already cleared");
+    expect(sent).toEqual([]);
   });
 });

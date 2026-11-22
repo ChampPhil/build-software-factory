@@ -326,10 +326,12 @@ jobs:
     # so it neither re-judges it nor records a second verdict on the commit.
     if: always() && needs.plan.outputs.judge != 'false'
     runs-on: ubuntu-latest
+    # pull-requests and contents are write so a held change whose gates pass is
+    # cleared (marked ready, labels, ledger) when no factory run is waiting on it.
     permissions:
-      contents: read
+      contents: write
       checks: write
-      pull-requests: read
+      pull-requests: write
       actions: write
     steps:
       - uses: actions/checkout@v4

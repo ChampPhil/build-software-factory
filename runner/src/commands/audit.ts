@@ -47,6 +47,12 @@ interface SearchResult {
   readonly total_count: number;
   readonly items: readonly { readonly number: number }[];
 }
+interface AssociatedPr {
+  readonly number: number;
+  readonly merged_at: string | null;
+  readonly merge_commit_sha: string | null;
+  readonly head: { readonly sha: string };
+}
 interface CheckRun {
   readonly name: string;
   readonly conclusion: string | null;
@@ -67,25 +73,40 @@ export async function runAuditCommand(opts: AuditOptions): Promise<AuditReport> 
   const detail = await opts.gh.get<CommitDetail>(`repos/${opts.gh.repo}/commits/${opts.commit}`);
   const isMergeCommit = detail.parents.length > 1;
 
-  if (prs === null) {
+  // The pull requests that brought this commit to main. A merge, squash or
+  // rebase commit is a new commit, so the gates ran on the PR's head, not on
+  // it. The search above matches only a PR's head, so it misses all three.
+  const associated = await opts.gh
+    .get<readonly AssociatedPr[]>(`repos/${opts.gh.repo}/commits/${opts.commit}/pulls?per_page=20`)
+    .catch(() => null);
+  const assocList: readonly AssociatedPr[] = Array.isArray(associated) ? (associated as readonly AssociatedPr[]) : [];
+  const mergedPrs = assocList.filter((p) => p.merged_at !== null);
+
+  if (prs === null && !Array.isArray(associated)) {
     findings.push({
       kind: "gate_not_run",
       detail: "could not ask GitHub which PR this commit came from, so nothing here is confirmed",
     });
-  } else if (prs.total_count === 0 && !isMergeCommit) {
+  } else if ((prs?.total_count ?? 0) === 0 && mergedPrs.length === 0 && !isMergeCommit) {
     findings.push({
       kind: "direct_push",
       detail: `${opts.commit.slice(0, 8)} is on main with no pull request: the gates never saw it`,
     });
   }
 
-  // 2. Did the gates report on it, and did they pass?
+  // 2. Did the gates report on it, and did they pass? On the commit itself
+  // (a merge queue's commit, or a fast-forward), or, failing that, on the head
+  // of the pull request that was merged to make it.
   checked.push("the gate checks reported success on this commit");
-  const runs = await opts.gh.get<{ readonly check_runs: readonly CheckRun[] }>(
-    `repos/${opts.gh.repo}/commits/${opts.commit}/check-runs?per_page=100`,
-  );
+  const fetchRuns = async (sha: string): Promise<readonly CheckRun[]> =>
+    (await opts.gh.get<{ readonly check_runs: readonly CheckRun[] }>(`repos/${opts.gh.repo}/commits/${sha}/check-runs?per_page=100`)).check_runs;
+  const own = await fetchRuns(opts.commit);
+  const exact = mergedPrs.filter((p) => p.merge_commit_sha === opts.commit);
+  const heads = [...new Set((exact.length > 0 ? exact : mergedPrs).map((p) => p.head.sha).filter((h) => h !== opts.commit))];
+  const viaPr: CheckRun[] = [];
+  for (const h of heads) viaPr.push(...(await fetchRuns(h).catch(() => [])));
   for (const name of [gatesCheck, policyCheck]) {
-    const run = runs.check_runs.find((c) => c.name === name);
+    const run = own.find((c) => c.name === name) ?? viaPr.find((c) => c.name === name);
     if (run === undefined) {
       findings.push({ kind: "gate_not_run", detail: `${name} never reported on ${opts.commit.slice(0, 8)}` });
     } else if (run.conclusion !== "success" && run.conclusion !== "neutral" && run.conclusion !== "skipped") {
