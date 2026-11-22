@@ -40,6 +40,9 @@ export interface IncomingEvent {
   readonly touched_area?: string;
   /** The work item a `/retry` names, when it names one (a dispatch has no issue to find it by). */
   readonly target_item?: string;
+  /** For a label event: the label just added, and who added it. */
+  readonly label_added?: string;
+  readonly labeled_by?: string;
 }
 
 export interface WorkItemDraft {
@@ -218,7 +221,15 @@ function triggerEnabled(ctx: IntakeContext, kind: EventKind): boolean {
   }
 }
 
-function decide(event: IncomingEvent, ctx: IntakeContext): IntakeDecision {
+function decide(incoming: IncomingEvent, ctx: IntakeContext): IntakeDecision {
+  // The harden label asks for hardening at once (doc 06): the issue it is put
+  // on describes a mistake to turn into a rule. Only people with triage access
+  // or more can label, so whoever added it is the trusted actor.
+  const hardenLabel = ctx.policy.trust.harden_label ?? "factory:harden";
+  const event: IncomingEvent =
+    incoming.kind === "issue_labeled" && incoming.label_added === hardenLabel
+      ? { ...incoming, kind: "correction", actor: incoming.labeled_by ?? incoming.actor, actor_association: "MEMBER", actor_is_bot: false }
+      : incoming;
   const route = ROUTE[event.kind];
 
   if (event.from_fork === true) {

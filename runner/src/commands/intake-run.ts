@@ -99,6 +99,9 @@ export function normalizeEvent(
       ...(payload.issue.body == null ? {} : { body: payload.issue.body }),
       ...(payload.issue.number === undefined ? {} : { ref: `#${payload.issue.number}` }),
       labels: (payload.issue.labels ?? []).map((l) => l.name ?? "").filter((n) => n !== ""),
+      ...(payload.action === "labeled" && payload.label?.name !== undefined
+        ? { label_added: payload.label.name, ...(payload.sender?.login === undefined ? {} : { labeled_by: payload.sender.login }) }
+        : {}),
     };
   }
 

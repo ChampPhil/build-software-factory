@@ -37,7 +37,7 @@ The factory runs three fixed pipelines (product work, gardening, hardening) plus
 | Issue, comment asking for work, Slack/Linear/Sentry issue, dashboard request | Product work |
 | CI failure on main | Product work (high priority) |
 | Review comment on a factory PR | Back to that PR's run as a revision (not a new item) |
-| Human correction on a factory PR (a requested change the factory then made) | Recorded as a correction candidate, in addition to the revision; hardening starts at 3 of a kind within 14 days, or at once if labeled `factory:harden` |
+| Human correction on a factory PR (a requested change the factory then made) | Recorded as a correction candidate, in addition to the revision; hardening starts at 3 of a kind within 14 days, or at once when someone with triage access labels an issue `factory:harden` (the issue describing the mistake) |
 | Nightly schedule | Gardening |
 | Same failure 3 times within 14 days; problem routed by the scheduled review | Hardening |
 | Review result needing context or model change | Definition change (benchmark-gated) |

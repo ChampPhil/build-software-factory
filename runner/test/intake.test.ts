@@ -375,3 +375,24 @@ describe("comments that are not requests", () => {
     expect(e).toBeNull();
   });
 });
+
+describe("the harden label", () => {
+  it("starts hardening at once, as whoever added the label, even on an issue that already has an item", () => {
+    const res = runIntake(
+      [ev({ id: 5, kind: "issue_labeled", actor: "outsider", actor_association: "NONE", labels: ["factory:harden"], label_added: "factory:harden", labeled_by: "philip", title: "The verifier ran next start without building", ref: "#20" })],
+      ctx({ openItems: [{ work_item: "wi_X", source_ref: "#20", status: "in_review", fingerprint: "f", pipeline: "product_work" } as never] }),
+    );
+    const d = res.decisions[0]!;
+    expect(d.workItem?.pipeline).toBe("hardening");
+    expect(d.workItem?.source.kind).toBe("correction");
+    expect(d.workItem?.source.actor).toBe("philip");
+    expect(d.workItem?.status).toBe("queued");
+  });
+
+  it("is an ordinary label anywhere else, and never comes from a bot", () => {
+    const other = runIntake([ev({ id: 6, kind: "issue_labeled", labels: ["bug"], label_added: "bug", labeled_by: "philip" })], ctx());
+    expect(other.decisions[0]!.workItem?.pipeline).toBe("product_work");
+    const bot = runIntake([ev({ id: 7, kind: "issue_labeled", labels: ["factory:harden"], label_added: "factory:harden", labeled_by: "factory-app[bot]" })], ctx());
+    expect(bot.decisions[0]!.workItem).toBeNull();
+  });
+});
