@@ -282,6 +282,14 @@ export async function reviewCollect(opts: {
       }
     }
     const item = r.work_item === undefined ? null : await store.get<Record<string, unknown>>(workItemPath(r.work_item), "work-item").catch(() => null);
+    // The roles' PR reports: what each claimed and the proof it attached.
+    const reports: unknown[] = [];
+    if (r.work_item !== undefined) {
+      for (const p of (await store.data.list(`reports/${r.work_item}/`).catch(() => [] as readonly string[])).filter((x) => x.endsWith(".json")).slice(0, 6)) {
+        const rep = await store.data.readJson<{ role?: string; report?: unknown; problems?: unknown }>(p).catch(() => null);
+        if (rep !== null) reports.push({ role: rep.role ?? null, report: rep.report ?? null, problems: rep.problems ?? [] });
+      }
+    }
     const run = await store.data.readJson<Record<string, unknown>>(runPath(r.id)).catch(() => null);
     toScore.push({
       id: r.id,
@@ -295,6 +303,7 @@ export async function reviewCollect(opts: {
       spec: item?.["spec"] ?? null,
       gates: run?.["gates"] ?? null,
       steps: run?.["steps"] ?? null,
+      reports,
       diff,
       problems,
     });
@@ -348,6 +357,7 @@ export async function reviewWrite(opts: {
     gh: opts.gh,
     now: opts.now,
     failures: real,
+    allScores: failures,
     ...(opts.plan === true ? { plan: true } : {}),
   });
   return {

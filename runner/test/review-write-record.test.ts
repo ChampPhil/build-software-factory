@@ -37,4 +37,16 @@ describe("the review record", () => {
     expect(review, "no review record was written").toBeDefined();
     expect(JSON.parse(review!.content!).window.runs).toBe(2);
   });
+
+  it("is written when nothing needed routing too, so the next review knows where this one ended", async () => {
+    written.length = 0;
+    const { runReviewRoute } = await import("../src/commands/review.js");
+    const good = { run: "run_01M7ZGFMV8NX72DCFHP11EPB6Y", role: "builder", area: "src", tag: "meaningful_tests", score: 5, kind: "low_score" as const };
+    const r = await runReviewRoute({ gh: { repo: "o/r", dispatchWorkflow: async () => undefined } as never, now: "2026-11-22T01:00:00.000Z", failures: [], allScores: [good] });
+    expect(r.filed).toEqual([]);
+    const review = written.find((c) => c.path.startsWith("reviews/"));
+    expect(review, "no review record").toBeDefined();
+    expect(JSON.parse(review!.content!).scores).toHaveLength(1);
+    expect(written.some((c) => c.path === "ledger.json")).toBe(false);
+  });
 });

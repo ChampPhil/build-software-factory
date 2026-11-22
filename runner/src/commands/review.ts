@@ -249,7 +249,11 @@ export interface RouteReport {
 
 /** Turn the scored failures into work items, one per problem. */
 export async function runReviewRoute(
-  opts: ReviewOptions & { readonly failures: readonly ScoredFailure[] },
+  opts: ReviewOptions & {
+    readonly failures: readonly ScoredFailure[];
+    /** Every score the scorer gave, failures or not, for the review record. Defaults to the failures. */
+    readonly allScores?: readonly ScoredFailure[];
+  },
 ): Promise<RouteReport> {
   const store = new FactoryStore(opts.gh);
   const ledger = await store.ledger(opts.now);
@@ -293,8 +297,12 @@ export async function runReviewRoute(
     filed.push({ work_item: id, destination: p.destination });
   }
 
-  if (changes.length > 0) {
-    changes.push({ path: LEDGER, content: json({ ...ledger, updated_at: opts.now, open }) });
+  const recorded = opts.allScores ?? opts.failures;
+  // The record is written whenever anything was scored, problems or not: it
+  // is how the next review knows where this one's window ended, and how the
+  // dashboard shows a review that found nothing wrong.
+  if (changes.length > 0 || recorded.length > 0) {
+    if (changes.length > 0) changes.push({ path: LEDGER, content: json({ ...ledger, updated_at: opts.now, open }) });
     changes.push({
       path: reviewPath(opts.now.slice(0, 10)),
       content: json({
@@ -303,12 +311,12 @@ export async function runReviewRoute(
         window: {
           from: opts.windowFrom ?? opts.now,
           to: opts.now,
-          runs: new Set(opts.failures.map((f) => f.run)).size,
+          runs: new Set(recorded.map((f) => f.run)).size,
         },
         // Only scored criteria go in `scores`; escalations, reverts and
         // corrections are failures without a score, and they show up in the
         // problems they caused rather than as invented 1s.
-        scores: opts.failures
+        scores: recorded
           .filter((f) => f.score !== undefined)
           .map((f) => ({
             run: f.run,
