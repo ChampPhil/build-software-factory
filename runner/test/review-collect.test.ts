@@ -43,3 +43,15 @@ describe("review-collect", () => {
     expect(doc.rubrics["product_work"]).toContain("correctness");
   });
 });
+
+describe("reading the scorer's scores", () => {
+  it("reads the flat shape the prompt asks for, and the nested shapes a model reaches for", async () => {
+    const { normalizeScores } = await import("../src/commands/role-steps.js");
+    const flat = normalizeScores({ scores: [{ run: "r1", role: "builder", area: "src", criterion: "meaningful tests", score: 2, tag: "weak_test", detail: "asserts on a mock" }] });
+    expect(flat).toEqual([expect.objectContaining({ run: "r1", tag: "weak_test", score: 2, kind: "low_score" })]);
+    const nested = normalizeScores({ schema: "scores/1", runs: [{ id: "r2", criteria: [{ name: "minimal change", score: 5 }, { name: "followed the intent", score: 1, tags: ["scope_creep"], note: "added a settings page" }] }] });
+    expect(nested.map((f) => [f.run, f.score, f.tag])).toEqual([["r2", 5, "minimal_change"], ["r2", 1, "scope_creep"]]);
+    const keyed = normalizeScores({ scores: [{ run: "r3", scores: { "artifacts prove the claim": { score: 2, tag: "evidence_missing" } } }] });
+    expect(keyed[0]).toMatchObject({ run: "r3", score: 2, tag: "evidence_missing" });
+  });
+});

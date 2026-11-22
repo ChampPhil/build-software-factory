@@ -337,14 +337,12 @@ export async function reviewWrite(opts: {
   readonly scores: string;
   readonly plan?: boolean;
 }): Promise<ReviewWriteReport> {
-  const doc = JSON.parse(readFileSync(opts.scores, "utf8")) as
-    | { failures?: ScoredFailure[]; scores?: ScoredFailure[] }
-    | ScoredFailure[];
-  const failures = Array.isArray(doc) ? doc : doc.failures ?? doc.scores ?? [];
+  const failures = normalizeScores(JSON.parse(readFileSync(opts.scores, "utf8")) as unknown);
 
   // Only 1s and 2s, escalations, reverts and corrections are failures (doc 06).
   // A 4 is not a problem, and routing one would fill the queue with noise.
-  const real = failures.filter((f) => f.score === undefined || f.score <= 2);
+  // A criterion left unscored (the evidence was missing) is not a failure.
+  const real = failures.filter((f) => (f.kind === "low_score" ? f.score !== undefined && f.score <= 2 : true));
 
   const r = await runReviewRoute({
     gh: opts.gh,
@@ -358,6 +356,54 @@ export async function reviewWrite(opts: {
     filed: r.filed.map((f) => f.work_item),
     dispatched: r.dispatched,
   };
+}
+
+type Loose = Record<string, unknown>;
+const str = (v: unknown): string | undefined => (typeof v === "string" && v.trim() !== "" ? v : undefined);
+const num = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
+
+/**
+ * The scorer's scores as flat records, one per run and criterion. The prompt
+ * asks for that shape exactly; the nested shapes a model reaches for — a list
+ * of runs each with its criteria, as a list or keyed by name — are read too,
+ * because a review that silently finds nothing is the failure to avoid.
+ */
+export function normalizeScores(doc: unknown): ScoredFailure[] {
+  const top: unknown[] = Array.isArray(doc) ? doc : ((doc as Loose)?.["scores"] ?? (doc as Loose)?.["failures"] ?? (doc as Loose)?.["runs"] ?? []) as unknown[];
+  const out: ScoredFailure[] = [];
+  const push = (run: string, role: string, area: string, c: Loose, name?: string): void => {
+    const score = num(c["score"]);
+    const tag = str(c["tag"]) ?? (Array.isArray(c["tags"]) ? str((c["tags"] as unknown[])[0]) : undefined) ?? str(c["failure_tag"]);
+    const detail = str(c["detail"]) ?? str(c["note"]) ?? str(c["notes"]);
+    out.push({
+      run,
+      role: str(c["role"]) ?? role,
+      area: str(c["area"]) ?? area,
+      tag: tag ?? (name !== undefined ? name.replace(/\s+/g, "_") : "untagged"),
+      ...(score === undefined ? {} : { score }),
+      kind: (str(c["kind"]) as ScoredFailure["kind"] | undefined) ?? "low_score",
+      ...(detail === undefined ? {} : { detail: name === undefined ? detail : `${name}: ${detail}` }),
+    });
+  };
+  for (const entry of Array.isArray(top) ? top : []) {
+    if (entry === null || typeof entry !== "object") continue;
+    const e = entry as Loose;
+    const run = str(e["run"]) ?? str(e["run_id"]) ?? str(e["id"]) ?? "unknown";
+    const role = str(e["role"]) ?? "builder";
+    const area = str(e["area"]) ?? "repo";
+    const nested = e["criteria"] ?? (typeof e["scores"] === "object" ? e["scores"] : undefined);
+    if (num(e["score"]) !== undefined || nested === undefined) {
+      push(run, role, area, e);
+    } else if (Array.isArray(nested)) {
+      for (const c of nested) if (c !== null && typeof c === "object") push(run, role, area, c as Loose, str((c as Loose)["criterion"]) ?? str((c as Loose)["name"]));
+    } else if (nested !== null && typeof nested === "object") {
+      for (const [name, c] of Object.entries(nested as Loose)) {
+        if (typeof c === "number") push(run, role, area, { score: c }, name);
+        else if (c !== null && typeof c === "object") push(run, role, area, c as Loose, name);
+      }
+    }
+  }
+  return out;
 }
 
 function write(path: string, content: string): void {
