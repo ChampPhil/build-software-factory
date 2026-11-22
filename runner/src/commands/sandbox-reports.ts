@@ -33,6 +33,8 @@ export const REPORTS = "sandbox-reports/";
 export const MAX_ATTEMPTS = 2;
 /** An amendment that has not landed this long after it was started has ended without landing. */
 const AMENDMENT_GIVE_UP_MS = 3 * 60 * 60 * 1000;
+/** Once no amendment is running or open, this long after dispatch it has ended. */
+const AMENDMENT_ENDED_MS = 30 * 60 * 1000;
 
 export interface StoredReport extends InadequacyReport {
   readonly work_item?: string;
@@ -82,15 +84,21 @@ export async function recordReport(
 export type ReportState = "ready" | "waits_for_merge" | "in_amendment" | "dropped" | "done" | "escalate";
 
 /** Where a stored report stands, read against the ledger. */
-export function reportState(d: StoredReport, ledger: Ledger, now: string = new Date().toISOString()): { state: ReportState; why?: string } {
+export function reportState(
+  d: StoredReport,
+  ledger: Ledger,
+  now: string = new Date().toISOString(),
+  amendmentRunning = true,
+): { state: ReportState; why?: string } {
   if (d.dropped_at !== undefined || d.escalated_at !== undefined) return { state: "done" };
   if (d.dispatched_at !== undefined) {
     const last = d.last_reported_at ?? d.reported_at;
     if (d.landed_at !== undefined) {
       // Landed, and nobody has run into it since: repaired.
       if (last <= d.landed_at) return { state: "done" };
-    } else if (Date.parse(now) - Date.parse(d.dispatched_at) < AMENDMENT_GIVE_UP_MS) {
-      return { state: "in_amendment" };
+    } else {
+      const age = Date.parse(now) - Date.parse(d.dispatched_at);
+      if (age < (amendmentRunning ? AMENDMENT_GIVE_UP_MS : AMENDMENT_ENDED_MS)) return { state: "in_amendment" };
     }
     // Reported again after its repair landed, or the repair never landed.
     if ((d.attempts ?? 1) >= MAX_ATTEMPTS) {
@@ -169,10 +177,17 @@ export async function sweepReports(opts: {
   let dropped = 0;
   const pending: { path: string; d: StoredReport }[] = [];
   const escalate: { path: string; d: StoredReport }[] = [];
+  const stored: { path: string; d: StoredReport }[] = [];
   for (const path of await opts.store.data.list(REPORTS)) {
     const d = await opts.store.data.readJson<StoredReport>(path);
-    if (d === null) continue;
-    const st = reportState(d, opts.ledger, opts.now);
+    if (d !== null) stored.push({ path, d });
+  }
+  // Whether an amendment is running or awaiting merge: until one is, a
+  // report handed to one that has ended without landing is free again.
+  const awaiting = stored.some(({ d }) => d.dispatched_at !== undefined && d.landed_at === undefined && d.escalated_at === undefined && d.dropped_at === undefined);
+  const running = awaiting ? await amendmentUnderWay(opts.gh) : false;
+  for (const { path, d } of stored) {
+    const st = reportState(d, opts.ledger, opts.now, running);
     if (st.state === "waits_for_merge") waiting += 1;
     if (st.state === "dropped") {
       dropped += 1;
@@ -181,7 +196,7 @@ export async function sweepReports(opts: {
     if (st.state === "ready") pending.push({ path, d });
     if (st.state === "escalate") escalate.push({ path, d });
   }
-  const underWay = (pending.length > 0 || escalate.length > 0) && (await amendmentUnderWay(opts.gh));
+  const underWay = (pending.length > 0 || escalate.length > 0) && (awaiting ? running : await amendmentUnderWay(opts.gh));
   const room = pending.length > 0 && !underWay && opts.fits !== undefined ? await opts.fits() : { ok: true, reason: "" };
   const busy = underWay;
   if (!room.ok) pending.length = 0;

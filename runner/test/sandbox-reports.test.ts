@@ -159,3 +159,12 @@ describe("a repair that cannot run", () => {
     expect(reportState(d, ledger(), NOW).state).toBe("ready");
   });
 });
+
+describe("an amendment that ended without landing", () => {
+  it("frees its reports half an hour after nothing is running, not three hours", () => {
+    const sent = { ...signIn, reported_at: NOW, reports: 1, dispatched_at: NOW, attempts: 1 };
+    expect(reportState(sent, ledger(), "2026-11-21T09:40:00Z", true).state).toBe("in_amendment");
+    expect(reportState(sent, ledger(), "2026-11-21T09:40:00Z", false).state).toBe("ready");
+    expect(reportState(sent, ledger(), "2026-11-21T09:10:00Z", false).state).toBe("in_amendment");
+  });
+});
