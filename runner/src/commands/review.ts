@@ -303,7 +303,7 @@ export async function runReviewRoute(
         window: {
           from: opts.windowFrom ?? opts.now,
           to: opts.now,
-          runs: [...new Set(opts.failures.map((f) => f.run))],
+          runs: new Set(opts.failures.map((f) => f.run)).size,
         },
         // Only scored criteria go in `scores`; escalations, reverts and
         // corrections are failures without a score, and they show up in the
