@@ -82,6 +82,13 @@ weakening:
     - coverage_floor_lowered
     - skip_without_reason
 
+# A role that cannot exercise what a change needs reports it, and the
+# factory amends its sandbox. automatic: the amendment merges itself when it
+# changes only .factory/sandbox/, reaches no new host, needs no new secret,
+# and its trial proves at least what the current sandbox does; anything else
+# waits for a person. reviewed: every amendment waits for a person.
+sandbox_repairs: automatic
+
 # gh-aw's own protected-file check, passed to each role workflow by
 # factory-run. gh-aw protects every top-level dot-folder by default, .factory/
 # included, plus dependency manifests and .github/. Without a per-pipeline

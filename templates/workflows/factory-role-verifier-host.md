@@ -331,15 +331,26 @@ its own work.
    The sandbox gives the app exactly those variables and nothing else.
 
 **If `/tmp/gh-aw/agent/bsf/app.json` exists, the sandbox runs on the runner**,
-with the services and stubs the app needs:
+with the services and stubs the app needs, and the steps above do not apply:
+do not start the app or source `.runtime.env` yourself.
 
 - its `url` is the app, already running. Open it with the browser tool; do
   not start another. It serves from this workspace and **restarts by itself a
   couple of seconds after you change a file**, so wait for it and reload;
+- its `session_file`, when set, signs you in as the sandbox's test user. Load
+  it before opening any page behind sign-in:
+
+  ```bash
+  playwright-cli state-load /tmp/gh-aw/agent/bsf/session.json
+  ```
+
+  Never sign in through the identity provider: its pages do not load here.
+  When `session_file` is null and `sign_in_problem` says why, pages behind
+  sign-in cannot be checked; report that (below);
 - its `services` are reachable from your shell at the addresses it lists, and
   `.factory/sandbox/.agent.env` is the environment rewritten to use them —
-  **source that file instead of `.runtime.env`** when you run tests or
-  scripts yourself.
+  source that file when you run tests or scripts yourself. Third parties the
+  app calls are stubbed for the app; your own shell cannot reach them.
 2. Work through the spec's `acceptance_checks` **one at a time**. For each, use
    the app the way a developer would: click through it in the browser, call the
    API, query the database. Record what you observe, not what you expect.
@@ -397,6 +408,12 @@ credential the path depends on is not there — also write
 ```json
 { "role": "verifier", "needs": "what you could not exercise", "paths": ["the files involved"], "why": "what stopped you" }
 ```
+
+Set `"needs_the_change": true` only when what is missing is something this
+change itself adds (a test runner, a new service it introduces): the repair
+then waits for the change to merge. Leave it out when the sandbox already
+lacks it on main (signing in, a service, a certificate, an app that will not
+start): the sandbox is repaired at once and this change is verified again.
 
 That report is how the sandbox gets amended so the next change like this one
 can be verified. It does not turn the check into a pass.

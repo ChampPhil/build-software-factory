@@ -3,6 +3,7 @@ import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { applyInterception, startStubs, type InterceptedStub } from "./stubs.js";
+import { mintSession, proofComplete, runProbes, storageState, type ProbeOutcome } from "./sandbox-proof.js";
 import { readCoverage, runSarifCheck } from "../lib/tools.js";
 import { connect } from "node:net";
 import { dirname, join } from "node:path";
@@ -47,6 +48,31 @@ export interface SandboxManifest {
     readonly why: string;
   }[];
   readonly stubs?: readonly InterceptedStub[];
+  readonly dependencies?: readonly Dependency[];
+  readonly sign_in?: { readonly command: string; readonly why: string };
+  readonly capabilities?: {
+    readonly exercised: readonly string[];
+    readonly not_exercised: readonly { readonly what: string; readonly paths?: readonly string[]; readonly why: string }[];
+  };
+}
+
+/** Something outside the app's own code it needs, its stand-in here, and the request that proves it. */
+export interface Dependency {
+  readonly name: string;
+  readonly kind: string;
+  readonly stand_in: "test_mode" | "session" | "service" | "stub" | "inert";
+  readonly probe: Probe | null;
+  readonly proven?: boolean;
+  readonly why: string;
+}
+
+export interface Probe {
+  readonly path: string;
+  readonly method?: "GET" | "POST";
+  readonly body?: string;
+  readonly content_type?: string;
+  readonly signed_in: boolean;
+  readonly expect_text?: string;
 }
 
 /** A checker the repo's own toolchain runs, declared by setup, writing SARIF. */
@@ -272,6 +298,10 @@ export interface TrialReport {
   readonly summary: string;
   /** The coverage and static checks the candidate declared, and whether each worked. */
   readonly checks?: readonly CheckOutcome[];
+  /** Whether the declared sign_in minted a session. */
+  readonly sign_in?: { readonly ok: boolean; readonly detail: string };
+  /** Each dependency's probe against the running app. */
+  readonly probes?: readonly ProbeOutcome[];
 }
 
 export interface CheckOutcome {
@@ -299,6 +329,16 @@ export function reachedTier(steps: readonly StepOutcome[], appOk: boolean, scree
   if (!ran("build") && !ran("test") && !ran("install")) return "static";
   if (appOk && screenshot) return "renders";
   return "build_and_test";
+}
+
+/** A round is done when the trial reached what was claimed and proved every dependency. */
+export function trialMet(t: TrialReport): boolean {
+  return t.reached === t.claimed && proofComplete(t);
+}
+
+/** How much of the app a trial proved: its working probes, and sign-in. */
+export function provenCount(t: TrialReport): number {
+  return (t.probes ?? []).filter((p) => p.ok).length + (t.sign_in?.ok === true ? 1 : 0);
 }
 
 function tailOf(buf: Buffer | string | null | undefined, lines = 40): string {
@@ -449,6 +489,8 @@ export async function trialSandbox(opts: {
   // Start the app and see whether it answers.
   let appStatus: number | null = null;
   let shot: string | null = null;
+  let signIn: { ok: boolean; detail: string } | undefined;
+  let probes: readonly ProbeOutcome[] | undefined;
   const url = m.app_url ?? null;
   if (steps.every((s) => s.ok) && m.commands.run !== null && url !== null) {
     log(`trial run: ${m.commands.run}`);
@@ -473,8 +515,27 @@ export async function trialSandbox(opts: {
       const took = (opts.screenshot ?? defaultScreenshot)(url, file);
       steps.push({ step: "screenshot", command: null, ok: took, exit: null, seconds: 0, tail: took ? file : "the screenshot could not be taken" });
       if (took) shot = file;
+      // The proof that the sandbox matches the app: a session minted without
+      // the identity provider, then one request per dependency.
+      let cookies: Awaited<ReturnType<typeof mintSession>>["cookies"] = [];
+      if (m.sign_in !== undefined) {
+        log(`trial sign_in: ${m.sign_in.command}`);
+        const minted = mintSession(m, opts.workspace, runEnv);
+        signIn = { ok: minted.ok, detail: minted.detail };
+        cookies = minted.cookies;
+        log(`  ${minted.detail}`);
+      }
+      if ((m.dependencies ?? []).length > 0) {
+        probes = await runProbes(m, url, cookies);
+        for (const p of probes) log(`  probe ${p.dependency}: ${p.ok ? "ok" : "failed"}: ${p.detail}`);
+      }
     }
     try { if (child.pid !== undefined) process.kill(-child.pid, "SIGTERM"); } catch { /* already gone */ }
+  }
+  // Declared but never reached, because the app did not answer: not proven.
+  if (m.sign_in !== undefined && signIn === undefined) signIn = { ok: false, detail: "the app did not answer, so no session was minted" };
+  if (probes === undefined && (m.dependencies ?? []).length > 0) {
+    probes = (m.dependencies ?? []).map((d) => ({ dependency: d.name, path: d.probe?.path ?? "", signed_in: d.probe?.signed_in ?? false, ok: false, detail: "the app did not answer, so nothing was probed" }));
   }
 
   const reached = reachedTier(steps, appStatus !== null && appStatus < 500, shot !== null);
@@ -484,11 +545,20 @@ export async function trialSandbox(opts: {
       ? `reached ${reached}${reached === m.tier ? ", as claimed" : `; the manifest claimed ${m.tier}`}`
       : `reached ${reached}: ${failedStep.step} failed${failedStep.command === null ? "" : ` (${failedStep.command})`}`;
   const failedChecks = checks.filter((c) => !c.ok);
+  const unproven = [
+    ...(signIn !== undefined && !signIn.ok ? ["sign-in"] : []),
+    ...(probes ?? []).filter((p) => !p.ok).map((p) => p.dependency),
+  ];
   const report: TrialReport = {
     schema: "sandbox-trial/1", claimed: m.tier, reached, steps, app_url: url, app_status: appStatus,
     screenshot: shot,
-    summary: failedChecks.length === 0 ? summary : `${summary}; ${failedChecks.map((c) => `${c.name} check failed`).join(", ")}`,
+    summary:
+      summary +
+      (failedChecks.length === 0 ? "" : `; ${failedChecks.map((c) => `${c.name} check failed`).join(", ")}`) +
+      (unproven.length === 0 ? "" : `; not proven: ${unproven.join(", ")}`),
     ...(checks.length === 0 ? {} : { checks }),
+    ...(signIn === undefined ? {} : { sign_in: signIn }),
+    ...(probes === undefined ? {} : { probes }),
   };
   writeFileSync(opts.out, `${JSON.stringify(report, null, 2)}\n`);
   log(summary);
@@ -529,7 +599,13 @@ export function freezeManifest(rounds: readonly Round[], now: string): {
     trials.push(t);
     const loaded = loadManifestAt(r.candidate);
     if (loaded.kind !== "ok") return;
-    if (best === null || TIER_RANK[t.reached] >= TIER_RANK[best.tier]) {
+    // The highest tier wins; at the same tier, the round that proved more of
+    // the app; on a full tie, the later round, which had more to go on.
+    if (
+      best === null ||
+      TIER_RANK[t.reached] > TIER_RANK[best.tier] ||
+      (TIER_RANK[t.reached] === TIER_RANK[best.tier] && provenCount(t) >= provenCount(best.t))
+    ) {
       best = { i, tier: t.reached, m: JSON.parse(readFileSync(r.candidate, "utf8")) as Record<string, unknown>, t };
     }
   });
@@ -557,6 +633,7 @@ export function freezeManifest(rounds: readonly Round[], now: string): {
     }
   }
   if (Array.isArray(kept["static_checks"]) && (kept["static_checks"] as unknown[]).length === 0) delete kept["static_checks"];
+  applyProof(kept, b.t, droppedChecks);
   if (droppedChecks.length > 0) {
     kept["dropped"] = [...((kept["dropped"] as unknown[] | undefined) ?? []), ...droppedChecks];
   }
@@ -581,6 +658,41 @@ export function freezeManifest(rounds: readonly Round[], now: string): {
   return { manifest, chosen: b.i };
 }
 
+/**
+ * What the trial proved, written into the frozen manifest: each dependency
+ * marked proven or not, every unproven one listed under not_exercised with
+ * what happened, and a sign_in that minted nothing dropped, so no role is
+ * told it can sign in when it cannot.
+ */
+export function applyProof(kept: Record<string, unknown>, t: TrialReport, dropped: { from: string; what: string; why: string }[]): void {
+  const deps = (kept["dependencies"] as Dependency[] | undefined) ?? [];
+  const caps = (kept["capabilities"] as { exercised: string[]; not_exercised: { what: string; paths?: string[]; why: string }[] } | undefined) ?? {
+    exercised: [],
+    not_exercised: [],
+  };
+  const notEx = [...caps.not_exercised];
+  const listed = (what: string): boolean => notEx.some((n) => n.what.toLowerCase() === what.toLowerCase());
+  const signInFailed = kept["sign_in"] !== undefined && t.sign_in?.ok !== true;
+  if (signInFailed) {
+    const si = kept["sign_in"] as { command: string };
+    dropped.push({ from: "trial", what: `sign_in: ${si.command}`, why: t.sign_in?.detail ?? "it was not run" });
+    delete kept["sign_in"];
+    if (!listed("pages behind sign-in")) notEx.push({ what: "pages behind sign-in", why: `no session could be minted: ${t.sign_in?.detail ?? "not run"}` });
+  }
+  if (deps.length > 0) {
+    kept["dependencies"] = deps.map((d) => {
+      const p = (t.probes ?? []).find((x) => x.dependency === d.name);
+      const proven = p?.ok === true;
+      if (!proven && !listed(d.name)) notEx.push({ what: d.name, why: p?.detail ?? "not probed" });
+      return { ...d, proven };
+    });
+  }
+  // A capability claimed as exercised that its probe disproved is not exercised.
+  const unproven = new Set(((kept["dependencies"] as Dependency[] | undefined) ?? []).filter((d) => d.proven !== true).map((d) => d.name.toLowerCase()));
+  const exercised = caps.exercised.filter((e) => !unproven.has(e.toLowerCase()));
+  if (deps.length > 0 || signInFailed) kept["capabilities"] = { exercised, not_exercised: notEx };
+}
+
 /* ------------------------------------------------------------- inadequacy */
 
 export interface InadequacyReport {
@@ -588,6 +700,12 @@ export interface InadequacyReport {
   readonly needs: string;
   readonly paths: readonly string[];
   readonly why: string;
+  /**
+   * True only when what is missing is something the change itself adds (a
+   * test runner, a new service): the repair then waits for the change to
+   * merge. Anything main's sandbox already lacks is repaired at once.
+   */
+  readonly needs_the_change?: boolean;
 }
 
 export function inadequacyProblems(r: unknown): readonly string[] {
@@ -598,6 +716,7 @@ export function inadequacyProblems(r: unknown): readonly string[] {
     if (typeof o[k] !== "string" || (o[k]).trim() === "") out.push(`${k} is required`);
   }
   if (!Array.isArray(o["paths"]) || !(o["paths"] as unknown[]).every((p) => typeof p === "string")) out.push("paths is a list of file paths");
+  if (o["needs_the_change"] !== undefined && typeof o["needs_the_change"] !== "boolean") out.push("needs_the_change is true or false");
   return out;
 }
 
@@ -622,7 +741,9 @@ export const AGENT_ENV = ".factory/sandbox/.agent.env";
  * role uses its host-access variant to reach it.
  */
 export function needsHost(m: SandboxManifest): boolean {
-  return m.services.length > 0 || (m.stubs ?? []).some((s) => (s.hosts ?? []).length > 0);
+  // A signed-in session is minted on the runner, in the sandbox's own
+  // environment, so an app with sign-in is served from there too.
+  return m.services.length > 0 || (m.stubs ?? []).some((s) => (s.hosts ?? []).length > 0) || m.sign_in !== undefined;
 }
 
 /** The closed environment as the agent's container sees it: 127.0.0.1:<service> becomes host.docker.internal:<forward>. */
@@ -668,6 +789,8 @@ export async function serveOnHost(opts: {
   const logDir = join(process.env["RUNNER_TEMP"] ?? tmpdir(), "bsf-app");
   mkdirSync(logDir, { recursive: true });
   let url: string | null = null;
+  let sessionFile: string | null = null;
+  let signInNote: string | null = null;
   if (m.commands.run !== null && m.app_url != null) {
     const target = new URL(m.app_url);
     const appPort = Number(target.port || (target.protocol === "https:" ? 443 : 80));
@@ -695,12 +818,41 @@ export async function serveOnHost(opts: {
       forward(HOST_APP_PORT, appPort);
       url = `${target.protocol}//host.docker.internal:${HOST_APP_PORT}${target.pathname}${target.search}`;
       opts.log(`the app answers at ${m.app_url}; the agent reaches it at ${url}`);
+      // A signed-in session, minted here in the sandbox's environment, so
+      // the agent's browser never goes to the identity provider, whose
+      // pages it cannot reach. Loaded with `playwright-cli state-load`.
+      if (m.sign_in !== undefined) {
+        const minted = mintSession(m, opts.workspace, { ...shellBase(), ...opts.env });
+        if (minted.ok) {
+          sessionFile = join(dirname(opts.infoFile), "session.json");
+          mkdirSync(dirname(sessionFile), { recursive: true });
+          // A throwaway user in a throwaway database: readable by the agent,
+          // whose container may not run as this user.
+          writeFileSync(sessionFile, `${JSON.stringify(storageState(minted.cookies, "host.docker.internal"), null, 2)}\n`);
+          opts.log(`signed-in session ready: ${minted.detail}`);
+        } else {
+          signInNote = `no signed-in session: ${minted.detail}`;
+          opts.log(signInNote);
+        }
+      }
     }
   }
   mkdirSync(dirname(opts.infoFile), { recursive: true });
   writeFileSync(
     opts.infoFile,
-    `${JSON.stringify({ url, services: forwards, env_file: AGENT_ENV, restarts_on_change: url !== null, log: join(logDir, "app.log") }, null, 2)}\n`,
+    `${JSON.stringify(
+      {
+        url,
+        services: forwards,
+        env_file: AGENT_ENV,
+        restarts_on_change: url !== null,
+        log: join(logDir, "app.log"),
+        session_file: sessionFile,
+        ...(signInNote === null ? {} : { sign_in_problem: signInNote }),
+      },
+      null,
+      2,
+    )}\n`,
   );
   return { url, services: forwards };
 }

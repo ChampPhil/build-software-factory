@@ -36,6 +36,7 @@ export interface Policy {
     readonly requires: "trusted_human_approval";
     readonly detects: readonly WeakeningKind[];
   };
+  readonly sandbox_repairs?: "automatic" | "reviewed";
   readonly protected_files?: {
     readonly policy: "request-review" | "blocked" | "fallback-to-issue" | "allowed";
     readonly exclude: Readonly<Record<string, readonly string[]>>;

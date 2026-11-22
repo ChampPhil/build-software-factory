@@ -294,14 +294,72 @@ genuinely work:
 - **`inert`** — present so the app starts; any path needing it will not work
   here. Use it last, only once `service` and `stub` (with `hosts` where the
   address is fixed) are both impossible, and list what it costs under
-  `capabilities.not_exercised`. Sign-in is not a reason for `inert`: an
-  identity provider can be stubbed like any other, so the pages behind
-  sign-in can be seen.
+  `capabilities.not_exercised`. Sign-in is never a reason for `inert`: see
+  "Sign-in" below.
 
 **No credential of the owner's goes in the sandbox.** Not a real database
 URL, not a real API key, not a production origin. The environment is closed:
 the sandbox gives the app exactly your list and nothing else, so a variable
 you miss makes the app fail loudly rather than quietly reach something real.
+
+## Every dependency, its stand-in, and its proof
+
+A sandbox whose home page answers can still be useless: every page behind
+sign-in redirects away, the database is never reached, the stubbed API is
+never called. So list in `dependencies` **everything outside the app's own
+code that it needs to work** — sign-in, each database or cache, email,
+payments, each outside API, storage, queues — from what you read, not just
+what crashed:
+
+```json
+{ "name": "Postgres", "kind": "database", "stand_in": "service",
+  "probe": { "path": "/teams/varsity-soccer", "signed_in": true, "expect_text": "Roster" },
+  "why": "team pages read follows and users from it" }
+```
+
+`stand_in` is how the sandbox stands in for it, simplest first: the app's own
+`test_mode`; a `session` (sign-in, below); a `service` you run; a `stub`;
+`inert` last. `probe` is a request to the running app that **only succeeds
+when that stand-in works**: a page that reads the database, a page that calls
+the stubbed API and shows what it returned. The trial sends it, follows the
+app's own redirects, and passes it only when the app ends on that same path
+with a 2xx (and `expect_text`, if given). Pick a probe that would fail if the
+stand-in were missing. Use `null` only when no request can show it (an email
+sent only by a scheduled job), and say so in `why`.
+
+A round is not done until every probe passes. What still fails after the last
+round is frozen as not exercised, with what happened, so no role is told the
+sandbox can do something it cannot.
+
+## Sign-in
+
+The roles check the app in a browser that runs **inside their own sandbox**.
+It reaches the app, and nothing else: an identity provider's pages
+(accounts.google.com, a Clerk or Auth0 tenant, GitHub's OAuth screen) never
+load there, stubbed or not. So the roles never sign in through the provider.
+They are handed a session instead.
+
+When any page needs a signed-in user, write `sign_in`: a command that prints
+a session for a throwaway test user, made **the way the app's own auth makes
+one**, as JSON on its last lines:
+
+```json
+{ "cookies": [{ "name": "authjs.session-token", "value": "…", "httpOnly": true, "sameSite": "Lax" }] }
+```
+
+Read the app's auth code and do exactly what it does after a successful
+sign-in: insert the user and a session row into the sandbox database (a
+database session), or sign a token with the sandbox's own secret (a JWT
+session, using the library the app already depends on), or call a test-only
+sign-in the app offers in development. Create the test user in the same
+command or in `commands.seed`. The secret is the sandbox's own `self` value,
+never the owner's. Put any script it runs under `stubs/sign-in/` (it lands in
+`.factory/sandbox/stubs/sign-in/`) and run it from the repo root, in the
+sandbox's environment, after the app is up. The runner sets each cookie's
+domain; leave it out.
+
+Then give sign-in its own dependency (`"kind": "sign_in"`, `"stand_in":
+"session"`) whose probe is a page behind sign-in with `"signed_in": true`.
 
 ## Prove what you can, then claim honestly
 
@@ -399,12 +457,28 @@ git diff > /tmp/gh-aw/agent/bsf/setup/guardrails.patch
 
 `previous/` holds the last round's design (`setup-round-*`) and what the trial
 measured (`trial-round-*/trial.json`): each step's command, whether it passed,
-and the last lines of its output. Read the failing step's output, change the
-smallest thing that explains it, and write the whole manifest again.
+and the last lines of its output, then `sign_in` and each dependency's probe
+in `probes`, with what the app did. Read the failing step's output or probe's
+detail, change the smallest thing that explains it, and write the whole
+manifest again.
 
 ## If this is an amendment
 
 `amend.json` holds `reports`: one or more reports from roles that could not
 exercise what a change needed. Several may describe the same shortfall in
-different words; treat them as one need. Start from the current `.factory/sandbox/manifest.json` and extend it
-to cover what the report asks for. Keep everything that already works.
+different words; treat them as one need. Start from the current
+`.factory/sandbox/manifest.json` and extend it to cover what the reports ask
+for. Keep everything that already works: its stand-ins, its `sign_in`, and
+every probe that passes today.
+
+Find the cause, not the symptom. A role that could not reach a provider's
+sign-in page needs a `sign_in` session, not a better stub of the provider. A
+role that could not start the app needs the run command fixed, not
+instructions to start it differently. Add a dependency and probe for what was
+missing, so the trial proves the repair.
+
+An amendment merges itself, with no person, when it changes only the sandbox,
+adds no host to `egress` and no secret to `env`, and its trial proves at least
+what the current sandbox does. Stay inside that whenever you can; if the
+repair truly needs a new host or a provider's test-mode secret, it waits for
+a person, so say in the report exactly what they must add and why.

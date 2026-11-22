@@ -21,14 +21,21 @@ says how far verification can go, measured rather than claimed.
      the documentation hosts of the repo's stack.
    - **Trial.** `bsf sandbox trial`, on the runner where Docker is, brings up
      exactly what the candidate declares, runs install, build and test,
-     starts the app, waits for `app_url`, and screenshots it. It records the
-     tier actually reached and the last lines of every step's output.
-   - **Again, if it fell short.** The next design round reads the failing
-     step's output and changes the smallest thing that explains it. Three
-     rounds at most.
-   - **Freeze.** `bsf sandbox freeze` takes the best measured round and
-     writes its manifest at the tier the trial reached, with every round on
-     the record. The job opens the setup PR.
+     starts the app, waits for `app_url`, and screenshots it. Then it proves
+     the sandbox matches the app: it runs `sign_in`, if the app has sign-in,
+     to mint a session for a test user, and sends each dependency's probe
+     (sign-in, each database, each outside API) to the running app. It
+     records the tier reached, every probe, and the last lines of every
+     step's output.
+   - **Again, if it fell short.** A round is done when it reached the tier
+     it claimed and every probe passed. Otherwise the next design round reads
+     the failing step or probe and changes the smallest thing that explains
+     it. Three rounds at most.
+   - **Freeze.** `bsf sandbox freeze` takes the best measured round (highest
+     tier, then most proven) and writes its manifest at the tier the trial
+     reached. Every dependency it could not prove is listed as not exercised,
+     with what happened, and a `sign_in` that minted nothing is dropped. The
+     job opens the setup PR.
 3. **The user merges it.** The factory exists from that commit.
 
 ## Why it is built this way
@@ -78,13 +85,35 @@ starts its services, writes the closed environment to
 install. The builder and verifier source that file, start the app with the
 manifest's `run` command, and use the browser at `app_url`.
 
+Where the sandbox needs the runner (services, stubs at a third party's own
+address, or sign-in), the app runs there instead and the roles reach it at
+the address in `app.json`. Their browser reaches the app and nothing else,
+so it never signs in through an identity provider: the runner mints a
+session with `sign_in` and hands it over as `session.json`, which the role
+loads with `playwright-cli state-load`.
+
 ## When the sandbox is not enough
 
 A builder or verifier that cannot exercise what a change needs writes a
 structured report: what it needed, which paths, why. That report dispatches
 `factory-setup` with `amend` set; the next episode starts from the current
 manifest, extends it, and opens an amendment PR. That is the only way the
-sandbox changes after setup.
+sandbox changes after setup, and it needs no person:
+
+- **When.** At once, unless the reporter says the need comes from the change
+  itself (`needs_the_change`, a test runner the PR adds); then it waits for
+  that change to merge. One amendment at a time.
+- **Merging.** `bsf sandbox land` merges the amendment itself when it
+  changes only `.factory/sandbox/`, reaches no new host, needs no new
+  secret, and its trial proves at least what main's sandbox did. Anything
+  else waits for the user, with a comment saying which condition stopped
+  it. `sandbox_repairs: reviewed` in `policy.yaml` makes every amendment
+  wait.
+- **After.** The changes that reported the need are verified again against
+  the new sandbox (the `factory:verify` label).
+- **When it does not work.** A need reported again after its repair landed
+  is tried once more. After two amendments, it is put to the user as one
+  issue saying what is missing, and not retried.
 
 ## Commands with side effects
 

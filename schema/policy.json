@@ -245,6 +245,14 @@
           }
         }
       }
+    },
+    "sandbox_repairs": {
+      "description": "What happens to an amendment of the sandbox that a role's report started. automatic (the default): it merges itself when it changes only .factory/sandbox/, reaches no new host and needs no new secret, and its trial proves at least what main's sandbox did; otherwise it waits for a person like any protected change. reviewed: every amendment waits for a person.",
+      "type": "string",
+      "enum": [
+        "automatic",
+        "reviewed"
+      ]
     }
   },
   "$defs": {

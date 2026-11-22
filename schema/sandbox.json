@@ -437,6 +437,121 @@
           }
         }
       }
+    },
+    "dependencies": {
+      "description": "Everything outside its own code the app needs to work, each with the stand-in the sandbox uses and the request that proves the stand-in works. The trial runs every probe; a dependency whose probe fails, or that has none, is not exercised, and the freeze lists it under capabilities.not_exercised.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "kind",
+          "stand_in",
+          "probe",
+          "why"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "sign_in",
+              "database",
+              "cache",
+              "email",
+              "payments",
+              "api",
+              "storage",
+              "queue",
+              "other"
+            ]
+          },
+          "stand_in": {
+            "type": "string",
+            "enum": [
+              "test_mode",
+              "session",
+              "service",
+              "stub",
+              "inert"
+            ]
+          },
+          "probe": {
+            "oneOf": [
+              {
+                "description": "How the trial proves this dependency works in the sandbox: a request to the running app that only succeeds when the stand-in works. It passes when the app answers 2xx at this same path, without redirecting elsewhere, and shows expect_text if given.",
+                "type": "object",
+                "required": [
+                  "path",
+                  "signed_in"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "path": {
+                    "type": "string",
+                    "pattern": "^/"
+                  },
+                  "method": {
+                    "type": "string",
+                    "enum": [
+                      "GET",
+                      "POST"
+                    ]
+                  },
+                  "body": {
+                    "type": "string"
+                  },
+                  "content_type": {
+                    "type": "string"
+                  },
+                  "signed_in": {
+                    "type": "boolean",
+                    "description": "Sent with the session sign_in mints."
+                  },
+                  "expect_text": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "proven": {
+            "type": "boolean",
+            "description": "Set by the freeze from the trial: whether the probe passed."
+          },
+          "why": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "sign_in": {
+      "description": "How the roles get a signed-in session without going through the identity provider, whose pages their browser cannot reach. The command runs from the repo root in the sandbox's environment once the app answers, and prints JSON: {\"cookies\": [{\"name\", \"value\", \"path\"?, \"httpOnly\"?, \"secure\"?, \"sameSite\"?}]} \u2014 a session for a throwaway test user, made the way the app's own auth makes one (a row in the sandbox database, a token signed with the sandbox's own secret). The runner sets each cookie's domain.",
+      "type": "object",
+      "required": [
+        "command",
+        "why"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "type": "string",
+          "minLength": 1
+        },
+        "why": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
     }
   }
 }

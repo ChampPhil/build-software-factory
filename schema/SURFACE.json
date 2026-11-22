@@ -1,5 +1,5 @@
 {
-  "frozen_at": "2026-11-21",
+  "frozen_at": "2026-11-22",
   "schema_major": 1,
   "note": "The shape of every schema at the frozen major. `bsf schema-surface --check` compares the live schemas against this and fails on a breaking change. Regenerate with `bsf schema-surface --freeze` only alongside an additive change, or alongside a major bump that ships a migration in `bsf migrate`.",
   "surface": {
@@ -1530,6 +1530,7 @@
           "pipelines",
           "protected_files",
           "runner_upgrades",
+          "sandbox_repairs",
           "schema",
           "tests",
           "trust",
@@ -1802,6 +1803,13 @@
       },
       "/properties/protected_files/properties/exclude/properties/conflict": {
         "ref": "#/$defs/protectedExcludeList"
+      },
+      "/properties/sandbox_repairs": {
+        "type": "string",
+        "enum": [
+          "\"automatic\"",
+          "\"reviewed\""
+        ]
       },
       "/$defs/pipelineRule": {
         "type": "object",
@@ -2882,6 +2890,7 @@
           "capabilities",
           "commands",
           "coverage_report",
+          "dependencies",
           "dropped",
           "egress",
           "env",
@@ -2889,6 +2898,7 @@
           "frozen_at",
           "schema",
           "services",
+          "sign_in",
           "static_checks",
           "stubs",
           "tier",
@@ -3318,6 +3328,126 @@
       },
       "/properties/static_checks/items/properties/why": {
         "type": "string"
+      },
+      "/properties/dependencies": {
+        "type": "array"
+      },
+      "/properties/dependencies/items": {
+        "type": "object",
+        "properties": [
+          "kind",
+          "name",
+          "probe",
+          "proven",
+          "stand_in",
+          "why"
+        ],
+        "required": [
+          "kind",
+          "name",
+          "probe",
+          "stand_in",
+          "why"
+        ],
+        "additionalProperties": false
+      },
+      "/properties/dependencies/items/properties/name": {
+        "type": "string",
+        "minLength": 1
+      },
+      "/properties/dependencies/items/properties/kind": {
+        "type": "string",
+        "enum": [
+          "\"api\"",
+          "\"cache\"",
+          "\"database\"",
+          "\"email\"",
+          "\"other\"",
+          "\"payments\"",
+          "\"queue\"",
+          "\"sign_in\"",
+          "\"storage\""
+        ]
+      },
+      "/properties/dependencies/items/properties/stand_in": {
+        "type": "string",
+        "enum": [
+          "\"inert\"",
+          "\"service\"",
+          "\"session\"",
+          "\"stub\"",
+          "\"test_mode\""
+        ]
+      },
+      "/properties/dependencies/items/properties/probe/oneOf/0": {
+        "type": "object",
+        "properties": [
+          "body",
+          "content_type",
+          "expect_text",
+          "method",
+          "path",
+          "signed_in"
+        ],
+        "required": [
+          "path",
+          "signed_in"
+        ],
+        "additionalProperties": false
+      },
+      "/properties/dependencies/items/properties/probe/oneOf/0/properties/path": {
+        "type": "string",
+        "pattern": "^/"
+      },
+      "/properties/dependencies/items/properties/probe/oneOf/0/properties/method": {
+        "type": "string",
+        "enum": [
+          "\"GET\"",
+          "\"POST\""
+        ]
+      },
+      "/properties/dependencies/items/properties/probe/oneOf/0/properties/body": {
+        "type": "string"
+      },
+      "/properties/dependencies/items/properties/probe/oneOf/0/properties/content_type": {
+        "type": "string"
+      },
+      "/properties/dependencies/items/properties/probe/oneOf/0/properties/signed_in": {
+        "type": "boolean"
+      },
+      "/properties/dependencies/items/properties/probe/oneOf/0/properties/expect_text": {
+        "type": "string",
+        "minLength": 1
+      },
+      "/properties/dependencies/items/properties/probe/oneOf/1": {
+        "type": "null"
+      },
+      "/properties/dependencies/items/properties/proven": {
+        "type": "boolean"
+      },
+      "/properties/dependencies/items/properties/why": {
+        "type": "string",
+        "minLength": 1
+      },
+      "/properties/sign_in": {
+        "type": "object",
+        "properties": [
+          "command",
+          "why"
+        ],
+        "required": [
+          "command",
+          "why"
+        ],
+        "additionalProperties": false
+      },
+      "/properties/sign_in/properties/command": {
+        "type": "string",
+        "minLength": 1
+      },
+      "/properties/sign_in/properties/why": {
+        "type": "string",
+        "minLength": 1
       }
     },
     "step-report.json": {

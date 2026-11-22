@@ -50,7 +50,7 @@ import {
   measuredUsd, detectionUsd, canStart, type BudgetDoc, type BudgetLimits, type BudgetMeasure,
 } from "./commands/budget.js";
 import { loadFactory, trustedRoot } from "./lib/config.js";
-import { startSandbox, loadManifest, loadManifestAt, trialSandbox, freezeManifest, needsHost, serveOnHost, closedEnv } from "./commands/sandbox.js";
+import { startSandbox, loadManifest, loadManifestAt, trialSandbox, freezeManifest, needsHost, serveOnHost, closedEnv, trialMet } from "./commands/sandbox.js";
 import { fetchWorkItem, writeSpec, fetchArtifact, storeMedia } from "./commands/role-io.js";
 import { gardenScan, gardenFile, hardenContext, reviewCollect, reviewWrite } from "./commands/role-steps.js";
 import { runTestsGate } from "./commands/tests-gate.js";
@@ -249,9 +249,11 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
   bsf sandbox check [--file PATH]
       Validate a sandbox manifest.
   bsf sandbox trial --candidate PATH --out PATH
-      Run a candidate manifest and record the tier it actually reaches.
+      Run a candidate manifest: the tier it actually reaches, its sign-in, and each dependency's probe.
   bsf sandbox freeze --rounds CANDIDATE:TRIAL[,...] --out PATH
-      Write the manifest from the best measured round, at the tier it reached.
+      Write the manifest from the best measured round, at the tier it reached, with what it proved.
+  bsf sandbox land --pr N --main PATH --candidate PATH   (AMEND in the environment)
+      Merge a sandbox amendment when it is safe to, and verify again the changes it was for.
   bsf models
       Emit each role's model and the gardening budget from factory.yaml as step outputs.
   bsf consistency [--root PATH] [--json]
@@ -1932,7 +1934,9 @@ async function sandboxCommandCli(second: string | undefined, args: Args): Promis
     });
     setOutput("reached", r.reached);
     setOutput("claimed", r.claimed);
-    setOutput("met", String(r.reached === r.claimed));
+    // Met: the tier claimed, and every dependency proven. Short of either,
+    // the next round reads what failed and tries again.
+    setOutput("met", String(trialMet(r)));
     // A trial that ran is a success even when it fell short: its report is
     // the output, and the next design round reads it.
     return 0;
@@ -1955,7 +1959,55 @@ async function sandboxCommandCli(second: string | undefined, args: Args): Promis
     setOutput("chosen", String(chosen + 1));
     return 0;
   }
-  die("usage: bsf sandbox start | check | trial | freeze");
+  if (second === "land") {
+    // `bsf sandbox land --pr N --main PATH --candidate PATH`, with the
+    // amendment request in AMEND: merge the amendment when it is safe to,
+    // and verify again the changes that were stuck on the old sandbox.
+    const pr = Number(args["pr"]);
+    const mainPath = args["main"];
+    const candidatePath = args["candidate"];
+    if (!Number.isInteger(pr) || pr <= 0 || typeof candidatePath !== "string") {
+      die("usage: bsf sandbox land --pr N --main PATH --candidate PATH");
+    }
+    const amendRaw = process.env["AMEND"] ?? "";
+    if (amendRaw.trim() === "") {
+      process.stdout.write("first setup: a person reviews it\n");
+      return 0;
+    }
+    const candidate = loadManifestAt(candidatePath);
+    if (candidate.kind !== "ok") die(`the amended manifest is not valid: ${candidate.kind}`);
+    const main = typeof mainPath === "string" ? loadManifestAt(mainPath) : ({ kind: "missing" } as const);
+    const policy = await loadPolicy(new DiskLoader(trustedRoot() ?? process.cwd())).catch(() => null);
+    let amend: import("./commands/sandbox-land.js").AmendRequest;
+    try {
+      amend = JSON.parse(amendRaw) as import("./commands/sandbox-land.js").AmendRequest;
+    } catch (e) {
+      die(`AMEND is not JSON: ${(e as Error).message}`);
+    }
+    const gh = new GitHub({ repo: requireRepo() });
+    const { FactoryStore } = await import("./lib/store.js");
+    const { landAmendment } = await import("./commands/sandbox-land.js");
+    const store = new FactoryStore(gh);
+    const now = nowIso();
+    const r = await landAmendment({
+      gh,
+      store,
+      ledger: await store.ledger(now),
+      pr,
+      input: {
+        mode: policy?.sandbox_repairs ?? "automatic",
+        main: main.kind === "ok" ? main.manifest : null,
+        candidate: candidate.manifest,
+      },
+      amend: { reports: Array.isArray(amend.reports) ? amend.reports : [] },
+      verifyLabel: typeof args["verify-label"] === "string" ? args["verify-label"] : "factory:verify",
+      now,
+      log: (l) => process.stdout.write(`${l}\n`),
+    });
+    setOutput("merged", String(r.merged));
+    return 0;
+  }
+  die("usage: bsf sandbox start | check | trial | freeze | land");
 }
 
 async function modelsCommand(): Promise<number> {

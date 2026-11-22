@@ -9,6 +9,7 @@
 #
 # Also the only way the sandbox changes afterwards: a role that could not
 # exercise what a change needed files a report, and this runs again with it.
+# Such an amendment merges itself when it is safe to (bsf sandbox land).
 name: factory-setup
 
 on:
@@ -250,6 +251,9 @@ jobs:
         run: |
           set -euo pipefail
           design="$ROUNDS_DIR/setup-round-$CHOSEN"
+          # Main's sandbox, before this round replaces it: an amendment merges
+          # itself only if it proves at least what this one did.
+          if [ -f .factory/sandbox/manifest.json ]; then cp .factory/sandbox/manifest.json "$RUNNER_TEMP/main-manifest.json"; fi
           mkdir -p .factory/sandbox .factory/definition/context
           cp "$RUNNER_TEMP/manifest.json" .factory/sandbox/manifest.json
           if [ -d "$design/stubs" ]; then rm -rf .factory/sandbox/stubs; cp -R "$design/stubs" .factory/sandbox/stubs; fi
@@ -309,4 +313,11 @@ jobs:
           if [ -f "$RUNNER_TEMP/pr-body.md.continued.md" ]; then
             gh api "repos/${GITHUB_REPOSITORY}/issues/$pr/comments" -F "body=@$RUNNER_TEMP/pr-body.md.continued.md" > /dev/null
           fi
-          bsf report check --pr "$pr" --problems "$RUNNER_TEMP/pr-body.md.problems.json"
+          report_rc=0
+          bsf report check --pr "$pr" --problems "$RUNNER_TEMP/pr-body.md.problems.json" || report_rc=$?
+          # An amendment repairs the sandbox without a person when it is safe
+          # to: only .factory/sandbox/ changes, no new host or secret, and at
+          # least what main's sandbox proved. Then the changes that were stuck
+          # on the old sandbox are verified again. First setup is reviewed.
+          bsf sandbox land --pr "$pr" --main "$RUNNER_TEMP/main-manifest.json" --candidate "$RUNNER_TEMP/manifest.json"
+          exit "$report_rc"
