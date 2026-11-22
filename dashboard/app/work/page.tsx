@@ -2,7 +2,9 @@
 
 import { useMemo, useState } from "react";
 import { readSession } from "@/lib/session";
-import { useClient, useLedger } from "@/lib/data";
+import { useClient, useLedger, useRouting } from "@/lib/data";
+import { RoutingDetail } from "@/components/routing";
+import { misRoute } from "@/lib/routing";
 import { PageHead, Empty, Note, PipelineTag, Dot } from "@/components/primitives";
 import { elapsedSince } from "@/lib/metrics";
 
@@ -19,6 +21,7 @@ export default function Work() {
   const client = useClient(auth);
   const ledger = useLedger(client, true);
   const [filter, setFilter] = useState<string>("all");
+  const routing = useRouting(client, ledger.state === "ready" ? (ledger.data?.open ?? []) : []);
 
   if (ledger.state === "loading") {
     return (<><PageHead title="Work items" /><div className="note quiet">Reading the ledger…</div></>);
@@ -30,6 +33,8 @@ export default function Work() {
   const open = ledger.data?.open ?? [];
   const recent = ledger.data?.recent ?? [];
   const pipelines = [...new Set(open.map((o) => o.pipeline))];
+  const docs = routing.state === "ready" ? routing.data : {};
+  const mis = misRoute(Object.values(docs));
   const shown = filter === "all" ? open : open.filter((o) => o.pipeline === filter);
 
   return (
@@ -59,6 +64,12 @@ export default function Work() {
         </div>
       )}
 
+      {mis.rate !== null && (
+        <div className="row-meta" style={{ marginBottom: 8 }}>
+          Moved by a person: {mis.moved} of {mis.routed} routed ({Math.round(mis.rate * 100)}%).
+        </div>
+      )}
+
       {shown.length > 0 && (
         <div className="section">
           <h2>Open · {shown.length}</h2>
@@ -76,6 +87,9 @@ export default function Work() {
                   <a className="btn" href={`https://github.com/${session.repo}/pull/${item.pr}`}>#{item.pr}</a>
                 ) : (
                   <span className="row-meta">—</span>
+                )}
+                {client !== null && docs[item.work_item] !== undefined && (
+                  <RoutingDetail client={client} doc={docs[item.work_item]!} status={item.status} />
                 )}
               </div>
             ))}

@@ -77,3 +77,21 @@ describe("a spec must show what it rests on", () => {
     expect(p[1]).toContain("without its command");
   });
 });
+
+describe("a product-work spec says whether it touches the UI", () => {
+  const spec = { research: [{ claim: "x", source: "lib/invoices.ts:1" }] };
+  it("asks for ui_change on product work", () => {
+    expect(specProblems({ ...base, pipeline: "product_work", spec }).join("\n")).toContain("ui_change");
+  });
+  it("accepts true or false", () => {
+    for (const ui_change of [true, false]) {
+      expect(specProblems({ ...base, pipeline: "product_work", spec: { ...spec, ui_change } }).join("\n")).not.toContain("ui_change");
+    }
+  });
+  it("rejects anything else", () => {
+    expect(specProblems({ ...base, pipeline: "product_work", spec: { ...spec, ui_change: "yes" } }).join("\n")).toContain("ui_change must be true or false");
+  });
+  it("does not ask on other pipelines", () => {
+    expect(specProblems({ ...base, pipeline: "gardening", spec }).join("\n")).not.toContain("ui_change");
+  });
+});

@@ -1,6 +1,9 @@
 import { createHash } from "node:crypto";
 import type { Association, Pipeline, Policy, TriggerClass } from "../lib/types.js";
 import { isTrustedActor } from "./policy.js";
+import type { Routing } from "./chief-of-staff.js";
+import { ASK_LABEL, extractGoal, TIDY_LABEL } from "./request-text.js";
+import { classifyCorrection, recordOf, workItemBody, workItemTitle, type CorrectionKind, type CorrectionRecord } from "./corrections.js";
 
 /**
  * `bsf intake` — turns every trigger into one standard work item.
@@ -15,6 +18,10 @@ export type EventKind =
   | "issue_opened" | "issue_labeled" | "issue_comment" | "review_comment"
   | "ci_failure_on_main" | "dashboard_dispatch" | "schedule_gardening"
   | "review_routed" | "conflict_detected" | "correction"
+  /** A review a person submitted on a PR: a change request, or a comment with a body. */
+  | "pr_review"
+  /** A person pushed a commit onto a factory branch. */
+  | "human_push"
   /** `/practice …` from a trusted person: a standing instruction for every agent. */
   | "practice_declared"
   /** `/retry` from a trusted person: an escalated item goes back in the queue. */
@@ -43,6 +50,12 @@ export interface IncomingEvent {
   /** For a label event: the label just added, and who added it. */
   readonly label_added?: string;
   readonly labeled_by?: string;
+  /** For a `pr_review`: GitHub's state for it, `CHANGES_REQUESTED` or `COMMENTED`. */
+  readonly review_state?: string;
+  /** The comment, review or commit this event came from, so a hardening PR can link back to it. */
+  readonly url?: string;
+  /** For a `human_push`: the files the person changed. */
+  readonly files?: readonly string[];
 }
 
 export interface WorkItemDraft {
@@ -61,12 +74,18 @@ export interface WorkItemDraft {
   readonly body: string | null;
   readonly priority: "high" | "normal";
   readonly fingerprint: string;
-  readonly status: "queued" | "waiting_trust";
+  readonly status: "queued" | "waiting_trust" | "needs_info";
   readonly runs: readonly string[];
   readonly pr: number | null;
   readonly parent: string | null;
   readonly related: readonly string[];
   readonly spec: null;
+  /** What should be true when this is done, as the person wrote it. Absent when they gave none. */
+  readonly goal?: string;
+  /** One concrete check that proves the goal, written by the chief of staff. */
+  readonly success_check?: string;
+  /** Who chose the pipeline, and why. */
+  readonly routing?: Routing;
 }
 
 export interface IntakeDecision {
@@ -80,13 +99,25 @@ export interface IntakeDecision {
     | "ignored_fork"
     | "ignored_trigger_disabled"
     | "ignored_untrusted_practice"
+    /** A trusted person asked, in words, for a change to the factory's setup. Kept on the issue; no work item, no run. */
+    | "settings_request"
+    | "ignored_untrusted_ask"
     | "ignored_bot"
     | "context_for_open_item"
     | "answers_open_item"
     | "admits_open_item"
     | "retries_open_item"
-    | "ignored_untrusted_retry";
+    | "ignored_untrusted_retry"
+    /** A person's correction on a factory PR became a hardening work item. */
+    | "correction_captured"
+    | "not_a_correction"
+    | "ignored_untrusted_correction"
+    | "ignored_not_factory_pr";
   readonly reason: string;
+  /** For `correction_captured`: what to write on the run it corrects. */
+  readonly correction?: CorrectionRecord;
+  /** For `correction_captured` and a revision: the work item whose PR it was said on. */
+  readonly correctedItem?: string;
   /** The open item an answer or an admission applies to. */
   readonly openItem?: string;
   /** Open items whose fingerprint is close enough to be worth triage's attention. */
@@ -124,6 +155,13 @@ export interface IntakeContext {
   readonly openItems: readonly LedgerOpenItem[];
   /** Items merged recently, for the follow-up rule. */
   readonly recentlyMerged?: readonly { readonly work_item: string; readonly fingerprint?: string; readonly pr?: number }[];
+  /**
+   * The factory PRs people are speaking on, by PR number: whose work item
+   * made each, and in which pipeline. Present when intake could look, and then
+   * it decides what a comment on a PR is; absent, a comment on a PR is only a
+   * revision of that PR, as before.
+   */
+  readonly prItems?: Readonly<Record<string, { readonly work_item: string; readonly pipeline: Pipeline }>>;
   /** Injected so ids are deterministic in tests. */
   readonly newId: (event: IncomingEvent) => string;
 }
@@ -136,6 +174,8 @@ const ROUTE: Readonly<Record<EventKind, { pipeline: Pipeline; cls: TriggerClass;
   dashboard_dispatch: { pipeline: "product_work", cls: "request" },
   ci_failure_on_main: { pipeline: "product_work", cls: "dev_event", priority: "high" },
   review_comment: { pipeline: "product_work", cls: "dev_event" },
+  pr_review: { pipeline: "hardening", cls: "self" },
+  human_push: { pipeline: "hardening", cls: "self" },
   correction: { pipeline: "hardening", cls: "self" },
   // A practice changes what every agent reads, which is the definition.
   practice_declared: { pipeline: "definition", cls: "request" },
@@ -211,6 +251,7 @@ function triggerEnabled(ctx: IntakeContext, kind: EventKind): boolean {
       return ctx.triggers.issues;
     case "issue_comment":
     case "review_comment":
+    case "pr_review":
       return ctx.triggers.comments;
     case "ci_failure_on_main":
       return ctx.triggers.ci_failure_on_main;
@@ -234,7 +275,12 @@ function decide(incoming: IncomingEvent, ctx: IntakeContext): IntakeDecision {
         incoming.kind === "issue_opened" && (incoming.labels ?? []).includes(hardenLabel)
         ? { ...incoming, kind: "correction" }
         : incoming;
-  const route = ROUTE[event.kind];
+  // A request made with the tidy form arrives already labelled: it is
+  // gardening work a person asked for, not a bug or a feature.
+  const tidy = event.kind === "issue_opened" && (event.labels ?? []).includes(TIDY_LABEL);
+  const route: { pipeline: Pipeline; cls: TriggerClass; priority?: "high" } = tidy
+    ? { pipeline: "gardening", cls: "request" }
+    : ROUTE[event.kind];
 
   if (event.from_fork === true) {
     return { event, workItem: null, outcome: "ignored_fork", reason: "fork events never start agent work", duplicateShortlist: [] };
@@ -245,7 +291,7 @@ function decide(incoming: IncomingEvent, ctx: IntakeContext): IntakeDecision {
   }
 
   // A review comment on a factory PR is a revision of that PR's run, not a new item.
-  if (event.kind === "review_comment" && event.pr !== undefined) {
+  if (event.kind === "review_comment" && event.pr !== undefined && ctx.prItems === undefined) {
     return {
       event, workItem: null, outcome: "revision_of_existing_run",
       reason: `review comment on PR #${event.pr} goes back to that PR's run as a revision`,
@@ -278,6 +324,24 @@ function decide(incoming: IncomingEvent, ctx: IntakeContext): IntakeDecision {
       reason: `${event.actor} is not trusted to set practices; only maintainers can`,
       duplicateShortlist: [],
     };
+  }
+
+  // A request to change how the factory is set up is not product work, and an
+  // agent must not try it: it stays on its issue until the setup skill makes
+  // the change as a pull request. Only a trusted person's counts.
+  const asks =
+    (incoming.kind === "issue_opened" && (incoming.labels ?? []).includes(ASK_LABEL)) ||
+    (incoming.kind === "issue_labeled" && incoming.label_added === ASK_LABEL);
+  if (asks) {
+    const by = incoming.kind === "issue_labeled" ? (incoming.labeled_by ?? incoming.actor) : incoming.actor;
+    const asker = incoming.kind === "issue_labeled" ? "MEMBER" : incoming.actor_association;
+    return isTrustedActor(ctx.policy, by, asker, { isBot: incoming.actor_is_bot === true })
+      ? { event, workItem: null, outcome: "settings_request", reason: `${by} asked for a change to the factory's setup`, duplicateShortlist: [] }
+      : { event, workItem: null, outcome: "ignored_untrusted_ask", reason: `${by} is not trusted to change the factory's setup`, duplicateShortlist: [] };
+  }
+
+  if (event.pr !== undefined && ctx.prItems !== undefined && (event.kind === "review_comment" || event.kind === "pr_review" || event.kind === "human_push")) {
+    return decidePrCorrection(event, ctx, trusted);
   }
 
   const accepted = (event.labels ?? []).includes(ctx.policy.trust.accept_label);
@@ -352,6 +416,10 @@ function decide(incoming: IncomingEvent, ctx: IntakeContext): IntakeDecision {
 
   const related = relatedMerged(fp, ctx);
 
+  // The goal is read from the author's own words, so it is kept only from
+  // someone whose text the factory reads at all.
+  const goal = trusted || accepted ? extractGoal(event.body) : null;
+
   const item: WorkItemDraft = {
     schema: "work-item/1",
     id: ctx.newId(event),
@@ -374,6 +442,7 @@ function decide(incoming: IncomingEvent, ctx: IntakeContext): IntakeDecision {
     parent: null,
     related,
     spec: null,
+    ...(goal === null ? {} : { goal }),
   };
 
   if (!trusted && !accepted) {
@@ -394,6 +463,102 @@ function decide(incoming: IncomingEvent, ctx: IntakeContext): IntakeDecision {
 }
 
 /**
+ * What a person's words or push on a factory PR are.
+ *
+ * Every correction becomes a hardening work item, without a label and without
+ * waiting for a repeat. Three things keep that from running away. A comment on
+ * a hardening or definition PR is a review of that change, so it never raises
+ * another correction (a comment on a rule would otherwise start another rule,
+ * without end). Only trusted people's words count, because a correction goes
+ * to an agent. And a correction that matches one already open folds into it.
+ */
+function decidePrCorrection(event: IncomingEvent, ctx: IntakeContext, trusted: boolean): IntakeDecision {
+  const pr = event.pr!;
+  const target = ctx.prItems?.[String(pr)];
+  if (target === undefined) {
+    return {
+      event, workItem: null, outcome: event.kind === "review_comment" ? "revision_of_existing_run" : "ignored_not_factory_pr",
+      reason: `PR #${pr} is not one the factory opened, so nothing there is a correction of it`,
+      duplicateShortlist: [],
+    };
+  }
+  if (target.pipeline === "hardening" || target.pipeline === "definition") {
+    return {
+      event, workItem: null, outcome: "revision_of_existing_run", correctedItem: target.work_item,
+      reason: `PR #${pr} is a ${target.pipeline} change, so what a person says there reviews it and does not raise a new correction`,
+      duplicateShortlist: [],
+    };
+  }
+  if (!trusted) {
+    return {
+      event, workItem: null, outcome: "ignored_untrusted_correction", correctedItem: target.work_item,
+      reason: `${event.actor} is not trusted, and a correction goes to an agent`,
+      duplicateShortlist: [],
+    };
+  }
+
+  const kind: CorrectionKind =
+    event.kind === "human_push" ? "human_push" : event.kind === "pr_review" && event.review_state === "CHANGES_REQUESTED" ? "change_request" : "review_comment";
+  const text = event.kind === "human_push" ? pushText(event) : (event.body ?? "");
+  const verdict = classifyCorrection(text, kind);
+  if (!verdict.correction) {
+    return {
+      event, workItem: null, outcome: event.kind === "review_comment" ? "revision_of_existing_run" : "not_a_correction",
+      correctedItem: target.work_item,
+      reason: `not a correction: ${verdict.why}`,
+      duplicateShortlist: [],
+    };
+  }
+
+  const record = recordOf({ at: event.at, by: event.actor, kind, text, ...(event.url === undefined ? {} : { url: event.url }) });
+  const title = workItemTitle(record, pr);
+  const body = workItemBody(record, { pr, parent: target.work_item });
+  const fp = fingerprint({ title: record.text, body: "", area: event.touched_area });
+  const folded = ctx.openItems.find((o) => o.pipeline === "hardening" && o.fingerprint === fp);
+  if (folded !== undefined) {
+    return {
+      event, workItem: null, outcome: "context_for_open_item", openItem: folded.work_item, correction: record, correctedItem: target.work_item,
+      reason: `${folded.work_item} is already hardening against this same correction`,
+      duplicateShortlist: [],
+    };
+  }
+
+  const item: WorkItemDraft = {
+    schema: "work-item/1",
+    id: ctx.newId(event),
+    created_at: event.at,
+    source: { kind: "correction", ref: `#${pr}`, actor: event.actor, via: null },
+    trigger_class: "self",
+    pipeline: "hardening",
+    title,
+    body,
+    priority: "normal",
+    fingerprint: fp,
+    status: "queued",
+    runs: [],
+    // Not the corrected PR: this item's own PR, once it opens one, is what
+    // a later comment is judged against. The PR it answers is in `source.ref`.
+    pr: null,
+    parent: target.work_item,
+    related: [target.work_item],
+    spec: null,
+  };
+  return {
+    event, workItem: item, outcome: "correction_captured", correction: record, correctedItem: target.work_item,
+    reason: `${event.actor}'s ${kind.replace(/_/g, " ")} on #${pr} corrects ${target.work_item}, so it goes to hardening`,
+    duplicateShortlist: shortlistDuplicates(fp, ctx),
+  };
+}
+
+function pushText(event: IncomingEvent): string {
+  const files = event.files ?? [];
+  const head = (event.body ?? "").trim();
+  const shown = files.slice(0, 12).join(", ");
+  const more = files.length > 12 ? ` and ${files.length - 12} more` : "";
+  return `${head === "" ? "A person pushed a commit to the branch." : head}${files.length === 0 ? "" : `\nFiles changed: ${shown}${more}`}`;
+}
+
+/**
  * The `source.kind` the work-item schema allows, for each event kind the
  * factory routes on. Two vocabularies exist because one names the trigger and
  * the other names the origin; exported so every writer uses this mapping
@@ -411,6 +576,8 @@ export function sourceKind(kind: EventKind): string {
     case "review_routed": return "review";
     case "conflict_detected": return "conflict";
     case "correction": return "correction";
+    case "pr_review":
+    case "human_push": return "correction";
     case "practice_declared": return "practice";
     case "retry_requested": return "dashboard";
   }

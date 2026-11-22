@@ -1,217 +1,227 @@
 /**
- * The sign-in Worker.
+ * "Sign in with GitHub", the server half.
  *
- * It does one thing: exchange a GitHub OAuth `code` for an access token, which
- * a static site cannot do itself because the exchange needs the app's client
- * secret. It stores nothing — no tokens, no user ids, no logs of either — and
- * it holds no database. If this Worker is never deployed, the dashboard still
- * works; the user pastes a fine-grained token instead (doc 08).
+ * It runs as a Cloudflare Pages Function on the dashboard's own address
+ * (`functions/api/auth/[[route]].ts` hands every request here), so the browser
+ * only ever talks to the site it is already on. That removes the usual
+ * hazards of a token-minting endpoint: there is no cross-origin access to
+ * allow, no list of origins to keep right, and the callback address is the
+ * site's own, never one a caller names.
  *
- * Everything here exists because of one risk: a token-minting endpoint that
- * anyone can call from anywhere is an open redirect for credentials. So the
- * origin is checked against an allowlist, the `state` is verified, the code is
- * single-use, and the response goes back to the browser that asked rather than
- * to any URL a caller names.
+ * What it does is the one step a static page cannot: GitHub's token exchange
+ * needs the app's client secret, and GitHub does not answer cross-origin
+ * requests to it. It stores nothing: no tokens, no user ids, no database, no
+ * logs of either. If it is not configured the sign-in page does not show the
+ * button, and the token form (doc 08) is all there is.
+ *
+ * Tokens are GitHub App user tokens. They carry no scopes: what one can do is
+ * what the app was given AND what the person can do, on the repositories the
+ * app is installed on. They last 8 hours and come with a refresh token.
  */
 
 export interface Env {
-  /** The OAuth app's client id. Not a secret. */
-  GITHUB_CLIENT_ID: string;
-  /** The OAuth app's client secret. A Worker secret, never in code. */
-  GITHUB_CLIENT_SECRET: string;
-  /**
-   * Comma-separated origins allowed to call this Worker — the dashboard's own
-   * origins and nothing else. Without this, any page anywhere could mint
-   * tokens through it.
-   */
-  ALLOWED_ORIGINS: string;
+  /** The GitHub App's client id (not its app id). Not a secret. */
+  GITHUB_APP_CLIENT_ID?: string | undefined;
+  /** The app's client secret. A Pages secret, never in code. */
+  GITHUB_APP_CLIENT_SECRET?: string | undefined;
+  /** The app's slug, from its public address, for the install link. Not a secret. */
+  GITHUB_APP_SLUG?: string | undefined;
 }
 
+const API = "/api/auth";
+const GITHUB_AUTHORIZE = "https://github.com/login/oauth/authorize";
 const GITHUB_TOKEN_URL = "https://github.com/login/oauth/access_token";
 
-/** The scopes the dashboard needs, and no more (doc 08). */
-export const SCOPES = "repo";
+/** The route a request is for, or null when it is not under /api/auth. */
+function routeOf(url: URL): string | null {
+  if (url.pathname === API) return "/";
+  return url.pathname.startsWith(`${API}/`) ? url.pathname.slice(API.length) : null;
+}
 
-interface TokenResponse {
-  access_token?: string;
-  token_type?: string;
-  scope?: string;
-  error?: string;
-  error_description?: string;
+const SLUG = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/;
+const STATE = /^[A-Za-z0-9_-]{16,128}$/;
+/** A PKCE challenge is the unpadded base64url of a SHA-256: always 43 characters. */
+const CHALLENGE = /^[A-Za-z0-9_-]{43}$/;
+/** RFC 7636: 43 to 128 characters from this set. */
+const VERIFIER = /^[A-Za-z0-9._~-]{43,128}$/;
+const REFRESH_TOKEN = /^ghr_[A-Za-z0-9_]{20,}$/;
+const CODE = /^[A-Za-z0-9_-]{8,128}$/;
+
+export function configured(env: Env): boolean {
+  const id = env.GITHUB_APP_CLIENT_ID ?? "";
+  const secret = env.GITHUB_APP_CLIENT_SECRET ?? "";
+  const slug = env.GITHUB_APP_SLUG ?? "";
+  return id !== "" && secret !== "" && SLUG.test(slug);
+}
+
+export function installUrl(env: Env): string | null {
+  const slug = env.GITHUB_APP_SLUG ?? "";
+  return SLUG.test(slug) ? `https://github.com/apps/${slug}/installations/new` : null;
+}
+
+function json(body: unknown, status = 200): Response {
+  // No CORS headers on purpose: the dashboard calls this from its own origin,
+  // and nothing else should be able to read a response that may hold a token.
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+  });
 }
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
-    const origin = request.headers.get("Origin");
-    const allowed = allowedOrigins(env);
+    const route = routeOf(url);
+    if (route === null) return json({ error: "not found" }, 404);
 
-    if (request.method === "OPTIONS") {
-      return preflight(origin, allowed);
+    if (route === "/health") return json({ ok: true });
+
+    if (route === "/config") {
+      if (request.method !== "GET") return json({ error: "use GET" }, 405);
+      // Says whether the button should exist, and nothing about the
+      // configuration beyond the public install address.
+      return configured(env) ? json({ enabled: true, install_url: installUrl(env) }) : json({ enabled: false });
     }
 
-    if (url.pathname === "/health") {
-      // No configuration is echoed: a health check that lists its own
-      // client id is a reconnaissance endpoint.
-      return json({ ok: true }, 200, origin, allowed);
+    if (route === "/start") {
+      if (request.method !== "GET") return json({ error: "use GET" }, 405);
+      return start(url, env);
     }
 
-    if (url.pathname === "/start") {
-      return start(url, env, origin, allowed);
+    if (route === "/exchange" || route === "/refresh") {
+      if (request.method !== "POST") return json({ error: "use POST" }, 405);
+      return route === "/exchange" ? exchange(request, url, env) : refresh(request, url, env);
     }
 
-    if (url.pathname === "/exchange") {
-      if (request.method !== "POST") {
-        return json({ error: "use POST" }, 405, origin, allowed);
-      }
-      return exchange(request, env, origin, allowed);
-    }
-
-    return json({ error: "not found" }, 404, origin, allowed);
+    return json({ error: "not found" }, 404);
   },
 };
 
-export function allowedOrigins(env: Env): readonly string[] {
-  return (env.ALLOWED_ORIGINS ?? "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter((s) => s !== "");
-}
-
-/** An exact origin match. A prefix or suffix test would accept a look-alike. */
-export function originAllowed(origin: string | null, allowed: readonly string[]): boolean {
-  if (origin === null) return false;
-  return allowed.includes(origin);
-}
-
-function corsHeaders(origin: string | null, allowed: readonly string[]): Record<string, string> {
-  if (!originAllowed(origin, allowed)) return {};
-  return {
-    "Access-Control-Allow-Origin": origin as string,
-    "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
-    // No credentials: the Worker holds no session, so there is nothing for a
-    // cookie to carry, and allowing them would widen what a CSRF could do.
-    Vary: "Origin",
-  };
-}
-
-function preflight(origin: string | null, allowed: readonly string[]): Response {
-  if (!originAllowed(origin, allowed)) return new Response(null, { status: 403 });
-  return new Response(null, { status: 204, headers: corsHeaders(origin, allowed) });
-}
-
-function json(body: unknown, status: number, origin: string | null, allowed: readonly string[]): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: {
-      "Content-Type": "application/json",
-      "Cache-Control": "no-store",
-      ...corsHeaders(origin, allowed),
-    },
-  });
+/** The address GitHub sends the person back to: the dashboard's own front page, and nothing a caller picks. */
+export function callbackUrl(url: URL): string {
+  return `${url.origin}/`;
 }
 
 /**
- * Hand the browser the URL to send the user to. The Worker builds it so the
- * client id and scopes live in one place, and so `redirect_uri` can be checked
- * against the allowlist before the user ever leaves.
+ * Hand the browser the address to send the person to. The client id lives
+ * here, and the callback is computed from the request, so it cannot be bent to
+ * another site.
  */
-function start(url: URL, env: Env, origin: string | null, allowed: readonly string[]): Response {
-  const redirect = url.searchParams.get("redirect_uri");
-  const state = url.searchParams.get("state");
+function start(url: URL, env: Env): Response {
+  if (!configured(env)) return json({ error: "sign-in with GitHub is not set up here" }, 503);
 
-  if (redirect === null || state === null) {
-    return json({ error: "redirect_uri and state are required" }, 400, origin, allowed);
-  }
-  // The redirect must be one of our own origins. Otherwise this endpoint
-  // would send a user to GitHub with someone else's callback attached.
-  if (!originAllowed(new URL(redirect).origin, allowed)) {
-    return json({ error: "redirect_uri is not an allowed origin" }, 403, origin, allowed);
-  }
-  if (state.length < 16) {
-    return json({ error: "state must be at least 16 characters" }, 400, origin, allowed);
-  }
+  const state = url.searchParams.get("state") ?? "";
+  const challenge = url.searchParams.get("code_challenge") ?? "";
+  if (!STATE.test(state)) return json({ error: "state must be 16 to 128 letters, digits, - or _" }, 400);
+  if (!CHALLENGE.test(challenge)) return json({ error: "code_challenge must be a 43-character SHA-256 challenge" }, 400);
 
-  const authorize = new URL("https://github.com/login/oauth/authorize");
-  authorize.searchParams.set("client_id", env.GITHUB_CLIENT_ID);
-  authorize.searchParams.set("redirect_uri", redirect);
-  authorize.searchParams.set("scope", SCOPES);
+  const authorize = new URL(GITHUB_AUTHORIZE);
+  authorize.searchParams.set("client_id", env.GITHUB_APP_CLIENT_ID as string);
+  authorize.searchParams.set("redirect_uri", callbackUrl(url));
   authorize.searchParams.set("state", state);
-  return json({ authorize_url: authorize.toString() }, 200, origin, allowed);
-}
-
-interface ExchangeBody {
-  code?: unknown;
-  redirect_uri?: unknown;
+  authorize.searchParams.set("code_challenge", challenge);
+  authorize.searchParams.set("code_challenge_method", "S256");
+  return json({ authorize_url: authorize.toString() });
 }
 
 /**
- * Exchange the code. The token goes straight back in the response body and is
- * never written anywhere: no KV, no logs, no error message that includes it.
+ * A request that would mint or renew a token must come from this site's own
+ * pages. Browsers always send Origin on a cross-site POST, so a page on
+ * another address cannot get a token through here, and a request with no
+ * Origin (a script, not a page) is turned away too.
  */
-async function exchange(
-  request: Request,
-  env: Env,
-  origin: string | null,
-  allowed: readonly string[],
-): Promise<Response> {
-  if (!originAllowed(origin, allowed)) {
-    return json({ error: "origin not allowed" }, 403, origin, allowed);
-  }
-
-  let body: ExchangeBody;
-  try {
-    body = (await request.json()) as ExchangeBody;
-  } catch {
-    return json({ error: "body must be JSON" }, 400, origin, allowed);
-  }
-
-  const code = typeof body.code === "string" ? body.code : "";
-  const redirect = typeof body.redirect_uri === "string" ? body.redirect_uri : "";
-  if (code === "" || redirect === "") {
-    return json({ error: "code and redirect_uri are required" }, 400, origin, allowed);
-  }
-  if (!originAllowed(safeOrigin(redirect), allowed)) {
-    return json({ error: "redirect_uri is not an allowed origin" }, 403, origin, allowed);
-  }
-
-  const res = await fetch(GITHUB_TOKEN_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Accept: "application/json" },
-    body: JSON.stringify({
-      client_id: env.GITHUB_CLIENT_ID,
-      client_secret: env.GITHUB_CLIENT_SECRET,
-      code,
-      redirect_uri: redirect,
-    }),
-  });
-
-  if (!res.ok) {
-    // GitHub's body can echo the code; it is not passed through.
-    return json({ error: `GitHub returned ${res.status}` }, 502, origin, allowed);
-  }
-
-  const data = (await res.json()) as TokenResponse;
-  if (data.error !== undefined || typeof data.access_token !== "string") {
-    // GitHub's own error names are safe to relay; its descriptions can
-    // include the code, so they are not.
-    return json({ error: data.error ?? "no token in GitHub's response" }, 400, origin, allowed);
-  }
-
-  return json(
-    { access_token: data.access_token, token_type: data.token_type ?? "bearer", scope: data.scope ?? SCOPES },
-    200,
-    origin,
-    allowed,
-  );
+function fromThisSite(request: Request, url: URL): boolean {
+  return request.headers.get("Origin") === url.origin;
 }
 
-/** `new URL` throws on a malformed value; a throw here would be a 500. */
-export function safeOrigin(value: string): string | null {
+async function readBody(request: Request): Promise<Record<string, unknown> | null> {
   try {
-    return new URL(value).origin;
+    const body: unknown = await request.json();
+    return typeof body === "object" && body !== null && !Array.isArray(body) ? (body as Record<string, unknown>) : null;
   } catch {
     return null;
   }
+}
+
+interface GitHubTokenResponse {
+  access_token?: unknown;
+  expires_in?: unknown;
+  refresh_token?: unknown;
+  refresh_token_expires_in?: unknown;
+  error?: unknown;
+}
+
+/** What goes back to the browser: the token fields, and nothing GitHub happened to add. */
+function tokenReply(data: GitHubTokenResponse): Response {
+  if (typeof data.error === "string" || typeof data.access_token !== "string") {
+    // GitHub's own error names are safe to relay; its descriptions can echo the
+    // code, so they are not.
+    const name = typeof data.error === "string" && /^[a-z_]{1,64}$/.test(data.error) ? data.error : "no_token";
+    return json({ error: name }, 400);
+  }
+  const reply: Record<string, unknown> = { access_token: data.access_token };
+  if (typeof data.expires_in === "number") reply["expires_in"] = data.expires_in;
+  if (typeof data.refresh_token === "string") reply["refresh_token"] = data.refresh_token;
+  if (typeof data.refresh_token_expires_in === "number") reply["refresh_token_expires_in"] = data.refresh_token_expires_in;
+  return json(reply);
+}
+
+async function callGitHub(params: Record<string, string>, env: Env): Promise<Response> {
+  let res: Response;
+  try {
+    res = await fetch(GITHUB_TOKEN_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({
+        client_id: env.GITHUB_APP_CLIENT_ID,
+        client_secret: env.GITHUB_APP_CLIENT_SECRET,
+        ...params,
+      }),
+    });
+  } catch {
+    return json({ error: "github_unreachable" }, 502);
+  }
+  // GitHub's body can echo the code; a failure is reported by status alone.
+  if (!res.ok) return json({ error: `github_${res.status}` }, 502);
+  try {
+    return tokenReply((await res.json()) as GitHubTokenResponse);
+  } catch {
+    return json({ error: "no_token" }, 502);
+  }
+}
+
+/**
+ * Trade the one-time code for a token. The token goes straight back in the
+ * response and is never written anywhere: no KV, no logs, no error message
+ * that includes it.
+ */
+async function exchange(request: Request, url: URL, env: Env): Promise<Response> {
+  if (!configured(env)) return json({ error: "sign-in with GitHub is not set up here" }, 503);
+  if (!fromThisSite(request, url)) return json({ error: "this request must come from the dashboard itself" }, 403);
+
+  const body = await readBody(request);
+  if (body === null) return json({ error: "body must be JSON" }, 400);
+  const code = typeof body["code"] === "string" ? body["code"] : "";
+  const verifier = typeof body["code_verifier"] === "string" ? body["code_verifier"] : "";
+  if (!CODE.test(code)) return json({ error: "code is missing or malformed" }, 400);
+  if (!VERIFIER.test(verifier)) return json({ error: "code_verifier is missing or malformed" }, 400);
+
+  return callGitHub({ code, code_verifier: verifier, redirect_uri: callbackUrl(url) }, env);
+}
+
+/**
+ * Renew a token with its refresh token. GitHub rotates it: the old refresh
+ * token stops working the moment this succeeds, so the browser must keep the
+ * new one.
+ */
+async function refresh(request: Request, url: URL, env: Env): Promise<Response> {
+  if (!configured(env)) return json({ error: "sign-in with GitHub is not set up here" }, 503);
+  if (!fromThisSite(request, url)) return json({ error: "this request must come from the dashboard itself" }, 403);
+
+  const body = await readBody(request);
+  if (body === null) return json({ error: "body must be JSON" }, 400);
+  const token = typeof body["refresh_token"] === "string" ? body["refresh_token"] : "";
+  if (!REFRESH_TOKEN.test(token)) return json({ error: "refresh_token is missing or malformed" }, 400);
+
+  return callGitHub({ grant_type: "refresh_token", refresh_token: token }, env);
 }

@@ -658,6 +658,7 @@
         "type": "object",
         "properties": [
           "builder",
+          "chief_of_staff",
           "gardener",
           "hardener",
           "scorer",
@@ -695,6 +696,9 @@
         "type": "string"
       },
       "/properties/models/properties/scorer": {
+        "type": "string"
+      },
+      "/properties/models/properties/chief_of_staff": {
         "type": "string"
       },
       "/properties/pipelines": {
@@ -2524,6 +2528,7 @@
           "ended_at",
           "escalated",
           "gates",
+          "human_corrections",
           "human_interactions",
           "id",
           "outcome",
@@ -2879,6 +2884,48 @@
       "/properties/human_interactions/properties/total": {
         "type": "integer",
         "minimum": 0
+      },
+      "/properties/human_corrections": {
+        "type": "array"
+      },
+      "/properties/human_corrections/items": {
+        "type": "object",
+        "properties": [
+          "at",
+          "by",
+          "kind",
+          "text",
+          "url"
+        ],
+        "required": [
+          "at",
+          "by",
+          "kind",
+          "text"
+        ],
+        "additionalProperties": false
+      },
+      "/properties/human_corrections/items/properties/at": {
+        "ref": "_common.json#/$defs/timestamp"
+      },
+      "/properties/human_corrections/items/properties/by": {
+        "type": "string"
+      },
+      "/properties/human_corrections/items/properties/kind": {
+        "type": "string",
+        "enum": [
+          "\"change_request\"",
+          "\"human_push\"",
+          "\"local_session\"",
+          "\"review_comment\""
+        ]
+      },
+      "/properties/human_corrections/items/properties/text": {
+        "type": "string",
+        "maxLength": 600
+      },
+      "/properties/human_corrections/items/properties/url": {
+        "type": "string"
       }
     },
     "sandbox.json": {
@@ -3569,6 +3616,7 @@
           "closed_at",
           "created_at",
           "fingerprint",
+          "goal",
           "id",
           "merged_at",
           "parent",
@@ -3577,11 +3625,13 @@
           "previous_prs",
           "priority",
           "related",
+          "routing",
           "runs",
           "schema",
           "source",
           "spec",
           "status",
+          "success_check",
           "title",
           "trigger_class"
         ],
@@ -3725,7 +3775,8 @@
           "plan",
           "research",
           "tests_added",
-          "tests_changed"
+          "tests_changed",
+          "ui_change"
         ],
         "required": [
           "acceptance_checks",
@@ -3755,6 +3806,9 @@
       },
       "/properties/spec/oneOf/1/properties/acceptance_checks/items": {
         "type": "string"
+      },
+      "/properties/spec/oneOf/1/properties/ui_change": {
+        "type": "boolean"
       },
       "/properties/spec/oneOf/1/properties/tests_added": {
         "type": "array"
@@ -3803,6 +3857,82 @@
       "/properties/previous_prs/items": {
         "type": "integer",
         "minimum": 1
+      },
+      "/properties/goal": {
+        "type": "null|string",
+        "maxLength": 600
+      },
+      "/properties/success_check": {
+        "type": "null|string",
+        "maxLength": 600
+      },
+      "/properties/routing": {
+        "type": "object",
+        "properties": [
+          "at",
+          "by",
+          "from",
+          "overrides",
+          "pending",
+          "reason"
+        ],
+        "required": [
+          "at",
+          "by",
+          "reason"
+        ],
+        "additionalProperties": false
+      },
+      "/properties/routing/properties/by": {
+        "enum": [
+          "\"chief_of_staff\"",
+          "\"person\"",
+          "\"table\""
+        ]
+      },
+      "/properties/routing/properties/reason": {
+        "type": "string",
+        "maxLength": 400
+      },
+      "/properties/routing/properties/at": {
+        "ref": "_common.json#/$defs/timestamp"
+      },
+      "/properties/routing/properties/from": {
+        "type": "string"
+      },
+      "/properties/routing/properties/pending": {
+        "type": "boolean"
+      },
+      "/properties/routing/properties/overrides": {
+        "type": "array"
+      },
+      "/properties/routing/properties/overrides/items": {
+        "type": "object",
+        "properties": [
+          "at",
+          "by",
+          "from",
+          "to"
+        ],
+        "required": [
+          "at",
+          "by",
+          "from",
+          "to"
+        ],
+        "additionalProperties": false
+      },
+      "/properties/routing/properties/overrides/items/properties/at": {
+        "ref": "_common.json#/$defs/timestamp"
+      },
+      "/properties/routing/properties/overrides/items/properties/by": {
+        "type": "string"
+      },
+      "/properties/routing/properties/overrides/items/properties/from": {
+        "type": "string"
+      },
+      "/properties/routing/properties/overrides/items/properties/to": {
+        "type": "string"
       }
     }
   }

@@ -35,7 +35,7 @@ describe("an amendment merges itself only when it cannot widen what the sandbox 
     expect(b({ ...better, env: [...better.env, { name: "K", kind: "test_mode", secret: "GOOGLE_TEST", why: "w" }] })).toMatch(/secrets.*GOOGLE_TEST/);
     expect(b({ ...better, tier: "build_and_test" })).toMatch(/below main's renders/);
     expect(b({ ...better, dependencies: [] })).toMatch(/no longer proves.*db/);
-    expect(b(better, files, "reviewed")).toMatch(/sandbox_repairs: reviewed/);
+    expect(b(better, files, "reviewed")).toMatch(/review every sandbox repair/);
     expect(landBlockers({ mode: "automatic", files, main: null, candidate: better })).toHaveLength(1);
   });
 });

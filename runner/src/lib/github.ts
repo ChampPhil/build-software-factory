@@ -299,7 +299,7 @@ export interface PullResponse {
   readonly node_id?: string;
   readonly draft: boolean;
   readonly head: { readonly sha: string; readonly repo: { readonly full_name: string } | null };
-  readonly base: { readonly ref: string; readonly repo: { readonly full_name: string } };
+  readonly base: { readonly ref: string; readonly sha?: string; readonly repo: { readonly full_name: string } };
   readonly user: { readonly login: string; readonly type: string };
   readonly author_association: string;
   readonly labels: readonly { readonly name: string }[];

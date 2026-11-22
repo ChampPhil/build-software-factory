@@ -3,7 +3,11 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { readSession } from "@/lib/session";
-import { useClient, useLedger } from "@/lib/data";
+import { useClient, useLedger, useGuardrails, useQuestions, useFirstRequest, useFactorySettings } from "@/lib/data";
+import { EmptyFactoryNote } from "@/components/empty-factory";
+import { waitingOn } from "@/lib/questions";
+import { NewRequest, QuestionList } from "@/components/request";
+import { CandidateList } from "@/components/corrections";
 import { PageHead, Section, Empty, Note, PipelineTag, Dot } from "@/components/primitives";
 import { elapsedSince } from "@/lib/metrics";
 import type { PullSummary, IssueSummary } from "@/lib/github";
@@ -20,6 +24,10 @@ export default function Home() {
   const auth = session === null ? null : { token: session.token, repo: session.repo };
   const client = useClient(auth);
   const ledger = useLedger(client, true);
+  const guardrails = useGuardrails(client);
+  const pendingCandidates = (guardrails.state === "ready" ? guardrails.data.candidates?.candidates ?? [] : []).filter((c) => c.status === "pending");
+
+  const [filing, setFiling] = useState(false);
 
   const [pulls, setPulls] = useState<readonly PullSummary[] | null>(null);
   const [issues, setIssues] = useState<readonly IssueSummary[] | null>(null);
@@ -67,13 +75,25 @@ export default function Home() {
       !i.labels.some((l) => l.name === "factory:accept"),
   );
 
+  const waiting = waitingOn(ledger.state === "ready" ? (ledger.data?.open ?? []) : []);
+  const questions = useQuestions(client, waiting);
+  // A factory that has done nothing yet gets one suggested first request, so the
+  // first pull request needs no thinking.
+  const untouched =
+    ledger.state === "ready" && (ledger.data === null || (ledger.data.open.length === 0 && ledger.data.recent.length === 0));
+  const factorySettings = useFactorySettings(client);
+  const installed = factorySettings.state === "ready" ? factorySettings.data !== null : null;
+  const firstRequest = useFirstRequest(client, untouched);
+  const suggestion = firstRequest.state === "ready" ? firstRequest.data : null;
+
   const nothing =
     toApprove.length === 0 &&
     definitionPrs.length === 0 &&
     escalated.length === 0 &&
     waitingTrust.length === 0 &&
     needsInfo.length === 0 &&
-    outside.length === 0;
+    outside.length === 0 &&
+    pendingCandidates.length === 0;
 
   return (
     <>
@@ -85,12 +105,7 @@ export default function Home() {
 
       {problem !== null && <Note tone="bad">{problem}</Note>}
 
-      {ledger.state === "ready" && ledger.data === null && (
-        <Note>
-          No factory data on this repository yet. Once setup has run and the first work item goes
-          through, this page fills in.
-        </Note>
-      )}
+      {ledger.state === "ready" && ledger.data === null && <EmptyFactoryNote installed={installed} />}
 
       {nothing && ledger.state === "ready" && ledger.data !== null && (
         <Empty title="Nothing is waiting on you">
@@ -158,17 +173,41 @@ export default function Home() {
         </Section>
       )}
 
-      {needsInfo.length > 0 && (
-        <Section title={`Questions · ${needsInfo.length}`} lede="Triage needs one thing before it can start.">
-          <div className="rows">
-            {needsInfo.map((item) => (
-              <div className="row" key={item.work_item} style={{ gridTemplateColumns: "auto 1fr auto" }}>
-                <Dot tone="run" />
-                <span className="row-title mono">{item.work_item}</span>
-                <PipelineTag pipeline={item.pipeline} />
+      {needsInfo.length > 0 && client !== null && (
+        <Section
+          title={`Questions · ${needsInfo.length}`}
+          lede="The factory asked one thing before it writes any code. It waits until you answer; nothing times out."
+        >
+          <QuestionList client={client} waiting={waiting} questions={questions.state === "ready" ? questions.data : {}} />
+        </Section>
+      )}
+
+      {untouched && suggestion !== null && client !== null && (
+        <Section title="Your first request" lede="Suggested from your repository. Send it as it is, or change it first.">
+          {filing ? (
+            <NewRequest client={client} initial={suggestion} onClose={() => setFiling(false)} />
+          ) : (
+            <div className="rows">
+              <div className="row" style={{ gridTemplateColumns: "1fr auto" }}>
+                <div>
+                  <div className="row-title">{suggestion.title}</div>
+                  {suggestion.goal !== "" && <div className="row-meta">Goal: {suggestion.goal}</div>}
+                </div>
+                <button className="btn primary" onClick={() => setFiling(true)}>
+                  Review and send
+                </button>
               </div>
-            ))}
-          </div>
+            </div>
+          )}
+        </Section>
+      )}
+
+      {pendingCandidates.length > 0 && client !== null && (
+        <Section
+          title={`Guardrail candidates · ${pendingCandidates.length}`}
+          lede="Mistakes people have corrected before. Accept one and the factory changes the codebase so it cannot recur; reject it and it is not proposed again."
+        >
+          <CandidateList client={client} candidates={pendingCandidates} />
         </Section>
       )}
 

@@ -163,6 +163,9 @@ Every trigger becomes one work item before routing; it is the unit the ledger, r
   "pipeline": "product_work",         
   "title": "Export button downloads an empty file",
   "body": "…",
+  "goal": "Clicking Export downloads a CSV with every row",   // optional: what should be true when done
+  "success_check": "Click Export on Settings and open the file",   // optional: how the verifier tests the goal
+  "routing": { "by": "chief_of_staff", "reason": "It adds behaviour.", "at": "2026-11-18T23:40:05Z" },   // optional
   "priority": "normal",
   "fingerprint": "sha256:…",
   "status": "queued",
@@ -177,6 +180,9 @@ Every trigger becomes one work item before routing; it is the unit the ledger, r
 - `trigger_class`: `request` | `dev_event` | `signal` | `scheduled` | `self`.
 - `pipeline`: `product_work` | `gardening` | `hardening` | `definition` | `conflict`.
 - `status`: `queued` → `running` → `in_review` → `queued_to_merge` → `merged`, or `escalated` | `duplicate` | `rejected`.
+- `routing` records who chose the pipeline: `by` is `chief_of_staff`, `table` or `person`; `reason` is one line; `from` is the pipeline before a change; `pending` is true while the one question is unanswered; `overrides` lists each person's move (`by`, `at`, `from`, `to`). `success_check` and `routing` are additive and optional.
+- `standing-goals.json` on the data ref (`standing-goals/1`): `{ "goals": [{ "id", "text", "lane": "product_work" | "gardening" | "hardening" | null, "by", "at", "until" }] }`, at most 20.
+- `models.chief_of_staff` in the factory definition (optional, default `claude-haiku-5-5`).
 - `fingerprint` is computed from the normalized title, body and touched area; intake uses it only to shortlist possible duplicates, and triage decides.
 - `parent` links a conflict-resolution or retry item to the item it came from.
 - `related` links a follow-up to an earlier item whose PR already merged (for example "still broken after #311"); the earlier PR is passed to triage as context.
@@ -331,7 +337,7 @@ Every mined correction becomes a candidate; setup and hardening decide what each
 
 - `kind` of source: `agent_chat` | `review_comment` | `revert` | `fix_commit` | `bug` | `prose_rule` | `escalation` | `review_failure`.
 - `proposed_fix` follows the ordered check: `api_change` | `static_rule` | `verification` | `context` (context candidates go to the definition path).
-- Every correction becomes a candidate (or adds an occurrence to one). Hardening starts for a candidate at 3 occurrences within 14 days, or as soon as a human labels a correction `factory:harden`.
+- Every trusted correction starts hardening at once and is recorded on the corrected run as the optional `human_corrections` array. Candidates in `.factory/guardrails/candidates.json` change only through reviewed PRs; accept/reject decisions live on the data ref at `guardrails/candidate-decisions.json` and are overlaid.
 - `status`: `pending` | `accepted` | `rejected` | `installed` (with the rule or PR that installed it).
 
 ## Scorer rubrics and review reports
@@ -455,3 +461,17 @@ A breaking change is not forbidden; it is routed. The author bumps the major, ad
 A gap in the chain — major 1 present, no 1→2 migration, but a 2→3 — is reported rather than guessed across, because a skipped migration means the author, not the tool, has to decide what the data means.
 
 **`bsf migrate --support`** prints what the running runner reads and writes, one line per schema, which is rule 5. At 1.0 every line reads `writes 1, reads 1`, and the migration registry is empty — that is the freeze, not an unfinished feature.
+
+## Settings a person may change
+
+Not a stored file: the list is code (`runner/src/lib/settings.ts`, copied to `dashboard/lib/settings.json`, kept equal by a test). Each entry has an `id`, the dotted `path` in `factory.yaml`, a `kind` (`number`, `integer`, `boolean`, `cron_hour`), bounds and the words the dashboard shows.
+
+| id | path | values |
+| --- | --- | --- |
+| `monthly_budget` | `budget.monthly_usd` | 1 to 100000 |
+| `share_product_work`, `share_gardening`, `share_review` | `budget.shares.*` | 0 to 100; the three add to 100 |
+| `auto_merge_product_work`, `auto_merge_gardening`, `auto_merge_hardening` | `pipelines.*.auto_merge` | on or off |
+| `gardening_prs` | `pipelines.gardening.max_prs_per_run` | 1 to 10 |
+| `gardening_hour` | `pipelines.gardening.schedule` | a daily hour, 0 to 23 (`0 H * * *`); also the one `cron` line of `factory-garden.yml` |
+
+`bsf settings` prints them; `bsf settings --set id=value[,id=value]` changes them, checks every value first, keeps the file's comments, and moves the cleanup workflow's cron with the hour. Labels: `factory:settings` marks a pull request the policy check may pass on its trusted author's say-so; `factory:ask` marks an issue that is a request to change the factory's setup (no work item, no run; the setup skill handles it).

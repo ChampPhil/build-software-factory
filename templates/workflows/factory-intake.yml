@@ -13,6 +13,14 @@ on:
     types: [created]
   pull_request_review_comment:
     types: [created]
+  # A submitted review (a change request, or a comment with a body) and a push
+  # to a PR's branch are corrections when a person makes them. The push is
+  # pull_request_target so it can read the App's secrets; this workflow checks
+  # out nothing from the PR and runs the runner from the default branch.
+  pull_request_review:
+    types: [submitted]
+  pull_request_target:
+    types: [synchronize]
   workflow_run:
     workflows: ["ci"]
     types: [completed]
@@ -24,6 +32,10 @@ on:
         type: string
       body:
         description: Any detail
+        required: false
+        type: string
+      kind:
+        description: What kind of request this is; the dashboard (candidate, standing_goal_add, standing_goal_remove, route_override) and a local session's correction hook set it
         required: false
         type: string
 
@@ -39,6 +51,9 @@ concurrency:
 
 jobs:
   intake:
+    # A fork's PR gets no secrets, so the run would only fail; intake ignores
+    # fork events anyway.
+    if: ${{ github.event.pull_request == null || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -94,4 +109,7 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
           EVENT_NAME: ${{ github.event_name }}
+          # The chief of staff: one small model call, no tools, per new request.
+          # Without the key every request keeps the fixed table's route.
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: bsf intake

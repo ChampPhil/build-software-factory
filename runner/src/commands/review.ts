@@ -104,7 +104,19 @@ const DEFINITION_TAGS = new Set([
   "unverifiable_checks",
 ]);
 
-export function groupAndRoute(failures: readonly ScoredFailure[]): readonly Problem[] {
+/**
+ * v1.0 does not change the factory's own definition (its prompts, context or
+ * model choices); the review scores runs and routes what it finds to
+ * hardening, which changes the codebase. The definition route below is kept
+ * for v1.1 and stays off until then.
+ */
+export const DEFINITION_ROUTE_ENABLED = false;
+
+export function groupAndRoute(
+  failures: readonly ScoredFailure[],
+  opts: { readonly definitionRoute?: boolean } = {},
+): readonly Problem[] {
+  const definitionRoute = opts.definitionRoute ?? DEFINITION_ROUTE_ENABLED;
   const groups = new Map<string, ScoredFailure[]>();
   for (const f of failures) {
     // Same tag plus same area, or same tag plus same role: one problem.
@@ -118,7 +130,7 @@ export function groupAndRoute(failures: readonly ScoredFailure[]): readonly Prob
     .sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]))
     .map(([key, list]) => {
       const first = list[0]!;
-      const toDefinition = DEFINITION_TAGS.has(first.tag);
+      const toDefinition = definitionRoute && DEFINITION_TAGS.has(first.tag);
       return {
         id: `p-${fingerprint({ title: key, body: first.tag }).slice(0, 12)}`,
         tag: first.tag,
@@ -129,7 +141,9 @@ export function groupAndRoute(failures: readonly ScoredFailure[]): readonly Prob
         destination: toDefinition ? ("definition" as const) : ("hardening" as const),
         why: toDefinition
           ? `${first.tag} is something the agent did not know, which a context or model change addresses`
-          : `${first.tag} is something a check can catch, which is cheaper and permanent`,
+          : DEFINITION_TAGS.has(first.tag)
+            ? `${first.tag} is something the agent did not know. Changing the factory's own prompts waits for v1.1, so it goes to hardening: make the codebase state it, with a test, a type or a rule`
+            : `${first.tag} is something a check can catch, which is cheaper and permanent`,
       };
     });
 }

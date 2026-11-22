@@ -301,7 +301,7 @@ Estimated monthly cost for ${repo}
     gardening PRs             about ${r.buys.gardening_prs}
     scheduled reviews         about ${r.buys.reviews}${
     r.needed_for_this_activity_usd > r.buys.monthly_usd
-      ? `\n\n  This repo's activity would use about $${r.needed_for_this_activity_usd}. At $${r.buys.monthly_usd} each pipeline pauses when it\n  has spent its share, and resumes next month; raise monthly_usd in factory.yaml to do more.`
+      ? `\n\n  This repo's activity would use about $${r.needed_for_this_activity_usd}. At $${r.buys.monthly_usd} each pipeline pauses when it\n  has spent its share, and resumes next month; raise the monthly budget on the dashboard's Factory page (or tell me the number) to do more.`
       : ""
   }
 `);

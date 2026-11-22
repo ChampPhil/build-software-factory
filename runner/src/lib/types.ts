@@ -98,6 +98,22 @@ export interface PullRequestFacts {
   readonly pipeline?: Pipeline;
   /** The work item's spec, for the declared-test-edit check. */
   readonly declared_test_edits?: readonly string[];
+  /**
+   * Set when a PR labelled `factory:settings` changes the factory's settings
+   * file: what moved, judged against the list of settings a person may change.
+   */
+  readonly settings_edit?: {
+    readonly changed: readonly string[];
+    readonly outside: readonly string[];
+    readonly invalid: readonly string[];
+    /** The author's association after correcting it from their real permission. */
+    readonly author_association: Association;
+    readonly author_is_bot: boolean;
+    /** Whether the author actually holds write access, read from their permission and not their association. */
+    readonly author_has_write: boolean;
+    /** True when the garden workflow is untouched, or only its cron line changed. */
+    readonly workflow_ok: boolean;
+  };
 }
 
 /**

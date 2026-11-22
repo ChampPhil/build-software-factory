@@ -24,7 +24,7 @@ export interface LandInput {
 
 export function landBlockers(i: LandInput): readonly string[] {
   const out: string[] = [];
-  if (i.mode === "reviewed") out.push("policy.yaml sets sandbox_repairs: reviewed");
+  if (i.mode === "reviewed") out.push("the factory is set to review every sandbox repair");
   const outside = i.files.filter((f) => !f.startsWith(".factory/sandbox/"));
   if (outside.length > 0) out.push(`it changes files outside .factory/sandbox/: ${outside.slice(0, 5).join(", ")}`);
   if (i.main === null) {

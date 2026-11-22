@@ -2,7 +2,8 @@
 
 import { useMemo } from "react";
 import { readSession } from "@/lib/session";
-import { useClient, useGuardrails } from "@/lib/data";
+import { useClient, useGuardrails, useLedger, useCorrections } from "@/lib/data";
+import { CandidateList, CorrectionList } from "@/components/corrections";
 import { PageHead, Section, Gauge, Empty, Note, Figure, asCount, asPct } from "@/components/primitives";
 import { ratchetBars, coverageGauge } from "@/lib/metrics";
 
@@ -12,6 +13,9 @@ export default function Guardrails() {
   const auth = session === null ? null : { token: session.token, repo: session.repo };
   const client = useClient(auth);
   const g = useGuardrails(client);
+  const ledger = useLedger(client, false);
+  const corrections = useCorrections(client, ledger.state === "ready" ? ledger.data : null);
+  const hardened = corrections.state === "ready" ? corrections.data : [];
 
   if (g.state === "loading") {
     return (
@@ -39,7 +43,7 @@ export default function Guardrails() {
   const active = bars.filter((b) => !b.retired && b.now > 0);
   const retired = bars.filter((b) => b.retired);
 
-  if (baselines === null && coverage === null) {
+  if (baselines === null && coverage === null && pending.length === 0 && hardened.length === 0) {
     return (
       <>
         <PageHead title="Guardrails" />
@@ -143,38 +147,23 @@ export default function Guardrails() {
         </Section>
       )}
 
-      {pending.length > 0 && (
+      {hardened.length > 0 && client !== null && (
+        <Section
+          title={`Hardened from corrections · ${hardened.length}`}
+          lede="Each time a person corrects an agent (a review comment, a change request, a fix they pushed, or a word in a local session), the factory changes the codebase so the mistake does not come back. Here is each correction and where it went."
+        >
+          <CorrectionList items={hardened} repo={session?.repo ?? ""} />
+        </Section>
+      )}
+
+      {pending.length > 0 && client !== null && (
         <Section
           title={`Candidates · ${pending.length}`}
-          lede="Problem classes mined from past corrections. Each is sorted by the strongest fix available: a change that makes the mistake impossible beats a rule that catches it."
+          lede="Problem classes mined from past corrections. Hardening picks how to fix each: a new static rule, a stronger verification requirement, or a refactor that makes the mistake impossible. All three are equal options."
         >
-          <div className="rows">
-            {pending.map((c) => (
-              <div className="row" key={c.id} style={{ gridTemplateColumns: "1fr auto auto" }}>
-                <div>
-                  <div className="row-title">{c.problem_class}</div>
-                  <div className="row-meta">
-                    {c.occurrences} occurrence{c.occurrences === 1 ? "" : "s"}
-                    {c.sources[0]?.quote !== undefined && <> · &ldquo;{c.sources[0].quote}&rdquo;</>}
-                  </div>
-                </div>
-                <span className="tag hardening">{fixLabel(c.proposed_fix)}</span>
-                {c.critical_logic === true && <span className="tag conflict">critical</span>}
-              </div>
-            ))}
-          </div>
+          <CandidateList client={client} candidates={pending} />
         </Section>
       )}
     </>
   );
-}
-
-function fixLabel(fix: string): string {
-  switch (fix) {
-    case "api_change": return "change the API";
-    case "static_rule": return "static rule";
-    case "verification": return "verification";
-    case "context": return "context line";
-    default: return fix;
-  }
 }

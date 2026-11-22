@@ -13,7 +13,7 @@ The factory runs three fixed pipelines (product work, gardening, hardening) plus
 | **Builder** | Implements the plan with the smallest correct change, plus tests for new behavior | All pipelines, conflict resolution |
 | **Verifier** | Runs the app and checks the result independently; produces the verification artifacts | All pipelines |
 | **Gardener** | Finds drift and picks the night's cleanup items | Gardening |
-| **Hardener** | Generalizes a correction or failure into a problem class and picks the strongest fix | Hardening |
+| **Hardener** | Generalizes a correction or failure into a problem class and chooses how the codebase changes: a static rule, a stronger verification requirement, or a refactor that removes the problem class | Hardening |
 | **Scorer** | Grades recent work against rubrics in the scheduled review | Self-improvement |
 
 - Every role reads the same four context files: feature map, runbook, fundamentals, history.
@@ -29,21 +29,25 @@ The factory runs three fixed pipelines (product work, gardening, hardening) plus
 
 1. **Trust check.** The event's author must be an owner, member or collaborator with write access. Trust belongs to people, never integrations: an issue authored by an integration's bot account (Linear, Sentry) waits like an outside issue, and shows on Home for a one-click accept. Otherwise the item waits, untouched, until a trusted person adds `factory:accept`. Fork events never start agent work.
 2. **Normalize** the event into a work item (Schemas & Contracts) and write it as its own file, `work-items/<id>.json`: source, trigger class, title, body, fingerprint. Intake runs in a single concurrency group with `queue: max`, so events are handled one after the other, and each intake run processes every event not yet processed, so none is lost even if a pending run is dropped.
+2a. **Say so.** As soon as intake has read an issue (a dashboard request is one too) the factory comments on it: which kind of work it took it for, the goal it will check against, how to unblock it if an untrusted author is waiting for `factory:accept`, and that it will ask one question here before writing any code if something is unclear. A CI failure, a schedule and a correction have nobody waiting, so they get no comment.
+2b. **Kind and goal.** The four issue forms (Feature, Bug, Harden this, Tidy this) apply the label for them: `factory:harden` sends the request to hardening, `factory:tidy` sends it to gardening, and the other two go to product work. A `### Goal` section, from a form or the dashboard, is kept on the work item as `goal` and the spec treats it as the success check. A goal from someone the factory does not act for is not kept.
+2c. **Questions before a run.** Triage is the only step that asks, and only before any code: one specific question as a comment on the issue, the item in `needs_info`, no run or branch yet. A trusted person's comment answers it and puts the item back in the queue with the answer in its body; `/retry` does the same without an answer. **A question never times out and never escalates.** It waits, however long, and Home shows how long and gives an answer box that posts the comment for the person.
 3. **Shortlist duplicates.** The fingerprint finds open items that might be the same request; they're passed to triage, which decides (step 1 of product work). An item that matches work merged recently is never dropped: it becomes a high-priority follow-up linked to the earlier PR (`related`), which triage gets as context.
-4. **Route** by trigger to one pipeline:
+4. **Route** by trigger to one pipeline. Requests that a person created (issue, comment asking for work, dashboard request) are routed by the **chief of staff** (4a); every other trigger uses the table:
 
 | Trigger | Pipeline |
 | --- | --- |
 | Issue, comment asking for work, Slack/Linear/Sentry issue, dashboard request | Product work |
 | CI failure on main | Product work (high priority) |
 | Review comment on a factory PR | Back to that PR's run as a revision (not a new item) |
-| Human correction on a factory PR (a requested change the factory then made) | Recorded as a correction candidate, in addition to the revision; hardening starts at 3 of a kind within 14 days, or at once when someone with triage access labels an issue `factory:harden` (the issue describing the mistake) |
+| Correction from a trusted person on a factory PR (review comment, change request, or a push to its branch) or in a local Claude Code session | A hardening item at once, linked to the correction and the run it corrects; the same correction said twice folds into the open item. Comments on a hardening or definition PR are revisions of that PR, never new corrections |
 | Nightly schedule | Gardening |
-| Same failure 3 times within 14 days; problem routed by the scheduled review | Hardening |
+| Problem routed by the scheduled review | Hardening |
 | Review result needing context or model change | Definition change (benchmark-gated) |
-| Correction whose fix is a context line | Definition change (direct, no benchmark; a trusted human approves) |
 | Conflict on an open factory PR | Conflict resolution |
 
+4a. **Chief of staff.** For each accepted request, intake makes one tool-less call to the model named at `models.chief_of_staff` (default `claude-haiku-5-5`) with the request, the feature map and the tail of `history.md`. It answers with the pipeline (product work, gardening or hardening), a specific goal, a success check the verifier can test, a priority and a one-line reason. A feature goes to product work, a mistake that keeps recurring to hardening, and a vague cleanup to gardening. The request text is data: nothing in it can change the answer's shape, and the answer is validated strictly. Trust stays deterministic: only requests intake has already accepted are routed, and nothing the model says can admit an untrusted author. If something is genuinely unclear it asks **one** question as an issue comment; the item waits in `needs_info` and an answer routes it, never with a second question. A person's own `factory:harden` or `factory:tidy` choice is kept (tidy stays gardening); a person's own goal is kept; priority is only ever raised. If the call fails, there is no `ANTHROPIC_API_KEY`, or the product-work budget is paused, the table's route stands and the work proceeds. The call is charged to the budget. The decision, its reason, who made it and the success check are on the work item and in the acknowledgement comment; nothing in it rewrites a role prompt.
+4b. **Overrides and standing goals.** Any pipeline choice can be changed in one step from the dashboard's Work items page (a request that has not started; the move is recorded with who and when, and the dashboard shows how often people move what the chief of staff chose). Standing goals ("tighten auth this month") are set by asking: the dashboard's Factory page, or `/focus [lane:] text` in a comment by a trusted person. They are kept on the data ref (`standing-goals.json`, at most 20) and handed to the chief of staff, the spec, the gardener and the hardener as tie-breakers; they never override a request.
 5. **Dispatch** `factory-run` if a concurrency slot is free (default 5); otherwise the item stays `queued`, high priority first, then oldest first. Every `factory-run` ends by dispatching the next queued item, and every rollup (including the daily sweep) dispatches queued items when slots are free, so the queue drains without a timer even if a run crashes.
 6. **Budget shares:** gardening (25% by default) and review and benchmarks (15%) each stay within their share of the monthly budget; product work may use what they leave, never past the total. A pipeline whose largest step no longer fits what is left keeps its items queued until it does (doc 07, §Budget).
 
@@ -64,7 +68,7 @@ Every pipeline that produces code ends in the same loop: the builder writes, the
    - coverage, from the report the sandbox's `commands.coverage` writes at `coverage_report` (the tests gate runs that command instead of `commands.test`, once): diff coverage ≥ 80% (the main check), over the changed executable lines where the report records per-line hits (lcov, Cobertura), else over the changed files, total ≥ floor (one point below the highest total reached), skips within cap
    - formal checks where installed
    - mutation testing on changed lines (from v0.2), with each language's existing tool (StrykerJS, Stryker.NET, cargo-mutants, Infection and the rule pack's equivalents)
-   - **agent runtime verification**: the verifier starts the app per the runbook, exercises the change with real dev tools (a browser through Playwright MCP, console, network, database), and Playwright records the screenshots, video and traces
+   - **agent runtime verification**: the verifier starts the app per the runbook, exercises the change with real dev tools (a browser through Playwright MCP, console, network, database), and records one screen video of the whole verification (a chapter per acceptance check) plus screenshots and traces
 5. **Fail** at either gate → the failure output goes back to the builder, which fixes and resubmits. Each gate allows **3 attempts per work item**; the third failure escalates.
 6. **Pass both** → code cleared: the draft PR's label changes from `factory:in-progress` to `factory:cleared`, and its body is filled in with the evidence.
 
@@ -106,14 +110,15 @@ Every attempt, pass or fail, is recorded in the run file's `gates` list.
 
 **Correction or repeated failure → generalize to the problem class → write the check or codebase change → fix existing violations (factory clear) → draft PR**
 
-**Inputs:** a human correction on a factory PR, the same gate failure 3 times in 14 days, a gardening hand-off, or a problem the scheduled review routed here.
+**Inputs:** every human correction (PR review comment, change request, pushed fix, or a correction in a local Claude Code session), a gardening hand-off, or a problem the scheduled review routed here. There is no threshold and no label: one correction is enough.
 
 1. **Generalize** (hardener role): turn the specific instance into a problem class ("network calls bypass `apiClient`"), and check the ledger and `candidates.json` for an existing rule or candidate first.
-2. **Pick the strongest fix** by the ordered check:
-   1. Can the code change so the mistake is impossible? → **API change**
-   2. Can a script tell right from wrong without running the code? → **static rule**
-   3. Can running the code check it? → **test or verification scenario**
-   4. None of these → **context line**, opened straight away as a minimal definition PR (no benchmark run, since a human already stated the intent; a trusted human approves) instead of this PR. If the mistake recurs after the line is added, it comes back through hardening.
+2. **Choose how the codebase changes.** Three options, equal in standing; the hardener picks whichever fits the problem and says in the PR why it beat the other two:
+   1. A **new static rule** a script can check without running the code.
+   2. A **stronger verification requirement**: a test, scenario or acceptance check that fails on the mistake.
+   3. A **refactor** that eliminates the problem class (for example, one API that makes the mistake impossible). This is a first-class choice, not a fallback.
+
+   Product intent is encoded as tests, types or rules, never as prose in `.factory/definition/`. The hardener may not edit the definition, and hardening never hardens on itself.
 3. **Verify the check itself:** the new rule or test must fail on the original bad example and pass on the correct pattern.
 4. **Fix existing violations** in the same PR if they fit (25 or fewer across 20 or fewer files); otherwise add a baseline and seed gardening items.
 5. **Factory-clear,** then a **draft PR** with the rule in plain language, why it exists, proof it works, and its impact.
@@ -134,7 +139,7 @@ Every factory PR has the same layout, so a reviewer can judge it from the top wi
 
 | Pipeline | Reviewer is checking | Evidence |
 | --- | --- | --- |
-| Product work | The requested behavior now works | Before/after screenshots or a short clip of the acceptance checks; full verification video |
+| Product work | The requested behavior now works | Before/after screenshots and one screen recording of the acceptance checks. A change the spec marks `ui_change: true` cannot pass the PR report check without a video |
 | Gardening | Behavior is unchanged and the code is cleaner | Before/after evidence on affected flows; rule counts before → after; list of what was cleaned |
 | Hardening | This is a rule we want | The rule in plain language; why it exists (linked corrections); proof it catches the bad example and passes the good one; violations fixed or baselined |
 | Definition | The context or model change is an improvement | The change in plain words; the review problems it addresses; benchmark scores before and after |
@@ -147,7 +152,7 @@ A cleared PR reaches main only through approval (human or toggle) and the factor
 1. **Approval**
    - Auto-merge **off** for the pipeline → a trusted human approves the PR on GitHub or from the dashboard's review queue. Approvals from the factory App never count. Submitting a review re-runs only the `factory/policy` check, so the approval registers without re-running the gates.
    - Auto-merge **on** → the PR is eligible as soon as its gates pass.
-   - Definition PRs and anything the weakening check flags always need a trusted human, whatever the toggles say.
+   - Definition PRs and anything the weakening check flags always need a trusted human, whatever the toggles say. The one exception is a settings change a trusted person made themselves from the dashboard (labelled `factory:settings`, touching only the settings file and the cleanup schedule's cron line, only keys on the list of settings a person may change): its author counts as the approver, because they cannot approve their own PR (doc 08).
 2. **Merge queue** (`factory-merge`, one PR at a time, started by approvals and check results, working through the queue in one job): fast-path merge if already up to date with gates passed on that commit; otherwise update from main and re-run the gates (static rules and tests always; agent verification only if the incoming changes touch the PR's feature folders; the gates recognize this update commit and apply the rule themselves). On pass, the queue marks the draft PR ready for review and squash-merges it.
 3. **Gate failure in the queue** → back to the PR's run as a failed attempt (counts toward the retry cap of 3). An attempt is a fresh `factory-run` dispatch, so each attempt's cost is billed and reported separately.
    - **An automatic `REQUEST_CHANGES` from the factory App is not a human objection.** gh-aw's protected-file check makes the App reject a PR that touches a protected path (every top-level dot-folder, `.factory/` included, plus dependency manifests and `.github/`). The queue treats it as a gate signal: if the path is one this pipeline legitimately changes, the role's `protected-files.exclude` was wrong and that is a factory-definition fix; if it is not, the attempt failed correctly. App approvals are still ignored outright.
@@ -167,7 +172,7 @@ When the factory can't finish work on its own, it stops and hands a human everyt
 **Escalates when:**
 
 - a gate fails 3 times for the same work item;
-- triage can't reproduce a bug or the request is ambiguous after one clarifying question went unanswered for 7 days;
+- triage can't reproduce a bug, which it reports as an escalation;
 - a conflict's two intents contradict;
 - a run hits its time budget 3 times;
 - the budget stop pauses product work.
@@ -201,7 +206,7 @@ Self-improvement has two parts: instrumentation that records everything continuo
 
 **Benchmarks** run on promptfoo, which handles repeated runs and side-by-side configurations; the factory adds a custom promptfoo provider that runs a pipeline on a frozen task. They build up automatically from every merged factory run: runs that needed no human changes, and runs a human corrected or finished, with the human-fixed merge as the known-good result. Users can also mark any run "representative." Including corrected and escalated work means the set contains the factory's failures, so a definition change can show it fixes them. The review also re-benchmarks when a new model is added to the price table, producing the cost vs. quality graph per pipeline.
 
-**Two definition paths:** changes the review proposes are benchmark-gated as above; a context line that comes from a human correction (hardening's fourth outcome) goes straight to a definition PR, because the human already stated the intent.
+**One definition path in v1.0:** changes to the factory definition come only from `/practice` comments (a person declaring a practice to enforce), which go to the definition pipeline for human approval. The scheduled review's own definition route is off until v1.1 (`DEFINITION_ROUTE_ENABLED`), so it routes every problem to hardening.
 
 ## Trace capture
 
@@ -214,6 +219,7 @@ Every agent and human action that reaches the repo is recorded, from three sourc
 | **Local agent sessions** | Each harness's end-of-session hook (installed at setup, committed to the repo) redacts the transcript and pushes it with the branch name, only for developers who opted in and only to a private data store | `sessions/…jsonl`, linked to the PR built on that branch |
 
 - **Human corrections** are extracted from all three: review comments on factory PRs, pushes by humans onto factory branches, and pushback in local sessions.
-- Each correction becomes a candidate (or adds an occurrence to one), is tagged and counted, starts hardening at 3 of the same kind within 14 days or as soon as a human labels it `factory:harden`, and appears in the next review.
+- Each correction starts hardening immediately (no threshold, no label), is recorded on the corrected run as `human_corrections`, and is linked from the guardrail or change it produces.
+- Local capture is a Claude Code `UserPromptSubmit` hook, installed on request with `bsf local-hook --install` into the developer's own `.claude/settings.local.json` (not shared). It refuses public repos unless `--allow-public`, redacts secrets, and sends only prompts that read as corrections.
 - Local human IDE activity outside agent sessions is not captured; the PR is the human trace.
 - **Session transcripts never land on a public branch.** On a public repo without the private data repo, local sessions aren't captured; corrections still come from review comments and pushes on factory PRs.

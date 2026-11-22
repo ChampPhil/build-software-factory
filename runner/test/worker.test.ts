@@ -1,223 +1,247 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import worker, { originAllowed, allowedOrigins, safeOrigin, SCOPES, type Env } from "../../worker/src/index.js";
+import worker, { callbackUrl, configured, installUrl, type Env } from "../../worker/src/index.js";
 
 /**
- * The Worker's whole job is one exchange, so its tests are about the one risk:
- * an endpoint that mints GitHub tokens and can be called from anywhere.
+ * The sign-in function's whole job is one exchange, so its tests are about the
+ * one risk: an endpoint that mints GitHub tokens, reachable by anyone.
  */
 
+const SITE = "https://dash.example.com";
 const env: Env = {
-  GITHUB_CLIENT_ID: "Iv1.test",
-  GITHUB_CLIENT_SECRET: "secret-value",
-  ALLOWED_ORIGINS: "https://dash.example.com, https://localhost:3000",
+  GITHUB_APP_CLIENT_ID: "Iv23li-test-client",
+  GITHUB_APP_CLIENT_SECRET: "secret-value-xyz",
+  GITHUB_APP_SLUG: "software-factory-dashboard",
 };
 
-const post = (body: unknown, origin: string | null): Request =>
-  new Request("https://w.example.com/exchange", {
+const STATE = "a".repeat(32);
+const CHALLENGE = "c".repeat(43);
+const VERIFIER = "v".repeat(43);
+const REFRESH = `ghr_${"r".repeat(40)}`;
+
+const get = (path: string): Request => new Request(`${SITE}/api/auth${path}`);
+const post = (path: string, body: unknown, origin: string | null = SITE): Request =>
+  new Request(`${SITE}/api/auth${path}`, {
     method: "POST",
     headers: origin === null ? { "Content-Type": "application/json" } : { "Content-Type": "application/json", Origin: origin },
-    body: JSON.stringify(body),
+    body: typeof body === "string" ? body : JSON.stringify(body),
   });
+
+/** A request body, which these tests always send as a string. */
+const bodyOf = (body: BodyInit | null | undefined): string => (typeof body === "string" ? body : "");
+
+const githubSays = (body: unknown, status = 200) => vi.fn(async () => new Response(JSON.stringify(body), { status }));
 
 afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("origin checks", () => {
-  it("reads the allowlist and trims it", () => {
-    expect(allowedOrigins(env)).toEqual(["https://dash.example.com", "https://localhost:3000"]);
+describe("configuration", () => {
+  it("is on only when the id, the secret and a valid slug are all set", () => {
+    expect(configured(env)).toBe(true);
+    expect(configured({ ...env, GITHUB_APP_CLIENT_ID: "" })).toBe(false);
+    expect(configured({ GITHUB_APP_CLIENT_ID: env.GITHUB_APP_CLIENT_ID, GITHUB_APP_SLUG: env.GITHUB_APP_SLUG })).toBe(false);
+    expect(configured({ ...env, GITHUB_APP_SLUG: "" })).toBe(false);
+    expect(configured({ ...env, GITHUB_APP_SLUG: "not/a slug" })).toBe(false);
   });
 
-  it("matches exactly, so a look-alike origin is refused", () => {
-    const allowed = allowedOrigins(env);
-    expect(originAllowed("https://dash.example.com", allowed)).toBe(true);
-    expect(originAllowed("https://dash.example.com.evil.test", allowed)).toBe(false);
-    expect(originAllowed("https://evil.test/dash.example.com", allowed)).toBe(false);
-    expect(originAllowed("http://dash.example.com", allowed)).toBe(false);
+  it("builds the install address from the slug, and refuses a slug that could change the address", () => {
+    expect(installUrl(env)).toBe("https://github.com/apps/software-factory-dashboard/installations/new");
+    expect(installUrl({ ...env, GITHUB_APP_SLUG: "x/../../evil" })).toBeNull();
   });
 
-  it("refuses a request with no Origin at all", () => {
-    expect(originAllowed(null, allowedOrigins(env))).toBe(false);
+  it("tells the page whether to show the button, and nothing else about the setup", async () => {
+    const on = await worker.fetch(get("/config"), env);
+    expect(await on.json()).toEqual({ enabled: true, install_url: "https://github.com/apps/software-factory-dashboard/installations/new" });
+    const off = await worker.fetch(get("/config"), {});
+    expect(await off.json()).toEqual({ enabled: false });
   });
 
-  it("refuses everything when the allowlist is empty, rather than allowing everything", () => {
-    // A misconfigured deployment should mint no tokens, not all of them.
-    expect(originAllowed("https://anything.test", allowedOrigins({ ...env, ALLOWED_ORIGINS: "" }))).toBe(false);
+  it("mints nothing when it is half set up", async () => {
+    const spy = vi.fn();
+    vi.stubGlobal("fetch", spy);
+    for (const path of ["/exchange", "/refresh"]) {
+      const res = await worker.fetch(post(path, { code: "abcdefgh1234", code_verifier: VERIFIER, refresh_token: REFRESH }), {});
+      expect(res.status).toBe(503);
+    }
+    expect((await worker.fetch(get(`/start?state=${STATE}&code_challenge=${CHALLENGE}`), {})).status).toBe(503);
+    expect(spy).not.toHaveBeenCalled();
+  });
+});
+
+describe("starting a sign-in", () => {
+  it("returns GitHub's authorize address with PKCE, and the site's own callback", async () => {
+    const res = await worker.fetch(get(`/start?state=${STATE}&code_challenge=${CHALLENGE}`), env);
+    expect(res.status).toBe(200);
+    const url = new URL(((await res.json()) as { authorize_url: string }).authorize_url);
+    expect(url.origin + url.pathname).toBe("https://github.com/login/oauth/authorize");
+    expect(url.searchParams.get("client_id")).toBe("Iv23li-test-client");
+    expect(url.searchParams.get("redirect_uri")).toBe(`${SITE}/`);
+    expect(url.searchParams.get("state")).toBe(STATE);
+    expect(url.searchParams.get("code_challenge")).toBe(CHALLENGE);
+    expect(url.searchParams.get("code_challenge_method")).toBe("S256");
   });
 
-  it("does not throw on a malformed redirect_uri", () => {
-    expect(safeOrigin("not a url")).toBeNull();
+  it("asks for no scopes: a GitHub App's reach is what the app was given", async () => {
+    const res = await worker.fetch(get(`/start?state=${STATE}&code_challenge=${CHALLENGE}`), env);
+    const url = new URL(((await res.json()) as { authorize_url: string }).authorize_url);
+    expect(url.searchParams.has("scope")).toBe(false);
+  });
+
+  it("ignores a redirect_uri the caller supplies, so the callback cannot be pointed elsewhere", async () => {
+    const res = await worker.fetch(
+      get(`/start?state=${STATE}&code_challenge=${CHALLENGE}&redirect_uri=${encodeURIComponent("https://evil.test/")}`),
+      env,
+    );
+    const url = new URL(((await res.json()) as { authorize_url: string }).authorize_url);
+    expect(url.searchParams.get("redirect_uri")).toBe(`${SITE}/`);
+    expect(callbackUrl(new URL("https://dash.example.com/api/auth/start?x=1"))).toBe(`${SITE}/`);
+  });
+
+  it("refuses a short state or a malformed challenge", async () => {
+    expect((await worker.fetch(get(`/start?state=short&code_challenge=${CHALLENGE}`), env)).status).toBe(400);
+    expect((await worker.fetch(get(`/start?state=${STATE}&code_challenge=short`), env)).status).toBe(400);
+    expect((await worker.fetch(get(`/start?state=${STATE}`), env)).status).toBe(400);
   });
 });
 
 describe("the exchange", () => {
-  it("refuses a caller from an origin not on the list, without calling GitHub", async () => {
-    const fetchSpy = vi.fn();
-    vi.stubGlobal("fetch", fetchSpy);
-    const res = await worker.fetch(post({ code: "c", redirect_uri: "https://dash.example.com/cb" }, "https://evil.test"), env);
-    expect(res.status).toBe(403);
-    expect(fetchSpy).not.toHaveBeenCalled();
+  const good = { code: "abcdef123456", code_verifier: VERIFIER };
+
+  it("refuses a request from another site, or with no origin, without calling GitHub", async () => {
+    const spy = vi.fn();
+    vi.stubGlobal("fetch", spy);
+    expect((await worker.fetch(post("/exchange", good, "https://evil.test"), env)).status).toBe(403);
+    expect((await worker.fetch(post("/exchange", good, `${SITE}.evil.test`), env)).status).toBe(403);
+    expect((await worker.fetch(post("/exchange", good, null), env)).status).toBe(403);
+    expect(spy).not.toHaveBeenCalled();
   });
 
-  it("refuses a redirect_uri pointing somewhere else, even from an allowed origin", async () => {
-    const fetchSpy = vi.fn();
-    vi.stubGlobal("fetch", fetchSpy);
-    const res = await worker.fetch(
-      post({ code: "c", redirect_uri: "https://evil.test/cb" }, "https://dash.example.com"),
-      env,
-    );
-    expect(res.status).toBe(403);
-    expect(fetchSpy).not.toHaveBeenCalled();
+  it("refuses GET, bad JSON, a malformed code and a malformed verifier", async () => {
+    const spy = vi.fn();
+    vi.stubGlobal("fetch", spy);
+    expect((await worker.fetch(get("/exchange"), env)).status).toBe(405);
+    expect((await worker.fetch(post("/exchange", "not json"), env)).status).toBe(400);
+    expect((await worker.fetch(post("/exchange", { code: "", code_verifier: VERIFIER }), env)).status).toBe(400);
+    expect((await worker.fetch(post("/exchange", { code: "abcdef123456", code_verifier: "short" }), env)).status).toBe(400);
+    expect((await worker.fetch(post("/exchange", { code: "abcdef123456" }), env)).status).toBe(400);
+    expect(spy).not.toHaveBeenCalled();
   });
 
-  it("returns the token to the caller and nothing else", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () =>
-        new Response(JSON.stringify({ access_token: "gho_x", token_type: "bearer", scope: "repo" }), { status: 200 }),
-      ),
-    );
-    const res = await worker.fetch(
-      post({ code: "c", redirect_uri: "https://dash.example.com/cb" }, "https://dash.example.com"),
-      env,
-    );
+  it("sends the secret to GitHub's token address and returns only the token fields", async () => {
+    const spy = githubSays({
+      access_token: "ghu_abc",
+      expires_in: 28800,
+      refresh_token: REFRESH,
+      refresh_token_expires_in: 15897600,
+      scope: "",
+      token_type: "bearer",
+      something_else: "not passed on",
+    });
+    vi.stubGlobal("fetch", spy);
+    const res = await worker.fetch(post("/exchange", good), env);
     expect(res.status).toBe(200);
-    const body = (await res.json()) as Record<string, unknown>;
-    expect(body["access_token"]).toBe("gho_x");
-    expect(Object.keys(body).sort()).toEqual(["access_token", "scope", "token_type"]);
+    expect(await res.json()).toEqual({
+      access_token: "ghu_abc",
+      expires_in: 28800,
+      refresh_token: REFRESH,
+      refresh_token_expires_in: 15897600,
+    });
+
+    const calls = spy.mock.calls as unknown as [string, RequestInit][];
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.[0]).toBe("https://github.com/login/oauth/access_token");
+    const sent = JSON.parse(bodyOf(calls[0]?.[1].body)) as Record<string, string>;
+    expect(sent).toMatchObject({
+      client_id: "Iv23li-test-client",
+      client_secret: "secret-value-xyz",
+      code: "abcdef123456",
+      code_verifier: VERIFIER,
+      redirect_uri: `${SITE}/`,
+    });
   });
 
-  it("never caches a response that carried a token", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ access_token: "gho_x" }), { status: 200 })));
-    const res = await worker.fetch(
-      post({ code: "c", redirect_uri: "https://dash.example.com/cb" }, "https://dash.example.com"),
-      env,
-    );
-    expect(res.headers.get("Cache-Control")).toBe("no-store");
+  it("never lets the secret or client id into any response", async () => {
+    vi.stubGlobal("fetch", githubSays({ access_token: "ghu_abc" }));
+    const responses = [
+      await worker.fetch(post("/exchange", good), env),
+      await worker.fetch(post("/exchange", good, "https://evil.test"), env),
+      await worker.fetch(get("/config"), env),
+      await worker.fetch(get("/health"), env),
+      await worker.fetch(get(`/start?state=${STATE}&code_challenge=${CHALLENGE}`), env),
+    ];
+    for (const res of responses) expect(await res.text()).not.toContain("secret-value-xyz");
+    // The client id is public by design but is only ever in the authorize address.
+    expect(await (await worker.fetch(get("/config"), env)).text()).not.toContain("Iv23li-test-client");
+    expect(await (await worker.fetch(get("/health"), env)).text()).not.toContain("Iv23li-test-client");
   });
 
-  it("does not pass GitHub's error description through, because it can echo the code", async () => {
+  it("relays GitHub's error name but not its description, which can echo the code", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () =>
-        new Response(
-          JSON.stringify({ error: "bad_verification_code", error_description: "The code abc123 is incorrect" }),
-          { status: 200 },
-        ),
-      ),
+      githubSays({ error: "bad_verification_code", error_description: "The code abcdef123456 passed is incorrect" }),
     );
-    const res = await worker.fetch(
-      post({ code: "abc123", redirect_uri: "https://dash.example.com/cb" }, "https://dash.example.com"),
-      env,
-    );
-    const body = JSON.stringify(await res.json());
-    expect(body).toContain("bad_verification_code");
-    expect(body).not.toContain("abc123");
+    const res = await worker.fetch(post("/exchange", good), env);
+    expect(res.status).toBe(400);
+    const text = await res.text();
+    expect(text).toContain("bad_verification_code");
+    expect(text).not.toContain("abcdef123456");
   });
 
-  it("reports a GitHub failure without relaying its body", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => new Response("code abc123 leaked here", { status: 500 })));
-    const res = await worker.fetch(
-      post({ code: "abc123", redirect_uri: "https://dash.example.com/cb" }, "https://dash.example.com"),
-      env,
-    );
+  it("turns a failing GitHub into a plain 502 that carries none of its body", async () => {
+    vi.stubGlobal("fetch", githubSays({ message: "echo abcdef123456" }, 500));
+    const res = await worker.fetch(post("/exchange", good), env);
     expect(res.status).toBe(502);
-    expect(JSON.stringify(await res.json())).not.toContain("abc123");
+    expect(await res.text()).not.toContain("abcdef123456");
   });
 
-  it("never puts the client secret in a response", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ access_token: "gho_x" }), { status: 200 })));
-    for (const path of ["/health", "/exchange", "/nope"]) {
-      const res = await worker.fetch(
-        new Request(`https://w.example.com${path}`, {
-          method: path === "/exchange" ? "POST" : "GET",
-          headers: { "Content-Type": "application/json", Origin: "https://dash.example.com" },
-          ...(path === "/exchange" ? { body: JSON.stringify({ code: "c", redirect_uri: "https://dash.example.com/cb" }) } : {}),
-        }),
-        env,
-      );
-      const text = await res.text();
-      expect(text, path).not.toContain("secret-value");
-      expect(text, path).not.toContain("Iv1.test");
+  it("survives GitHub being unreachable", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Promise.reject(new Error("network down"))));
+    const res = await worker.fetch(post("/exchange", good), env);
+    expect(res.status).toBe(502);
+  });
+});
+
+describe("renewing a token", () => {
+  it("exchanges the refresh token and returns the rotated pair", async () => {
+    const spy = githubSays({ access_token: "ghu_new", expires_in: 28800, refresh_token: `ghr_${"n".repeat(40)}`, refresh_token_expires_in: 15897600 });
+    vi.stubGlobal("fetch", spy);
+    const res = await worker.fetch(post("/refresh", { refresh_token: REFRESH }), env);
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { access_token: string }).access_token).toBe("ghu_new");
+    const calls = spy.mock.calls as unknown as [string, RequestInit][];
+    const sent = JSON.parse(bodyOf(calls[0]?.[1].body)) as Record<string, string>;
+    expect(sent).toMatchObject({ grant_type: "refresh_token", refresh_token: REFRESH, client_secret: "secret-value-xyz" });
+  });
+
+  it("refuses another site, a missing token, and anything that is not a refresh token", async () => {
+    const spy = vi.fn();
+    vi.stubGlobal("fetch", spy);
+    expect((await worker.fetch(post("/refresh", { refresh_token: REFRESH }, "https://evil.test"), env)).status).toBe(403);
+    expect((await worker.fetch(post("/refresh", {}), env)).status).toBe(400);
+    expect((await worker.fetch(post("/refresh", { refresh_token: "ghp_classicpersonaltoken1234567890" }), env)).status).toBe(400);
+    expect(spy).not.toHaveBeenCalled();
+  });
+});
+
+describe("every response", () => {
+  it("is uncached and carries no cross-origin permission, because one of them holds a token", async () => {
+    vi.stubGlobal("fetch", githubSays({ access_token: "ghu_abc" }));
+    const responses = [
+      await worker.fetch(get("/health"), env),
+      await worker.fetch(get("/config"), env),
+      await worker.fetch(get(`/start?state=${STATE}&code_challenge=${CHALLENGE}`), env),
+      await worker.fetch(post("/exchange", { code: "abcdef123456", code_verifier: VERIFIER }), env),
+      await worker.fetch(post("/exchange", { code: "abcdef123456", code_verifier: VERIFIER }, "https://evil.test"), env),
+      await worker.fetch(get("/nothing"), env),
+    ];
+    for (const res of responses) {
+      expect(res.headers.get("Cache-Control")).toBe("no-store");
+      expect(res.headers.get("Access-Control-Allow-Origin")).toBeNull();
     }
   });
 
-  it("rejects a GET on the exchange", async () => {
-    const res = await worker.fetch(
-      new Request("https://w.example.com/exchange", { method: "GET", headers: { Origin: "https://dash.example.com" } }),
-      env,
-    );
-    expect(res.status).toBe(405);
-  });
-
-  it("rejects a body that is not JSON", async () => {
-    const res = await worker.fetch(
-      new Request("https://w.example.com/exchange", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Origin: "https://dash.example.com" },
-        body: "not json",
-      }),
-      env,
-    );
-    expect(res.status).toBe(400);
-  });
-});
-
-describe("the start endpoint", () => {
-  const get = (qs: string, origin = "https://dash.example.com"): Request =>
-    new Request(`https://w.example.com/start?${qs}`, { headers: { Origin: origin } });
-
-  it("builds the authorize URL with the scopes the dashboard needs", async () => {
-    const res = await worker.fetch(
-      get(`redirect_uri=${encodeURIComponent("https://dash.example.com/cb")}&state=0123456789abcdef`),
-      env,
-    );
-    const body = (await res.json()) as { authorize_url: string };
-    const url = new URL(body.authorize_url);
-    expect(url.host).toBe("github.com");
-    expect(url.searchParams.get("scope")).toBe(SCOPES);
-    expect(url.searchParams.get("client_id")).toBe("Iv1.test");
-    expect(url.searchParams.get("state")).toBe("0123456789abcdef");
-  });
-
-  it("refuses to send a user to GitHub with someone else's callback attached", async () => {
-    const res = await worker.fetch(
-      get(`redirect_uri=${encodeURIComponent("https://evil.test/cb")}&state=0123456789abcdef`),
-      env,
-    );
-    expect(res.status).toBe(403);
-  });
-
-  it("insists on a state long enough to be unguessable", async () => {
-    const res = await worker.fetch(
-      get(`redirect_uri=${encodeURIComponent("https://dash.example.com/cb")}&state=short`),
-      env,
-    );
-    expect(res.status).toBe(400);
-  });
-});
-
-describe("CORS", () => {
-  it("answers a preflight from an allowed origin and refuses others", async () => {
-    const ok = await worker.fetch(
-      new Request("https://w.example.com/exchange", { method: "OPTIONS", headers: { Origin: "https://dash.example.com" } }),
-      env,
-    );
-    expect(ok.status).toBe(204);
-    expect(ok.headers.get("Access-Control-Allow-Origin")).toBe("https://dash.example.com");
-
-    const no = await worker.fetch(
-      new Request("https://w.example.com/exchange", { method: "OPTIONS", headers: { Origin: "https://evil.test" } }),
-      env,
-    );
-    expect(no.status).toBe(403);
-  });
-
-  it("never allows credentials, since the Worker holds no session", async () => {
-    const res = await worker.fetch(
-      new Request("https://w.example.com/health", { headers: { Origin: "https://dash.example.com" } }),
-      env,
-    );
-    expect(res.headers.get("Access-Control-Allow-Credentials")).toBeNull();
+  it("does not answer for paths outside /api/auth", async () => {
+    const res = await worker.fetch(new Request(`${SITE}/other`), env);
+    expect(res.status).toBe(404);
   });
 });

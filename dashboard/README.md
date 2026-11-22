@@ -13,16 +13,33 @@ npm test
 
 ## Hosting it
 
-`out/` is plain static files. GitHub Pages, Cloudflare Pages, or anywhere else
-that serves a directory. There is no backend to deploy.
+`out/` is plain static files, published once from this repository to Cloudflare
+Pages on one shared domain. Build command `npm ci && npm -w @bsf/dashboard run
+build` from the repository root, output directory `dashboard/out`; the full
+settings are in `docs/08-dashboard.md`. `public/_headers` carries the security
+headers, including the policy that lets the page talk only to itself and
+`api.github.com`.
+
+```bash
+npm run e2e      # needs Playwright and Chromium; builds first with `npm run build`
+```
 
 ## Signing in
 
-Paste a fine-grained token scoped to the repository, with contents, pull
-requests, issues and actions read and write, plus metadata read. The token is
-kept for the tab only unless "Remember on this device" is ticked, and it is
-checked against the repository before it is stored — a wrong scope is reported
-at sign-in rather than as a 404 three pages later.
+The main way in is one button, "Sign in with GitHub": the person approves the
+Software Factory app at GitHub and lands back signed in. It needs the
+sign-in function (`../worker`, a Pages Function) and a GitHub App, set up once
+by whoever runs the site (`docs/08-dashboard.md`); where that is not set up the
+button does not appear. "Use a token instead" opens GitHub's token form with
+the name, lifetime and every permission already chosen. Either way the session
+is checked against the repository before it is stored, and a missing read
+permission is named at sign-in. It is kept for the tab only unless "Remember on
+this device" is ticked. A GitHub sign-in lasts 8 hours and is renewed in the
+background. `?repo=owner/name` pre-fills the repository, and `?demo` (or the
+demo button) opens a made-up factory that touches nothing.
+
+`npx tsx scripts/app-link.ts https://your-address` prints the link that
+registers the GitHub App with everything filled in.
 
 ## What it reads
 

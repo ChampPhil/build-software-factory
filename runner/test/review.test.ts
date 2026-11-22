@@ -52,9 +52,16 @@ describe("groupAndRoute", () => {
     expect(groupAndRoute([f({ tag: "pattern_drift" })])[0]?.destination).toBe("hardening");
   });
 
-  it("routes what the agent did not know to a definition change", () => {
-    expect(groupAndRoute([f({ tag: "context_gap" })])[0]?.destination).toBe("definition");
-    expect(groupAndRoute([f({ tag: "wrong_model_fit" })])[0]?.destination).toBe("definition");
+  it("sends what the agent did not know to hardening in v1.0, because changing the factory's own prompts waits for v1.1", () => {
+    expect(groupAndRoute([f({ tag: "context_gap" })])[0]?.destination).toBe("hardening");
+    expect(groupAndRoute([f({ tag: "wrong_model_fit" })])[0]?.destination).toBe("hardening");
+    expect(groupAndRoute([f({ tag: "context_gap" })])[0]?.why).toContain("v1.1");
+  });
+
+  it("still has the definition route, switched on explicitly, for v1.1", () => {
+    const on = { definitionRoute: true };
+    expect(groupAndRoute([f({ tag: "context_gap" })], on)[0]?.destination).toBe("definition");
+    expect(groupAndRoute([f({ tag: "wrong_model_fit" })], on)[0]?.destination).toBe("definition");
   });
 
   it("defaults an unknown tag to hardening, the cheaper mistake", () => {

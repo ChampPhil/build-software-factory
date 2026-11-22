@@ -99,8 +99,8 @@ factory watches main instead of pretending otherwise.
 
 Two meters, both yours: your Anthropic API key, and your GitHub Actions
 minutes. The factory has a monthly budget in dollars (default **$35**) split
-into shares (product work 60%, gardening 25%, review and benchmarks 15%), set
-in `.factory/definition/factory.yaml`.
+into shares (product work 60%, gardening 25%, review and benchmarks 15%). Both are set and changed from the
+dashboard's Factory page.
 
 **The factory stops before it can spend past the budget, even if that means
 stopping with money left.** Before any agent step starts, it reserves the most

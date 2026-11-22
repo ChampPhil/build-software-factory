@@ -107,7 +107,7 @@ sandbox changes after setup, and it needs no person:
   changes only `.factory/sandbox/`, reaches no new host, needs no new
   secret, and its trial proves at least what main's sandbox did. Anything
   else waits for the user, with a comment saying which condition stopped
-  it. `sandbox_repairs: reviewed` in `policy.yaml` makes every amendment
+  it. A factory set to review sandbox repairs makes every amendment
   wait.
 - **After.** The changes that reported the need are brought up to date with
   main, which holds the new sandbox, and verified again. (A label added by the

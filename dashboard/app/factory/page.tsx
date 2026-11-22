@@ -1,23 +1,30 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { readSession } from "@/lib/session";
-import { useClient, useIndex } from "@/lib/data";
-import { PageHead, Section, Note, Empty, Dot } from "@/components/primitives";
+import { useClient, useFactorySettings, useIndex, useStandingGoals, useWriters } from "@/lib/data";
+import { AskFactory, SettingsPanel, WhoCanStart } from "@/components/settings";
+import { StandingGoals } from "@/components/routing";
+import { PageHead, Section, Dot } from "@/components/primitives";
+import { EmptyFactoryNote } from "@/components/empty-factory";
 
 /**
- * How the factory is configured.
+ * How the factory is configured, and where a person changes it.
  *
- * Read-only on purpose. Every setting here lives in the factory definition,
- * and a change to it goes through a pull request so there is a commit saying
- * who changed what — a toggle that silently rewrote a file would be the one
- * part of the factory with no audit trail.
+ * Every setting a person may change has a control here. Saving opens a pull
+ * request and merges it as the signed-in person, so there is still a commit
+ * saying who changed what, without anyone opening a file. What a control
+ * cannot do yet goes through "Ask the factory".
  */
 export default function Factory() {
   const session = useMemo(() => readSession(), []);
   const auth = session === null ? null : { token: session.token, repo: session.repo };
   const client = useClient(auth);
   const index = useIndex(client);
+  const goals = useStandingGoals(client);
+  const [version, setVersion] = useState(0);
+  const settings = useFactorySettings(client, version);
+  const writers = useWriters(client);
 
   const data = index.state === "ready" ? index.data : null;
   const health = data?.health;
@@ -27,13 +34,11 @@ export default function Factory() {
     <>
       <PageHead
         title="Factory"
-        lede="How this factory is set up. Changing any of it opens a pull request against the factory definition, so every change has a commit behind it."
+        lede="How this factory is set up. Change a setting here and it is saved in one step; every change is still a commit with your name on it."
       />
 
       {data === null && index.state === "ready" && (
-        <Empty title="No factory data yet">
-          Once setup has run, this page reads the definition from the repository.
-        </Empty>
+        <EmptyFactoryNote installed={settings.state === "ready" ? settings.data !== null : null} />
       )}
 
       {data !== null && (
@@ -88,6 +93,15 @@ export default function Factory() {
             </div>
           </Section>
 
+          {client !== null && (
+            <Section
+              title="Standing goals"
+              lede="What to lean toward for a while. They break ties when the chief of staff and the gardener choose; they never override a request. You can also write /focus followed by a goal in any issue comment."
+            >
+              <StandingGoals client={client} file={goals.state === "ready" ? goals.data : null} />
+            </Section>
+          )}
+
           <Section
             title="Autonomy"
             lede="Every toggle starts off, so a person approves each draft pull request. Turn one on when its revert rate and scorer results give you reason to."
@@ -111,21 +125,27 @@ export default function Factory() {
                 );
               })}
             </div>
-            {repo !== undefined && (
-              <div style={{ marginTop: 12 }}>
-                <Note tone="quiet">
-                  Edit{" "}
-                  <a className="mono" href={`https://github.com/${repo}/blob/HEAD/.factory/definition/factory.yaml`}>
-                    .factory/definition/factory.yaml
-                  </a>{" "}
-                  to change a toggle. The policy check requires a trusted person&rsquo;s approval on
-                  any pull request that touches the definition.
-                </Note>
-              </div>
-            )}
           </Section>
         </>
       )}
+
+          {client !== null && settings.state === "ready" && settings.data !== null && (
+            <Section title="Settings" lede="Changes save in one step, as you. The factory's own check still has to pass.">
+              <SettingsPanel client={client} yaml={settings.data} onApplied={() => setVersion((v) => v + 1)} />
+            </Section>
+          )}
+
+          {client !== null && repo !== undefined && (
+            <Section title="Who can start work" lede="The factory acts on requests from people with write access to this repository.">
+              <WhoCanStart repo={repo} writers={writers.state === "ready" ? writers.data : null} />
+            </Section>
+          )}
+
+          {client !== null && (
+            <Section title="Ask the factory" lede="For a change that has no control above. Say what you want in your own words; it is filed as a request and answered on the issue.">
+              <AskFactory client={client} />
+            </Section>
+          )}
     </>
   );
 }

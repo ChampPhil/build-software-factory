@@ -349,8 +349,37 @@ do not start the app or source `.runtime.env` yourself.
 2. Work through the spec's `acceptance_checks` **one at a time**. For each, use
    the app the way a developer would: click through it in the browser, call the
    API, query the database. Record what you observe, not what you expect.
-3. Capture evidence as you go, into `/tmp/gh-aw/agent/bsf/media/`:
-   - a screenshot or short clip for each acceptance check, named for the check
+3. Record the browser, and capture evidence as you go, into
+   `/tmp/gh-aw/agent/bsf/media/`.
+
+   **Record every browser session.** A person reviewing this PR watches a
+   video before they read anything. Once the app is open (after `state-load`,
+   if you load a session), start recording, and stop only after your last
+   check:
+
+   ```bash
+   playwright-cli video-start /tmp/gh-aw/agent/bsf/media/recordings/verification.webm
+   playwright-cli video-chapter "Check 1: <the check, in a few words>"
+   # ... do check 1 in the browser ...
+   playwright-cli video-chapter "Check 2: <the check>"
+   # ... do check 2 ...
+   playwright-cli video-stop
+   ```
+
+   One recording covers the session. Give every acceptance check its own
+   chapter, so the video reads as the checks, in order. A check that passed
+   quickly is still recorded: the video is how a person sees that it did. Run
+   `playwright-cli video-stop` before you close the browser. If the session
+   restarts (a new `state-load`, a closed browser), record the next part under
+   another name, such as `verification-2.webm`. If `video-start` fails, say so
+   in your report rather than going on without one.
+
+   A change with no screen (an API, a command, a library) has nothing to
+   record: its evidence is the commands you ran and what they printed, as
+   `.txt`, `.log` or `.json` files.
+
+   Alongside the recording:
+   - a screenshot for each acceptance check, named for the check
    - for a bug fix, the before state as well, so a reviewer sees the change
    - the console and network panels where either is relevant to the claim
 4. Try the obvious ways the change could be wrong but still look right: the
@@ -379,8 +408,11 @@ any text. Write `/tmp/gh-aw/agent/bsf/media/report.json`
 - `blocks` are your proof files and any diagrams, in the order that tells the
   story best, mixed freely: one per acceptance check at least, more where a
   check needs them. A file is a path inside `/tmp/gh-aw/agent/bsf/media/`.
-- Screenshots and GIFs show inline. A video (`.mp4`, `.webm`) also needs a
-  `poster`: a GIF or still of it, which the PR shows and links to the video.
+- Screenshots and GIFs show inline. Your recording is added to the PR for you,
+  at the front, with a preview the factory makes from it, so you need no block
+  for it. Write one only to caption it
+  (`{ "type": "file", "file": "recordings/verification.webm", "caption": "Checks 1 to 4, in order" }`);
+  no `poster` is needed.
   Logs and API responses (`.json`, `.txt`, `.log`) are shown inline as text.
 - A diagram is Mermaid, which GitHub draws: use one where a flow, a state or
   the parts involved say more than a screenshot does.

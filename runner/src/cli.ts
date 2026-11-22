@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { runSettings } from "./commands/settings-run.js";
+import { dashboardLink } from "./lib/dashboard-link.js";
 import { GitHub } from "./lib/github.js";
 import {
   DiskLoader, RefLoader, loadPolicy, loadBaselines, loadCoverage, changedFilesSince, changedLinesSince,
@@ -171,6 +173,17 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
       After a push to main: did anything reach main without passing the gates,
       and is every compiled role workflow current with its source?
 
+  bsf local-hook [--repo OWNER/NAME]
+      The correction hook for a local agent session. Reads the message from
+      stdin as the harness gives it, and when it is a correction hands it to
+      the factory, which turns it into hardening work. Prints nothing and never
+      fails, because a hook's output can reach the agent.
+  bsf local-hook --install [--repo OWNER/NAME] [--repo-path PATH] [--allow-public]
+  bsf local-hook --uninstall [--repo-path PATH]
+      Turn the hook on or off for this checkout, in .claude/settings.local.json
+      (yours alone, not the team's). A public repository is refused unless
+      --allow-public, because what you correct is then visible there.
+
   bsf schema-surface [--check] [--freeze]
       Compare the schemas against the frozen shape in schema/SURFACE.json.
       An additive change is reported and allowed; a change that would stop
@@ -256,6 +269,14 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
       Merge a sandbox amendment when it is safe to, and verify again the changes it was for.
   bsf sandbox release   (AMEND in the environment)
       An amendment that never reached a trial: its reports wait again, the attempt not counted.
+  bsf dashboard-link --repo owner/name
+      Print the link that opens the shared dashboard on that repository, with
+      the repository already filled in at sign-in. Exits non-zero, saying why,
+      when the dashboard has not been published yet.
+  bsf settings [--set id=value[,id=value]] [--root PATH]
+      Show the settings a person may change, or change some (budget, shares,
+      auto-merge, cleanup PRs and time). The setup skill uses this instead of
+      editing any file by hand.
   bsf models
       Emit each role's model and the gardening budget from factory.yaml as step outputs.
   bsf consistency [--root PATH] [--json]
@@ -469,6 +490,10 @@ async function main(argv: readonly string[]): Promise<number> {
       return consistencyCommand(args);
     case "models":
       return modelsCommand();
+    case "settings":
+      return settingsCommand(args);
+    case "dashboard-link":
+      return dashboardLinkCommand(args);
     case "sandbox":
       return sandboxCommandCli(second, args);
     case "practice":
@@ -487,6 +512,9 @@ async function main(argv: readonly string[]): Promise<number> {
 
     case "schema-surface":
       return schemaSurfaceCommand(args);
+
+    case "local-hook":
+      return localHookCommand(args);
 
     case "migrate":
       return migrateCommand(command.slice(1), args);
@@ -1110,6 +1138,48 @@ async function budgetState(cfg: FactoryConfig, gh: GitHub): Promise<BudgetState>
   };
 }
 
+/**
+ * The chief of staff, when it can run: it needs the factory's own API key, and
+ * it is skipped while product work is over its budget, so a stopped factory
+ * does not spend on routing what it cannot start.
+ */
+async function chiefOfStaff(cfg: FactoryConfig, gh: GitHub): Promise<{ router?: import("./commands/routing-run.js").Router }> {
+  const key = process.env["ANTHROPIC_API_KEY"];
+  if (key === undefined || key === "") return {};
+  if (pausedPipelines(await budgetState(cfg, gh)).includes("product_work")) return {};
+  const { anthropicComplete } = await import("./commands/chief-of-staff.js");
+  const { FactoryStore } = await import("./lib/store.js");
+  const store = new FactoryStore(gh);
+  const model = (cfg.models)?.["chief_of_staff"] ?? "claude-haiku-5-5";
+  const cap = (text: string | null, n: number): string => (text === null ? "" : text.slice(0, n));
+  return {
+    router: {
+      complete: anthropicComplete(key, model),
+      model,
+      context: async () => {
+        const ref = await gh.defaultBranch();
+        const [featureMap, history] = await Promise.all([
+          gh.fileAtRef(".factory/definition/context/feature-map.md", ref).catch(() => null),
+          gh.fileAtRef(".factory/definition/context/history.md", ref).catch(() => null),
+        ]);
+        const h = history ?? "";
+        return { featureMap: cap(featureMap, 6000), history: h.length > 3000 ? h.slice(-3000) : h };
+      },
+      charge: async (usd, chargeKey) => {
+        await store.data.updateJson<BudgetDoc, null>(
+          BUDGET_PATH,
+          (current) => {
+            const base = current !== null && current.schema === "budget/2" ? current : null;
+            const r = settleBudget(base, { key: chargeKey, agentUsd: usd, detectionUsd: 0, pipeline: "product_work" }, nowIso());
+            return { next: r.doc, result: null };
+          },
+          `budget: routing ${chargeKey}`,
+        );
+      },
+    },
+  };
+}
+
 async function intakeCommand(args: Args): Promise<number> {
   const cfg = await factoryConfig();
   const gh = new GitHub({ repo: requireRepo() });
@@ -1139,6 +1209,7 @@ async function intakeCommand(args: Args): Promise<number> {
     pausedPipelines: pausedPipelines(await budgetState(cfg, gh)),
     setupFinished: await gh.setupFinished(),
     ...(args["plan"] === true ? { plan: true } : {}),
+    ...(await chiefOfStaff(cfg, gh)),
   });
 
   for (const d of report.result.decisions) {
@@ -1218,7 +1289,7 @@ async function runCommand(second: string | undefined, args: Args, third?: string
       if (!check.ok) {
         budgetWait = true;
         process.stdout.write(`waiting for budget: ${check.reason}\n`);
-        summary(`### Waiting for budget\n\nThis run did not start: ${check.reason}. The item stays queued and starts when the budget allows (next month, or when \`budget.monthly_usd\` is raised).\n`);
+        summary(`### Waiting for budget\n\nThis run did not start: ${check.reason}. The item stays queued and starts when the budget allows (next month, or when the monthly budget is raised on the dashboard's Factory page).\n`);
       }
     }
     setOutput("budget_wait", String(budgetWait));
@@ -1471,9 +1542,9 @@ async function budgetReserveCommand(args: Args): Promise<number> {
   // The budget rests on gh-aw's credit cap, which stops Claude Code and was
   // shown not to stop Cursor. On any other harness no ceiling is real.
   if ((cfg.harness ?? "claude-code") !== "claude-code") {
-    process.stdout.write(`refused: factory.yaml names harness ${String(cfg.harness)}; only Claude Code's spend can be capped\n`);
+    process.stdout.write(`refused: the factory is set to harness ${String(cfg.harness)}; only Claude Code's spend can be capped\n`);
     setOutput("allowed", "false");
-    summary(`### Not started\n\nfactory.yaml names harness \`${String(cfg.harness)}\`. The factory runs only on Claude Code, the one harness whose spend its budget can stop. Re-run the installer to switch back.\n`);
+    summary(`### Not started\n\nThe factory is set to the \`${String(cfg.harness)}\` harness. It runs only on Claude Code, the one harness whose spend its budget can stop. Ask Claude Code to update your factory to switch back.\n`);
     return 1;
   }
   const gh = new GitHub({ repo: requireRepo() });
@@ -1498,7 +1569,7 @@ async function budgetReserveCommand(args: Args): Promise<number> {
   setOutput("allowed", String(outcome.ok));
   if (!outcome.ok) {
     summary(`### Not started: over budget\n\n${outcome.reason}.\n\nThe factory stops before a step could pass the monthly budget. ` +
-      `It starts again next month, or when \`budget.monthly_usd\` in factory.yaml is raised.\n`);
+      `It starts again next month, or when the monthly budget is raised on the dashboard's Factory page.\n`);
     return 1;
   }
   return 0;
@@ -2084,7 +2155,7 @@ async function modelsCommand(): Promise<number> {
   const roles = ["triage", "spec", "builder", "verifier", "gardener", "hardener", "scorer"];
   const missing = roles.filter((r) => typeof models[r] !== "string" || models[r] === "");
   if (missing.length > 0) {
-    process.stderr.write(`bsf: factory.yaml has no model for: ${missing.join(", ")}\n`);
+    process.stderr.write(`bsf: the factory's settings have no model for: ${missing.join(", ")}\n`);
     return 1;
   }
   for (const r of roles) setOutput(`model_${r}`, models[r] ?? "");
@@ -2194,6 +2265,28 @@ async function dashboardCommand(args: Args): Promise<number> {
   return 0;
 }
 
+async function dashboardLinkCommand(args: Args): Promise<number> {
+  const repo = typeof args["repo"] === "string" ? args["repo"] : "";
+  const result = dashboardLink(repo);
+  if (!result.ok) {
+    process.stderr.write(`bsf: ${result.reason ?? "no link"}\n`);
+    return 1;
+  }
+  process.stdout.write(`${result.url}\n`);
+  return 0;
+}
+
+async function settingsCommand(args: Args): Promise<number> {
+  const root = typeof args["root"] === "string" ? args["root"] : process.cwd();
+  const result = runSettings({ root, ...(typeof args["set"] === "string" ? { set: args["set"] } : {}) });
+  process.stdout.write(`${result.lines.join("\n")}\n`);
+  if (!result.ok) return 1;
+  if (result.changed.length > 0) {
+    process.stdout.write("Open it as a pull request with the factory:settings label so the factory's check can pass it.\n");
+  }
+  return 0;
+}
+
 async function doctorCommand(args: Args): Promise<number> {
   const root = typeof args["root"] === "string" ? args["root"] : process.cwd();
   const repo = typeof args["repo"] === "string" ? args["repo"] : undefined;
@@ -2215,6 +2308,69 @@ async function doctorCommand(args: Args): Promise<number> {
   // A factory that is simply not installed is not a failure to report: the
   // skill calls this to find out which mode it is in.
   return broken > 0 ? 1 : 0;
+}
+
+async function localHookCommand(args: Args): Promise<number> {
+  const lh = await import("./commands/local-hook.js");
+  const repoPath = typeof args["repo-path"] === "string" ? args["repo-path"] : process.cwd();
+  const repo = typeof args["repo"] === "string" ? args["repo"] : process.env["GITHUB_REPOSITORY"];
+
+  if (args["install"] === true || args["uninstall"] === true) {
+    const file = lh.settingsPath(repoPath);
+    const current = lh.readSettings(file);
+    if (args["uninstall"] === true) {
+      const next = lh.withoutHook(current);
+      if (next === null) {
+        process.stdout.write("the correction hook is not installed here\n");
+        return 0;
+      }
+      writeFileSync(file, `${JSON.stringify(next, null, 2)}\n`);
+      process.stdout.write(`removed the correction hook from ${file}\n`);
+      return 0;
+    }
+    if (repo === undefined || repo === "") die("usage: bsf local-hook --install --repo OWNER/NAME");
+    const info = await new GitHub({ repo }).get<{ private?: boolean }>(`repos/${repo}`);
+    if (info.private !== true && args["allow-public"] !== true) {
+      die(
+        `${repo} is public. What you correct an agent on would be written into work items and Actions runs anyone can read. ` +
+          `Run again with --allow-public if that is fine, or use a private repo.`,
+      );
+    }
+    const next = lh.withHook(current, lh.hookCommand(repo));
+    if (next === null) {
+      process.stdout.write("the correction hook is already installed here\n");
+      return 0;
+    }
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, `${JSON.stringify(next, null, 2)}\n`);
+    process.stdout.write(
+      `installed the correction hook in ${file}\n` +
+        `From now on a message to your agent that corrects it is sent to ${repo} as a hardening request, redacted and cut short. ` +
+        `Remove it any time with: bsf local-hook --uninstall\n`,
+    );
+    return 0;
+  }
+
+  // Hook mode. Nothing here may print or fail: the harness can feed a hook's
+  // output to the agent, and a broken hook must never break a session.
+  try {
+    if (repo === undefined || repo === "") return 0;
+    const chunks: Buffer[] = [];
+    for await (const c of process.stdin) chunks.push(c as Buffer);
+    const input = lh.parseHookInput(Buffer.concat(chunks).toString("utf8"));
+    const capture = lh.captureLocal(input, process.env["USER"] ?? "local", nowIso());
+    if (!capture.send || capture.key === undefined || capture.title === undefined || capture.body === undefined) return 0;
+    if (lh.alreadySent(capture.key)) return 0;
+    await new GitHub({ repo }).dispatchWorkflow("factory-intake.yml", undefined, {
+      kind: "correction",
+      title: capture.title,
+      body: capture.body,
+    });
+    lh.markSent(capture.key);
+  } catch {
+    // Silent by design.
+  }
+  return 0;
 }
 
 async function contributeCorrectionsCommand(args: Args): Promise<number> {
@@ -2453,6 +2609,7 @@ async function specGate(args: Args): Promise<Omit<SpecGateInput, "spec">> {
     root: process.env["GITHUB_WORKSPACE"] ?? process.cwd(),
     protectedPaths: policy?.paths.protected ?? [".github/workflows/**"],
     pipelineExclusions: policy?.protected_files?.exclude[pipeline] ?? [],
+    pipeline,
   };
 }
 
@@ -2634,6 +2791,20 @@ async function storeMediaCommand(args: Args): Promise<number> {
   return 0;
 }
 
+/** Put the standing goals for a lane into a role's input file, so the role weighs them without another command. */
+async function addStandingGoals(path: string, lane: "gardening" | "hardening"): Promise<void> {
+  try {
+    const { FactoryStore } = await import("./lib/store.js");
+    const { activeGoals, goalLines, readGoals } = await import("./commands/standing-goals.js");
+    const lines = goalLines(activeGoals(await readGoals(new FactoryStore(new GitHub({ repo: requireRepo() }))), nowIso(), lane));
+    if (lines.length === 0) return;
+    const doc = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+    writeFileSync(path, `${JSON.stringify({ ...doc, standing_goals: lines }, null, 2)}\n`);
+  } catch {
+    // Goals steer attention; a role runs fine without them.
+  }
+}
+
 async function gardenScanCommand(args: Args): Promise<number> {
   const out = requireOut(args, "usage: bsf garden-scan --out PATH");
   const r = await gardenScan({
@@ -2643,6 +2814,7 @@ async function gardenScanCommand(args: Args): Promise<number> {
     baselines: await loadBaselines(new DiskLoader(process.cwd())),
     out,
   });
+  await addStandingGoals(r.wrote, "gardening");
   process.stdout.write(`${r.measured.length} measured drift item(s) -> ${r.wrote}\n`);
   if (r.alreadyFixing.length > 0) {
     process.stdout.write(`  ${r.alreadyFixing.length} class(es) left out: an open PR already fixes them\n`);
@@ -2682,6 +2854,7 @@ async function hardenContextCommand(id: string | undefined, args: Args): Promise
     baselines: await loadBaselines(new DiskLoader(process.cwd())),
     candidatesPath: ".factory/guardrails/candidates.json",
   });
+  await addStandingGoals(r.wrote, "hardening");
   process.stdout.write(`${r.openRules} existing rule(s), ${r.candidates} candidate(s) -> ${r.wrote}\n`);
   return 0;
 }
@@ -2742,7 +2915,7 @@ async function gatesTests(args: Args): Promise<number> {
     }
     const summary =
       "The factory does not know how to run this repo's tests: there is no .factory/sandbox/manifest.json, " +
-      "which setup writes once it has run them. Finish setup, or set existing_ci.test_check in factory.yaml.";
+      "which setup writes once it has run them. Finish setup, or use Ask the factory on the dashboard's Factory page to name the check.";
     process.stdout.write(`${summary}\n`);
     await maybeReportCheck(args, "failure", "Tests could not run", summary, "factory/gate-tests");
     setOutput("tests_source", "unknown");
@@ -2895,7 +3068,7 @@ async function scoreCommand(args: Args): Promise<number> {
   }
   const runs = JSON.parse(readFileSync(runsPath, "utf8")) as Parameters<typeof runScorers>[0]["runs"];
   const rubrics = loadRubrics(".factory/definition/rubrics");
-  if (rubrics.length === 0) die("no rubrics in .factory/definition/rubrics");
+  if (rubrics.length === 0) die("the factory has no rubrics installed");
 
   const grader = process.env["FACTORY_GRADER_PROVIDER"] ?? "anthropic:messages:claude-haiku-5-5";
   const repeat = typeof args["repeat"] === "string" ? Number(args["repeat"]) : 2;

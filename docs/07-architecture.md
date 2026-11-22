@@ -63,7 +63,7 @@ Everything lives in one public repo, `build-software-factory`, MIT licensed. Eac
 | `/templates` | Everything setup installs into a user repo: thin trigger workflows, one gh-aw workflow source per role (`.md`), default config, roles, rubrics, hooks | Copied by the skill |
 | `/schema` | JSON Schemas for every file format (Schemas & Contracts doc) | Bundled into `/runner` and `/dashboard` |
 | `/dashboard` | The Next.js static-export dashboard | Deployed to Cloudflare Pages |
-| `/worker` | The optional Cloudflare Worker for GitHub sign-in | Deployed by users who pick it, or by the maintainer for the hosted dashboard |
+| `/worker`, `/functions` | The sign-in function (`worker/src/index.ts` holds the logic and tests; `functions/api/auth/` connects it to Cloudflare Pages) | Deployed with the dashboard, on its own address |
 | `/fixtures` | Small test repos used in CI and acceptance tests | Not shipped |
 | `/docs` | These docs plus the public README and guides | Published with the dashboard |
 
@@ -80,7 +80,7 @@ Setup adds four things to the user's repo: a `.factory/` folder, factory workflo
 ```
 .factory/
   definition/                 ← factory definition: changes need a trusted human's approval
-    factory.yaml              ← pipelines, triggers, schedules, toggles, models, budget
+    factory.yaml              ← pipelines, triggers, schedules, toggles, models, budget (changed from the dashboard, never by hand)
     policy.yaml               ← path policy, trust, guardrail paths
     roles/                    ← triage, spec, builder, verifier, gardener, hardener, scorer
     context/                  ← feature-map.md, runbook.md, fundamentals.md, history.md
@@ -336,6 +336,11 @@ the PR. One layout everywhere:
    verifier". Images show inline; a video shows its poster linking to the
    file, since GitHub plays only its own uploads; text proof shows inline.
    When the body cannot hold it all, the rest continues in one PR comment.
+   Recordings are made to fit by `bsf report store` before anything is stored
+   (`runner/src/lib/recordings.ts`, needs ffmpeg, which Playwright installs on
+   the runner): an H.264 MP4 under 8 MB a clip and 24 MB a PR, a GIF preview of
+   at most 20 s, the original kept only as a workflow artifact. A UI-touching
+   change (`ui_change: true` in the spec) fails the check with no video.
 3. **Key things to focus on** — the biggest changes to be aware of.
 4. **Read more** — the full spec, a technical and a conceptual breakdown.
 

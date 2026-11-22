@@ -2,7 +2,8 @@
 
 import { useMemo } from "react";
 import { readSession } from "@/lib/session";
-import { useClient, useIndex } from "@/lib/data";
+import { useClient, useFactorySettings, useIndex } from "@/lib/data";
+import { EmptyFactoryNote } from "@/components/empty-factory";
 import {
   PageHead, Section, Figure, Gauge, Bars, Note, Empty,
   asPct, asPct1, asUsd, asDuration, asCount, asDecimal,
@@ -15,6 +16,7 @@ export default function Dashboard() {
   const auth = session === null ? null : { token: session.token, repo: session.repo };
   const client = useClient(auth);
   const index = useIndex(client);
+  const settings = useFactorySettings(client);
 
   if (index.state === "loading") return <Loading />;
   if (index.state === "error") {
@@ -33,6 +35,7 @@ export default function Dashboard() {
     return (
       <>
         <PageHead title="Dashboard" />
+        <EmptyFactoryNote installed={settings.state === "ready" ? settings.data !== null : null} />
         <Empty title="No measurements yet">
           The factory writes its records as it works. Once the first run finishes, every number on
           this page fills in from the factory&rsquo;s own data.

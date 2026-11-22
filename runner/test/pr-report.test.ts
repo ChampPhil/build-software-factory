@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { renderReport, renderBlock, readReportFile, MARKER, CONTINUED_MARKER, type StoredReport } from "../src/commands/pr-report.js";
+import { renderReport, renderBlock, readReportFile, attachRecordings, needsVideo, MARKER, CONTINUED_MARKER, type StoredReport } from "../src/commands/pr-report.js";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -111,5 +111,70 @@ describe("the setup agent's report file", () => {
     const bad = readReportFile(write({ schema: "pr-report/1", blocks: [] }));
     expect(bad.report).toBeNull();
     expect(bad.why).not.toBe("");
+  });
+});
+
+describe("recordings on a PR", () => {
+  const clip = { source: "verification.webm", file: "recordings/verification.pr.mp4", poster: "recordings/verification.pr.gif", seconds: 42, bytes: 2_500_000 };
+
+  it("puts an unreferenced recording at the front, captioned", () => {
+    const r = attachRecordings({ schema: "pr-report/1", summary: ["x"], blocks: [{ type: "file", file: "a.png", caption: "A" }] }, [clip]);
+    expect(r.blocks[0]).toEqual({
+      type: "file",
+      file: "recordings/verification.pr.mp4",
+      caption: "Screen recording of the running app (verification)",
+      poster: "recordings/verification.pr.gif",
+    });
+    expect(r.blocks).toHaveLength(2);
+  });
+
+  it("swaps a block that names the original for the stored copy, keeping the caption", () => {
+    const r = attachRecordings(
+      { schema: "pr-report/1", summary: ["x"], blocks: [{ type: "file", file: "verification.webm", caption: "The whole flow" }] },
+      [clip],
+    );
+    expect(r.blocks).toEqual([
+      { type: "file", file: "recordings/verification.pr.mp4", caption: "The whole flow", poster: "recordings/verification.pr.gif" },
+    ]);
+  });
+
+  it("changes nothing when there are no recordings", () => {
+    const rep = { schema: "pr-report/1" as const, summary: ["x"], blocks: [] };
+    expect(attachRecordings(rep, [])).toBe(rep);
+  });
+
+  it("shows the poster linking to the video, with its length and size", () => {
+    const v = stored("verifier", {
+      schema: "pr-report/1",
+      summary: ["ok"],
+      blocks: [{ type: "file", file: "recordings/verification.pr.mp4", caption: "Walkthrough", poster: "recordings/verification.pr.gif" }],
+    });
+    const out = renderBlock("o/r", { ...v, videos: [{ file: "recordings/verification.pr.mp4", seconds: 75, bytes: 2_621_440 }] }, v.report.blocks[0]!);
+    expect(out).toMatch(/\[!\[Walkthrough — play the video\]\([^)]*verification\.pr\.gif\?raw=true\)\]\([^)]*verification\.pr\.mp4\?raw=true\)/);
+    expect(out).toContain("1:15");
+    expect(out).toContain("2.5 MB");
+  });
+
+  it("asks for a video when the change touches the UI and none was recorded", () => {
+    const withoutVideo = renderReport({ repo: "o/r", kind: "change", reports: [verifier], needsVideo: true });
+    expect(withoutVideo.problems.join(" ")).toContain("no role recorded a video");
+    const withVideo = renderReport({
+      repo: "o/r",
+      kind: "change",
+      reports: [stored("verifier", { schema: "pr-report/1", summary: ["ok"], blocks: [{ type: "file", file: "r/v.pr.mp4", caption: "Walk" }] })],
+      needsVideo: true,
+    });
+    expect(withVideo.problems.join(" ")).not.toContain("no role recorded a video");
+  });
+
+  it("does not ask for one when the change has no UI", () => {
+    expect(renderReport({ repo: "o/r", kind: "change", reports: [verifier] }).problems.join(" ")).not.toContain("video");
+  });
+
+  it("needs a video only for product work the spec says touches the UI", () => {
+    expect(needsVideo({ pipeline: "product_work", spec: { ui_change: true } } as never)).toBe(true);
+    expect(needsVideo({ pipeline: "product_work", spec: { ui_change: false } } as never)).toBe(false);
+    expect(needsVideo({ pipeline: "gardening", spec: { ui_change: true } } as never)).toBe(false);
+    expect(needsVideo(null)).toBe(false);
   });
 });

@@ -1,0 +1,19 @@
+name: Feature
+description: Ask the factory to add or change something.
+title: "[Feature] "
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What do you want?
+      description: Say it the way you would to a teammate. What should a person be able to do?
+    validations:
+      required: true
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: What should be true when this is done? The factory checks its work against this.
+      placeholder: A signed-in user can export their data as CSV from the settings page.
+    validations:
+      required: false
