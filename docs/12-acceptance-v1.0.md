@@ -1,170 +1,167 @@
 # Build Software Factory — v1.0 Acceptance Report
 
-Nov 20, 2026 · Claude
+Nov 21–22, 2026 · Claude
 
-The nine v1.0 acceptance criteria from the Build Plan, with what is actually
-established and how. Read this with [the v0.1 report](11-acceptance-v0.1.md),
-whose verdicts and their meanings this one reuses.
+The nine v1.0 acceptance criteria from the Build Plan, with what is
+established and how. A verdict is **met** only where it was seen happen on a
+real repository; **logic proven** means the deciding code is tested but the
+live event has not occurred; **partly** says which half is which.
 
 ## Where this stands
 
-**Two criteria are met in logic, three partly, four are blocked on a factory
-that has run.** 919 runner tests and 75 dashboard tests, all passing; CI runs
-them on every push, along with the gates and rule packs against the real
-fixtures with the real tools.
+| # | Criterion | Verdict |
+| --- | --- | --- |
+| 1 | A scheduled review on a factory with 50+ runs routes every problem | **Partly**: routing is live on 5 real runs; there are not 50 |
+| 2 | A degraded context file is caught, fixed and shown to improve over 3 repeats | **Logic proven**: no benchmark was paid for |
+| 3 | A change that lowers the score or raises cost >20% is not proposed | **Logic proven** |
+| 4 | The benchmark set includes corrected and escalated runs | **Logic proven** |
+| 5 | The cost vs quality chart shows three configurations | **Logic proven**: no benchmark was paid for |
+| 6 | Setup completes on every fixture repo | **Met** |
+| 7 | Re-running the skill changes nothing unless asked | **Met** |
+| 8 | A schema-major upgrade arrives as a Dependabot PR, then migrates | **Deferred** until the repository is public |
+| 9 | On Philip's repo, three pipelines have each merged a PR | **Partly**: all three ran end to end; trinsports' PRs cannot be verified behind Google sign-in yet |
 
-The blocking is one thing, not four: **no factory has run a pipeline on a
-repository yet.** Four of the nine criteria are statements about fifty runs, a
-merged PR per pipeline, a review of real work, or a setup that completed. None
-of those can be manufactured — a benchmark over invented runs would measure
-nothing, and claiming otherwise would be the failure this report exists to
-prevent.
+Also proven live, and not a numbered criterion because it was added after the
+plan was written: **the budget cannot be exceeded** (below).
 
-What that needs is in [What is still needed](#what-is-still-needed) at the
-end: it is short, and all of it is Philip's.
+1,192 runner tests pass on every push, with lint, typecheck, the schema freeze
+and a gh-aw compile of every role workflow.
+
+## The budget, and why the factory runs on Claude Code only
+
+On Nov 21 the factory's $35 monthly cap turned out to count nothing: the
+rollup wrote back the budget it had read, so spend never accumulated, and it
+read the spend from a key nobody wrote. About $370 went on Opus across the
+test fixtures that day before this was found. The budget was rebuilt as a
+ceiling (doc 07, §Budget) and proven:
+
+- **The cap it rests on works on Claude Code.** gh-aw's per-step credit cap,
+  set to 2 credits: the proxy refused the agent's second request and it
+  stopped at $0.061 (`bsf-fixtures/go-cli` run 44946845429).
+- **It does not work on Cursor CLI.** The same 2-credit cap: 49 tool calls,
+  about $0.58, 29 times the cap (run 44940807705). Cursor's requests go to
+  Cursor's own servers, which gh-aw's proxy never sees. The factory therefore
+  runs on Claude Code only.
+- **A step that could pass the budget does not start.** A $0.01 budget
+  refused the first step before its agent ran, and charged $0
+  (run 44951031834).
+- **What it charges is never below what was spent.** Across every agent and
+  detection step on go-cli from 21:20 to 22:35 UTC, the real cost was $1.24
+  and the factory charged $5.58; Philip's Anthropic console showed $1.30 for
+  the window (the extra $0.06 is the cap test). Most of the gap was two bugs
+  found during the proof and fixed: detection usage was not read, so each step
+  was charged its full detection ceiling.
+- **Work that cannot fit waits.** With most of a share held, queued work was
+  left queued rather than started and refused ("waiting for budget"),
+  repeatedly, on ts-webapp and trinsports.
 
 ## The criteria
 
-### 1. A scheduled review on a factory with 50+ runs routes every problem
+### 1. A scheduled review routes every problem
 
-**Partly.** The routing is proven; the fifty runs are not.
+**Partly.** The review ran end to end on `bsf-fixtures/ts-webapp`
+(run 44968432870): it scored 5 real runs on every rubric criterion (50
+scores), routed 3 problems (a context gap in `app/invoices`, seen 3 times, to
+a definition change; "overclaimed" and "wrong scope" to hardening), filed
+three work items and wrote `reviews/2026-11-22.json`. Getting there found and
+fixed four bugs that only a real review could: the scorer was never given the
+diffs (gh-aw's integrity filter rightly refuses the bot's own PRs, so the
+runner now fetches them), it was never told its output format, the record
+failed its own schema, and a review with no problems wrote no record.
 
-`review.test.ts` decides the same question the criterion asks, on the same
-inputs: scores are grouped by tag and area; a problem a deterministic check
-could catch routes to hardening; one the agent could not have known routes to
-a definition change; an unrecognised tag defaults to hardening, which is the
-cheaper mistake to make. Problem ids are stable across calls, so the same
-problem in two reviews is one problem.
+Not met: fifty runs. ts-webapp has had about ten. The scorer still raises
+gh-aw's "incomplete" signal when some criteria lack evidence, which turns the
+job red although the review completes.
 
-`reviewDue` is proven separately: it skips below the minimum run count however
-long it has been, runs after the interval, and runs early when runs pile up.
+### 2. A degraded context file is caught, fixed and improves over 3 repeats
 
-What is unproven is the criterion's own setting — a real review over fifty
-real runs, where the scores come from a grader rather than a fixture.
+**Logic proven.** The scorers, task builder, admission rule, three-repeat
+comparison and spread are built and tested (`benchmark.test.ts`,
+`review.test.ts`). A benchmark run costs roughly $10–15 and was not paid for.
 
-### 2. A degraded context file is caught, fixed, and shown to improve over 3 repeats
+### 3. A change that lowers the score or raises cost >20% is not proposed
 
-**Blocked.** This needs the model key and a factory that has produced enough
-completed work to build benchmark tasks from. Every piece it is made of is
-built and tested — the scorers, the task builder, the admission rule, the
-three-repeat comparison and its spread — but the criterion is a claim about
-what happens when they are pointed at a real degraded runbook, and that has
-not happened.
+**Logic proven.** `admitDefinitionChange` refuses each case separately: a gain
+inside the run-to-run spread, failure tasks that did not improve, a
+regression, too few tasks or repeats, and a cost rise over 20%; a task that
+stopped passing a check the reference merge passed vetoes the change whatever
+the scores say.
 
-### 3. A change that lowers the score or raises cost by more than 20% is not proposed
+### 4. The benchmark set includes corrected and escalated runs
 
-**Logic proven.** `review.test.ts` → `admitDefinitionChange` refuses each
-case separately: a gain inside the run-to-run spread, failure tasks that did
-not improve, anything else regressing, too few tasks, too few repeats, and a
-cost rise over twenty per cent. `benchmark.test.ts` adds the veto that sits
-above all of them: a task that stopped passing a check the reference merge
-passed refuses the change whatever the scores say, and a check that was
-already failing does not veto.
+**Logic proven.** `originOf`, `buildTasks` and the corrected-task rubric
+(`benchmark.test.ts`).
 
-The one that matters most is the first. A change whose number went up by less
-than the noise has not been shown to be better, and the Improvement page
-labels that "no clear winner" rather than a win.
+### 5. The cost vs quality chart shows three configurations
 
-### 4. The benchmark set includes corrected and escalated runs, graded against the human's fix
+**Logic proven.** The chart's arithmetic (`improvement.test.ts`); three
+configurations need benchmark runs, as in 2.
 
-**Logic proven.** `benchmark.test.ts` → `originOf` tells a clean run from one
-a human had to fix and prefers an explicit mark over what the run did;
-`buildTasks` skips a run that is already a task, one with nothing to grade
-against, and one with no base commit; and a corrected task's rubric names what
-went wrong last time and says it has not passed, which a clean task's rubric
-does not.
+### 6. Setup completes on every fixture repo
 
-### 5. The cost vs quality chart shows three configurations, current one marked
+**Met.** Setup ran in Actions on all nine fixtures and each setup PR merged,
+with the tier the trial measured:
 
-**Partly.** The chart is built and its arithmetic is proven; three real
-configurations are not, because no benchmark has run.
+| Fixture | Tier | Setup PR |
+| --- | --- | --- |
+| ts-webapp | renders | #8 |
+| py-api | renders | #6 |
+| js-legacy | renders | #17 |
+| java-service | renders | #8 |
+| csharp-api | renders | #10 |
+| go-cli | build_and_test | #8 |
+| rust-lib | build_and_test | #9 |
+| ruby-app | build_and_test | #9 |
+| polyglot-monorepo | build_and_test | #10 |
 
-`improvement.test.ts` covers what the chart has to get right: one point per
-configuration rather than one per side, so a configuration measured in two
-comparisons is one point and the newest measurement wins; the frontier marks
-every point nothing beats for the money; a side with no models recorded falls
-back to its label. `benchmark.test.ts` covers the numbers behind a point,
-including that the spread is how much the score moves between repeats — drawn
-through each point, so a number that wobbles cannot be read as precise.
+A product PR from the factory has merged on six of them (ts-webapp #19, py-api
+#11, js-legacy #11, go-cli #15, java-service #13, csharp-api #17), and on
+go-cli a full run from issue to a PR with every gate green ran under the new
+budget (issue #30 → PR #32).
 
-`bsf benchmark run` now persists the comparison, which is what makes three
-configurations accumulate at all; before this they existed only in a CI log.
+### 7. Re-running the skill changes nothing unless asked
 
-### 6. Setup completes on every fixture repo, all eight languages and the monorepo
+**Met.** Reinstalling the same version on all nine fixtures produced no change
+("already at 964bffd"), and the installer keeps every definition file it finds
+(`kept 22 existing file(s)`) unless `--force` is passed. Re-mine and repair
+are covered by `skill.test.ts` and `doctor.test.ts`.
 
-**Blocked, and the fixtures are ready.** All eight rule packs exist; five are
-verified by running the real tool (eslint, ruff, clippy, go vet, javac) and
-three are `documented_not_run` where the toolchain could not be installed
-here, which the packs say rather than imply. Data-flow rules run live on CI
-through Semgrep.
+### 8. A schema-major upgrade arrives as a Dependabot PR
 
-All eight fixture repos now exist, each with its own CI: `ts-webapp`,
-`py-api`, `js-legacy`, `go-cli`, `java-service`, `rust-lib`, `csharp-api`,
-`ruby-app`, plus `polyglot-monorepo`. `rust-lib` builds, tests and lints clean
-here; `ruby-app`'s tests pass here and its lint runs on CI; `csharp-api` is
-honest that it has not been built here at all.
+**Deferred.** Dependabot cannot watch a private repository's releases for this;
+the alerts are to be set up when the repository is made public. The machinery
+is built and frozen (`schema/SURFACE.json`, `bsf migrate`).
 
-What is missing is running the setup skill against them, which needs Docker
-and a machine that is not this container.
+### 9. On Philip's repo, three pipelines have each merged a PR
 
-### 7. Re-running the skill changes nothing unless the user picks re-mine or repair
+**Partly.** On `ChampPhil/trinsports`:
 
-**Partly.** The two modes are built; the claim about a full re-run is not
-tested end to end.
+- **Product work:** issue #12 (a team's current streak) → triage, an Opus
+  spec, a build → PR #13, rebuilt on main as #17 after a conflict.
+- **Gardening:** the nightly gardener, run once by hand → PR #16.
+- **Hardening:** run end to end on `bsf-fixtures/ts-webapp` instead, where it
+  could be shipped without another upgrade PR: an issue labelled
+  `factory:harden` (#48, money must only be formatted through
+  `lib/invoices`) → hardener → PR #53 with a lint rule, and PR #55 with the
+  rule and its test, every gate green. Two PRs from one item was a bug, fixed:
+  when the hardener opens its PR, spec and build are now skipped. The label
+  itself was documented and never implemented; it is now.
 
-`bsf doctor` is the diagnosis the skill's repair mode is required to do before
-touching anything: it reports a missing definition, role, context or rubric
-file, a guardrail file that no longer validates, a missing workflow, a lock
-file too stale for gh-aw to run and — with `--repo` — a missing secret or
-variable. It changes nothing, and `doctor.test.ts` proves that against a
-factory installed from the templates, then against six separate breakages.
+Not met: nothing has merged on trinsports from these, because the verifier
+cannot check its pages. The app builds, starts and answers in the sandbox
+(fixed tonight: the sandbox ran `next start` without `next build`, and served
+the default branch rather than the PR), but every team page is behind Google
+sign-in, and the browser rejects the sandbox's stand-in for Google's TLS
+certificate. The verifier filed that as a sandbox report; the factory's way to
+act on it is a setup amendment.
 
-`bsf mine-corrections --merge-into` is re-mine: `skill.test.ts` runs it twice
-over a real git repository and shows that a candidate the user rejected is not
-offered again.
-
-### 8. A schema-major upgrade arrives as a Dependabot PR, then a definition PR migrates the config
-
-**Blocked on a release.** The machinery is built and frozen: schema 1.0 is
-recorded in `schema/SURFACE.json`, `bsf schema-surface --check` fails a
-breaking change and names it, `bsf migrate` writes migrated files beside the
-originals and never over them, and `bsf migrate --support` prints what the
-runner reads and writes. There is no second major to migrate to yet, which is
-the point of a freeze rather than a gap in it.
-
-### 9. On Philip's old repo, three pipelines have each merged a PR
-
-**Blocked.** This is the criterion the others serve, and it needs the factory
-installed and running on `ChampPhil/trinsports`.
-
-One thing worth saying about that repository now, because it bears on the
-first thing the factory would do there: `npm run build` runs `db:migrate`, and
-`drizzle.config.ts` loads `.env.local`. Anything running the documented build
-command on a machine with that file present migrates the real Neon dev
-branch. That is worth guarding before an agent ever runs it.
+Trinsports spent $10.03 of its $35 getting here, most of it on two Opus specs
+(one for the conflict rebuild) and verifier runs that could not complete.
 
 ## What is still needed
 
-Everything below is Philip's; none of it can be done from here.
-
-1. **Install the factory App on the repositories it should act on** —
-   `bsf-fixtures/*`, `ChampPhil/trinsports`. The App exists; whether it is
-   installed cannot be checked from here, because the endpoint that would say
-   needs the App's own credentials.
-2. **Run setup on a machine with Docker.** Phase 2 builds the sandbox and
-   proves the app runs inside it; without that there is no runtime
-   verification, and the skill stops rather than installing a factory that
-   cannot verify its own work.
-3. **Delete five leftover probe branches** that the proxy here refuses to
-   remove: `probe-branch`, `factory/probe-policy`, `factory/probe-clean`,
-   `factory/probe-testedit` on `bsf-fixtures/ts-webapp`, and
-   `probe/write-test` on `build-software-factory`. Plus
-   `factory/corrections-champphil-2026-11-20-8fc06a`, left behind when a
-   contribution's branch pushed and its pull request then failed.
-4. **The App's login is no longer a variable.** The workflows that need it
-   pass the token step's own `app-slug`, so renaming the App cannot leave a
-   stale login behind.
-
-Once the App is installed and setup has run once, criteria 1, 2, 5, 6, 7 and 9
-become measurable rather than blocked, and this report can be finished with
-evidence rather than with reasons.
+1. **Google sign-in in trinsports' sandbox**, by a setup amendment (Philip's
+   call: a setup round is capped at $10), then re-verifying #16 and #17.
+2. **The repository made public**, then Dependabot alerts (criterion 8).
+3. **Fifty runs** on one repository for criterion 1 as written, and a paid
+   benchmark for 2 and 5, if wanted.
