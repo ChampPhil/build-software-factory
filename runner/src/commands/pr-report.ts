@@ -402,6 +402,51 @@ async function upsertContinued(gh: GitHub, pr: number, text: string | null): Pro
  * the app running in the frozen sandbox put first, because that is the proof
  * a person most needs. Stored on the media ref under the setup run.
  */
+/** Fields the schema caps, and the cap. Text past it is cut, not refused. */
+const TEXT_CAPS: readonly { readonly path: readonly string[]; readonly max: number }[] = [
+  { path: ["summary", "*"], max: 200 },
+  { path: ["blocks", "*", "caption"], max: 300 },
+  { path: ["blocks", "*", "title"], max: 200 },
+  { path: ["focus", "*", "title"], max: 120 },
+  { path: ["focus", "*", "detail"], max: 1000 },
+];
+
+function clampAt(node: unknown, path: readonly string[], max: number, label: string, out: string[]): void {
+  if (path.length === 0 || node === null || typeof node !== "object") return;
+  const [head, ...rest] = path;
+  const holder = node as Record<string, unknown>;
+  const keys = head === "*" ? (Array.isArray(node) ? node.map((_, i) => String(i)) : []) : [head as string];
+  for (const k of keys) {
+    const v = holder[k];
+    if (rest.length === 0) {
+      if (typeof v === "string" && v.length > max) {
+        holder[k] = `${v.slice(0, max - 1).trimEnd()}…`;
+        out.push(`${label}${k} was ${v.length} characters; the limit is ${max}`);
+      }
+    } else {
+      clampAt(v, rest, max, `${label}${k}/`, out);
+    }
+  }
+}
+
+/** The setup agent's report, cut to the schema's limits where it ran over. */
+export function readReportFile(file: string): { report: PrReport | null; clamped: string[]; why: string } {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(readFileSync(file, "utf8"));
+  } catch (e) {
+    return { report: null, clamped: [], why: `it is not JSON (${(e as Error).message})` };
+  }
+  const clamped: string[] = [];
+  for (const c of TEXT_CAPS) clampAt(raw, c.path, c.max, "", clamped);
+  try {
+    assertValid("pr-report", raw);
+  } catch (e) {
+    return { report: null, clamped, why: (e as Error).message.split("\n").slice(0, 3).join("; ") };
+  }
+  return { report: raw as PrReport, clamped, why: "" };
+}
+
 export async function renderSetupReport(opts: {
   readonly gh: GitHub;
   readonly dir: string;
@@ -416,8 +461,18 @@ export async function renderSetupReport(opts: {
   const problems: string[] = [];
   let report: PrReport;
   if (existsSync(file)) {
-    report = JSON.parse(readFileSync(file, "utf8")) as PrReport;
-    assertValid("pr-report", report);
+    const parsed = readReportFile(file);
+    if (parsed.report === null) {
+      // The agent's write-up is prose around a sandbox that has already been
+      // measured. A write-up that will not parse must not stop the sandbox
+      // from landing: say so, and describe the sandbox mechanically.
+      problems.push(`the setup agent's report could not be used: ${parsed.why}`);
+      report = { schema: "pr-report/1", summary: [`The factory's sandbox for this repo, measured at tier ${opts.tier}.`], blocks: [] };
+    } else {
+      report = parsed.report;
+      // Shortened text is not missing proof, so it is not a problem on the PR.
+      for (const c of parsed.clamped) process.stdout.write(`  report text shortened: ${c}\n`);
+    }
   } else {
     problems.push("the setup agent wrote no report");
     report = { schema: "pr-report/1", summary: [`The factory's sandbox for this repo, measured at tier ${opts.tier}.`], blocks: [] };

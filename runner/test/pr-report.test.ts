@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { renderReport, renderBlock, MARKER, CONTINUED_MARKER, type StoredReport } from "../src/commands/pr-report.js";
+import { renderReport, renderBlock, readReportFile, MARKER, CONTINUED_MARKER, type StoredReport } from "../src/commands/pr-report.js";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const stored = (role: string, report: StoredReport["report"], inline: Record<string, string> = {}): StoredReport => ({
   role, attempt: 1, report, media_commit: "abc123", media_prefix: `reports/wi_X/${role}-1`, inline, problems: [], stored_at: "2026-11-21T00:00:00Z",
@@ -85,5 +88,28 @@ describe("a PR with more proof than one body holds", () => {
 describe("a file with no inline form", () => {
   it("is a link, never dropped", () => {
     expect(renderBlock("o/r", builder, { type: "file", file: "trace.zip", caption: "Playwright trace" })).toMatch(/📎 \[Playwright trace\]/);
+  });
+});
+
+describe("the setup agent's report file", () => {
+  const dir = mkdtempSync(join(tmpdir(), "bsf-rf-"));
+  const write = (v: unknown): string => {
+    const f = join(dir, `r${Math.random().toString(36).slice(2)}.json`);
+    writeFileSync(f, typeof v === "string" ? v : JSON.stringify(v));
+    return f;
+  };
+
+  it("cuts a summary line that runs over its limit instead of refusing the report", () => {
+    const r = readReportFile(write({ schema: "pr-report/1", summary: ["x".repeat(223), "ok"], blocks: [] }));
+    expect(r.report?.summary[0]).toHaveLength(200);
+    expect(r.report?.summary[0]?.endsWith("…")).toBe(true);
+    expect(r.clamped).toHaveLength(1);
+  });
+
+  it("returns no report, with a reason, when the file is not JSON or breaks the schema another way", () => {
+    expect(readReportFile(write("{nope")).report).toBeNull();
+    const bad = readReportFile(write({ schema: "pr-report/1", blocks: [] }));
+    expect(bad.report).toBeNull();
+    expect(bad.why).not.toBe("");
   });
 });
