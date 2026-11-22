@@ -395,4 +395,9 @@ describe("the harden label", () => {
     const bot = runIntake([ev({ id: 7, kind: "issue_labeled", labels: ["factory:harden"], label_added: "factory:harden", labeled_by: "factory-app[bot]" })], ctx());
     expect(bot.decisions[0]!.workItem).toBeNull();
   });
+
+  it("makes an issue opened with the label hardening only, not product work as well", () => {
+    const res = runIntake([ev({ id: 8, kind: "issue_opened", labels: ["factory:harden"] })], ctx());
+    expect(res.decisions[0]!.workItem?.pipeline).toBe("hardening");
+  });
 });

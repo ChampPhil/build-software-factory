@@ -229,7 +229,11 @@ function decide(incoming: IncomingEvent, ctx: IntakeContext): IntakeDecision {
   const event: IncomingEvent =
     incoming.kind === "issue_labeled" && incoming.label_added === hardenLabel
       ? { ...incoming, kind: "correction", actor: incoming.labeled_by ?? incoming.actor, actor_association: "MEMBER", actor_is_bot: false }
-      : incoming;
+      : // Opened with the label already on it: hardening only, not product
+        // work as well. The author could label it, so they have triage access.
+        incoming.kind === "issue_opened" && (incoming.labels ?? []).includes(hardenLabel)
+        ? { ...incoming, kind: "correction" }
+        : incoming;
   const route = ROUTE[event.kind];
 
   if (event.from_fork === true) {

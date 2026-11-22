@@ -347,6 +347,18 @@ export async function reviewWrite(opts: {
   readonly plan?: boolean;
 }): Promise<ReviewWriteReport> {
   const failures = normalizeScores(JSON.parse(readFileSync(opts.scores, "utf8")) as unknown);
+  // The window starts where review-collect began: the last review's end, or
+  // the oldest run it handed over. It sits beside the scores.
+  let windowFrom: string | undefined;
+  const collected = join(dirname(opts.scores), "to-score.json");
+  if (existsSync(collected)) {
+    try {
+      const c = JSON.parse(readFileSync(collected, "utf8")) as { since?: string | null; runs?: { ended_at?: string }[] };
+      windowFrom = c.since ?? c.runs?.map((r) => r.ended_at).filter((x): x is string => typeof x === "string").sort()[0];
+    } catch {
+      /* no window start: the record says from = to */
+    }
+  }
 
   // Only 1s and 2s, escalations, reverts and corrections are failures (doc 06).
   // A 4 is not a problem, and routing one would fill the queue with noise.
@@ -358,6 +370,7 @@ export async function reviewWrite(opts: {
     now: opts.now,
     failures: real,
     allScores: failures,
+    ...(windowFrom === undefined ? {} : { windowFrom }),
     ...(opts.plan === true ? { plan: true } : {}),
   });
   return {
