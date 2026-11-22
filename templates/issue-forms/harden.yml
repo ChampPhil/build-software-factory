@@ -1,0 +1,20 @@
+name: Harden this
+description: A mistake the factory (or anyone) keeps making. The factory changes the codebase so it cannot happen again.
+title: "[Harden] "
+labels: ["factory:harden"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What went wrong, and where?
+      description: Link the pull request, file or line if you can.
+    validations:
+      required: true
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: What should be impossible, or caught automatically, afterwards?
+      placeholder: Nothing calls fetch directly; every request goes through apiClient.
+    validations:
+      required: false

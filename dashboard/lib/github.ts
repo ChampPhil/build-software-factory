@@ -1,3 +1,5 @@
+import type { IssueComment } from "./questions";
+import { PERMISSIONS, missingPermissionMessage, permissionForRequest, type PermissionNeed } from "./permissions";
 /**
  * The dashboard's GitHub client, running in the browser with the user's own
  * token. No data passes through any server the maintainer runs.
@@ -6,6 +8,8 @@
  * user's behalf: approving a PR, posting a comment, creating an issue,
  * dispatching a workflow.
  */
+
+const API_ORIGIN = "https://api.github.com";
 
 export interface Auth {
   readonly token: string;
@@ -17,6 +21,7 @@ export class GitHubHttpError extends Error {
     readonly status: number,
     readonly path: string,
     readonly body: string,
+    readonly method: string = "GET",
   ) {
     super(`GitHub ${status} on ${path}`);
     this.name = "GitHubHttpError";
@@ -28,9 +33,15 @@ export class GitHubHttpError extends Error {
       case 401:
         return "That token was refused. It may have expired, or been revoked.";
       case 403:
-        return "That token does not have permission for this. Check its repository access and scopes.";
-      case 404:
-        return "Not found. Either it does not exist, or the token cannot see it.";
+      case 404: {
+        // A token missing a permission gets a bare 403 or 404. Naming the permission
+        // turns that into something a person can fix.
+        const perm = this.method === "GET" && this.status === 404 ? null : permissionForRequest(this.method, this.path);
+        if (perm !== null) return missingPermissionMessage(perm);
+        return this.status === 403
+          ? "That token does not have permission for this. Check its repository access and permissions."
+          : "Not found. Either it does not exist, or the token cannot see it.";
+      }
       case 422:
         return "GitHub rejected the request as invalid.";
       default:
@@ -52,7 +63,9 @@ export class GitHubClient {
 
   constructor(
     private readonly auth: Auth,
-    private readonly fetchImpl: typeof fetch = fetch,
+    // Wrapped, not `fetch` itself: kept as a property and called as `this.fetchImpl(...)`,
+    // the browser's fetch runs with the client as `this` and throws "Illegal invocation".
+    private readonly fetchImpl: typeof fetch = (input, init) => fetch(input, init),
   ) {}
 
   get rateLimit(): RateLimit | null {
@@ -64,7 +77,12 @@ export class GitHubClient {
   }
 
   private async request(path: string, init: RequestInit = {}): Promise<Response> {
-    const url = path.startsWith("https://") ? path : `https://api.github.com/${path.replace(/^\//, "")}`;
+    // The token goes to GitHub's API and nowhere else. A caller handing over any other
+    // address is a bug, and it must fail before the Authorization header is built.
+    if (/^[a-z][a-z0-9+.-]*:/i.test(path) && !path.startsWith(API_ORIGIN + "/")) {
+      throw new Error("Refusing to send the token anywhere but GitHub's API.");
+    }
+    const url = path.startsWith("https://") ? path : `${API_ORIGIN}/${path.replace(/^\//, "")}`;
     const res = await this.fetchImpl(url, {
       ...init,
       headers: {
@@ -90,7 +108,7 @@ export class GitHubClient {
 
   async get<T>(path: string): Promise<T> {
     const res = await this.request(path);
-    if (!res.ok) throw new GitHubHttpError(res.status, path, await res.text());
+    if (!res.ok) throw new GitHubHttpError(res.status, path, await res.text(), "GET");
     return (await res.json()) as T;
   }
 
@@ -98,7 +116,7 @@ export class GitHubClient {
   async getOrNull<T>(path: string): Promise<T | null> {
     const res = await this.request(path);
     if (res.status === 404) return null;
-    if (!res.ok) throw new GitHubHttpError(res.status, path, await res.text());
+    if (!res.ok) throw new GitHubHttpError(res.status, path, await res.text(), "GET");
     return (await res.json()) as T;
   }
 
@@ -107,7 +125,7 @@ export class GitHubClient {
       method,
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
-    if (!res.ok) throw new GitHubHttpError(res.status, path, await res.text());
+    if (!res.ok) throw new GitHubHttpError(res.status, path, await res.text(), method);
     const text = await res.text();
     return (text === "" ? {} : JSON.parse(text)) as T;
   }
@@ -150,6 +168,72 @@ export class GitHubClient {
       .sort((a, b) => b.localeCompare(a));
   }
 
+  /**
+   * A JSON file from the repository's default branch. The guardrails live
+   * there (`.factory/guardrails/`), changed only by reviewed PRs, not on the
+   * data ref.
+   */
+  async fileFromRepo<T>(path: string): Promise<T | null> {
+    const res = await this.getOrNull<{ content?: string }>(
+      `repos/${this.auth.repo}/contents/${encodeURI(path)}`,
+    );
+    if (res === null || res.content === undefined) return null;
+    try {
+      return JSON.parse(decodeBase64(res.content)) as T;
+    } catch {
+      return null;
+    }
+  }
+
+  async defaultBranch(): Promise<string> {
+    const repo = await this.get<{ default_branch: string }>(`repos/${this.auth.repo}`);
+    return repo.default_branch;
+  }
+
+  /** Accept or reject a guardrail candidate. The factory's intake records it and, for accept, starts hardening on it. */
+  async decideCandidate(id: string, decision: "accept" | "reject"): Promise<void> {
+    await this.dispatchWorkflow("factory-intake.yml", await this.defaultBranch(), {
+      kind: decision === "accept" ? "candidate_accept" : "candidate_reject",
+      title: id,
+    });
+  }
+
+  /** Send one dashboard decision to the factory's intake (the browser cannot write the data ref). */
+  async dispatchIntake(kind: string, title: string, body?: string): Promise<void> {
+    await this.dispatchWorkflow("factory-intake.yml", await this.defaultBranch(), {
+      kind,
+      title,
+      ...(body === undefined ? {} : { body }),
+    });
+  }
+
+  /** Move a request that has not started to another pipeline. The factory refuses it if work has begun. */
+  async moveRequest(workItem: string, pipeline: string): Promise<void> {
+    await this.dispatchIntake("route_override", workItem, pipeline);
+  }
+
+  async addStandingGoal(text: string, lane: string | null): Promise<void> {
+    await this.dispatchIntake("standing_goal_add", text, lane ?? "");
+  }
+
+  async removeStandingGoal(id: string): Promise<void> {
+    await this.dispatchIntake("standing_goal_remove", id);
+  }
+
+  /**
+   * One file from the media ref, as bytes the browser can play or show.
+   *
+   * Asked for raw, so a recording is not wrapped in base64 JSON and is not cut
+   * off at the 1 MB the JSON contents response allows.
+   */
+  async mediaFile(path: string, ref = "refs/factory/media"): Promise<Blob | null> {
+    const url = `repos/${this.auth.repo}/contents/${path.split("/").map(encodeURIComponent).join("/")}?ref=${encodeURIComponent(ref)}`;
+    const res = await this.request(url, { headers: { accept: "application/vnd.github.raw+json" } });
+    if (res.status === 404) return null;
+    if (!res.ok) throw new GitHubHttpError(res.status, url, await res.text());
+    return await res.blob();
+  }
+
   /** Lists the live-status refs, one per run in flight. */
   async liveRefs(): Promise<readonly { readonly ref: string; readonly sha: string }[]> {
     const res = await this.getOrNull<{ ref: string; object: { sha: string } }[]>(
@@ -174,8 +258,41 @@ export class GitHubClient {
   /* ------------------------------------------------------------------ writes */
 
   /** A new request becomes an issue, which the factory picks up like any other. */
-  async createIssue(title: string, body: string): Promise<{ number: number; html_url: string }> {
-    return this.send("POST", `repos/${this.auth.repo}/issues`, { title, body });
+  async createIssue(
+    title: string,
+    body: string,
+    labels: readonly string[] = [],
+  ): Promise<{ number: number; html_url: string }> {
+    return this.send("POST", `repos/${this.auth.repo}/issues`, {
+      title,
+      body,
+      ...(labels.length === 0 ? {} : { labels }),
+    });
+  }
+
+  /** A text file on the default branch, with the sha an update must name. Null when it is not there. */
+  async textFromRepo(path: string, ref?: string): Promise<{ text: string; sha: string } | null> {
+    const q = ref === undefined ? "" : `?ref=${encodeURIComponent(ref)}`;
+    const res = await this.getOrNull<{ content?: string; sha?: string }>(
+      `repos/${this.auth.repo}/contents/${encodeURI(path)}${q}`,
+    );
+    if (res === null || res.content === undefined || res.sha === undefined) return null;
+    return { text: decodeBase64(res.content), sha: res.sha };
+  }
+
+  /** People who can write to the repository, which is who the factory acts for. */
+  async writers(): Promise<readonly { login: string; role: string }[]> {
+    const rows = await this.get<{ login: string; role_name?: string; permissions?: Record<string, boolean> }[]>(
+      `repos/${this.auth.repo}/collaborators?affiliation=all&per_page=100`,
+    );
+    return rows
+      .filter((r) => r.permissions?.["push"] === true || r.permissions?.["admin"] === true)
+      .map((r) => ({ login: r.login, role: r.role_name ?? (r.permissions?.["admin"] === true ? "admin" : "write") }));
+  }
+
+  /** The comments on an issue, oldest first. */
+  async issueComments(number: number): Promise<readonly IssueComment[]> {
+    return this.get<IssueComment[]>(`repos/${this.auth.repo}/issues/${number}/comments?per_page=100`);
   }
 
   async approvePull(number: number, body?: string): Promise<void> {
@@ -207,14 +324,51 @@ export class GitHubClient {
     });
   }
 
-  /** Whether this token can do the things the dashboard offers. */
+  /**
+   * Whether this token can do the things the dashboard offers.
+   *
+   * Reads are probed, one per permission, because a missing one is a 403 that can
+   * be named now. Writes cannot be probed without changing something, so a missing
+   * write permission is named when the request is refused (see `GitHubHttpError.human`).
+   */
   async checkAccess(): Promise<AccessCheck> {
-    const repo = await this.getOrNull<{ permissions?: Record<string, boolean>; private: boolean }>(
-      `repos/${this.auth.repo}`,
-    );
-    if (repo === null) {
-      return { ok: false, reason: "The token cannot see this repository." };
+    const base = `repos/${this.auth.repo}`;
+    const repoRes = await this.request(base);
+    if (repoRes.status === 401) {
+      return { ok: false, reason: "GitHub refused that token. It may be mistyped, expired or revoked." };
     }
+    if (repoRes.status === 404 || repoRes.status === 403) {
+      return {
+        ok: false,
+        reason:
+          "The token cannot see this repository. Check the name, and that the token's repository access includes it (for a repository owned by an organization, the token must be made for that organization).",
+      };
+    }
+    if (!repoRes.ok) throw new GitHubHttpError(repoRes.status, base, await repoRes.text(), "GET");
+    const repo = (await repoRes.json()) as { permissions?: Record<string, boolean> };
+
+    const probes: readonly (readonly [string, string])[] = [
+      ["contents", `${base}/contents`],
+      ["pull_requests", `${base}/pulls?per_page=1`],
+      ["issues", `${base}/issues?per_page=1`],
+      ["actions", `${base}/actions/workflows?per_page=1`],
+      ["checks", `${base}/commits/HEAD/check-runs?per_page=1`],
+    ];
+    const results = await Promise.all(
+      probes.map(async ([key, path]) => [key, (await this.request(path)).status] as const),
+    );
+    const missing: PermissionNeed[] = results
+      .filter(([, status]) => status === 403)
+      .flatMap(([key]) => PERMISSIONS.filter((p) => p.key === key));
+    if (missing.length > 0) {
+      const names = missing.map((m) => m.label).join(", ");
+      return {
+        ok: false,
+        missing,
+        reason: `This token is missing permissions: ${names}. Create it again with the link on this page, which fills them in, and paste the new token.`,
+      };
+    }
+
     const perms = repo.permissions ?? {};
     if (perms["push"] !== true) {
       return {
@@ -228,7 +382,7 @@ export class GitHubClient {
 }
 
 export type AccessCheck =
-  | { readonly ok: false; readonly reason: string }
+  | { readonly ok: false; readonly reason: string; readonly missing?: readonly PermissionNeed[] }
   | { readonly ok: true; readonly readOnly: boolean; readonly reason?: string };
 
 /** Base64 that works in the browser and in Node, for tests. */

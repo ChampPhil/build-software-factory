@@ -1,5 +1,6 @@
 import type { Association, ChangeKind, Policy, PullRequestFacts, Review } from "../lib/types.js";
 import { matchesAny, filesMatching } from "../lib/paths.js";
+import { FACTORY_YAML, GARDEN_WORKFLOW, SETTINGS_LABEL } from "../lib/settings.js";
 
 /**
  * `bsf policy` — the `factory/policy` check.
@@ -99,12 +100,52 @@ function isOneWayGuardrailFile(policy: Policy, file: string): boolean {
   return matchesAny(file, baselines) || matchesAny(file, coverage);
 }
 
+/**
+ * A settings change a trusted person made themselves counts as their approval.
+ *
+ * GitHub will not let a person approve their own pull request, and the
+ * dashboard opens and merges the change with the signed-in person's token, so
+ * for this narrow case the author is the approver. It holds only when the PR:
+ *  - is the same repository's, from no pipeline, labelled `factory:settings`;
+ *  - was opened by a trusted person, never a bot or an App;
+ *  - changes nothing but the settings file and, at most, the cron line of the
+ *    cleanup workflow; and
+ *  - moved only keys on the list of settings a person may change, to values the
+ *    list accepts.
+ * Agents cannot open such a PR: they never hold a person's token, and their
+ * pipelines may not change the definition. The policy file, the sandbox and
+ * every other workflow stay behind a real approval.
+ */
+export function settingsApproval(ctx: PolicyContext): { readonly ok: boolean; readonly note: string | null } {
+  const { policy, pr } = ctx;
+  const e = pr.settings_edit;
+  if (e === undefined || !pr.labels.includes(SETTINGS_LABEL)) return { ok: false, note: null };
+  const why = (reason: string) => ({ ok: false, note: `Not treated as the author's approval: ${reason}.` });
+  if (pr.pipeline !== undefined) return why("a factory pipeline made this PR");
+  if (pr.from_fork) return why("it comes from a fork");
+  if (e.author_is_bot || /\[bot\]$/.test(pr.author) || (ctx.appLogins ?? []).includes(pr.author) || (policy.trust.integration_bots ?? []).includes(pr.author)) {
+    return why("its author is not a person");
+  }
+  if (!policy.trust.associations.includes(e.author_association)) return why("its author is not a trusted person");
+  if (policy.trust.require_write_access !== false && !e.author_has_write) return why("its author does not have write access");
+  const allowedFiles = new Set([FACTORY_YAML, GARDEN_WORKFLOW]);
+  const stray = pr.changed_files.filter((f) => !allowedFiles.has(f));
+  if (stray.length > 0) return why(`it also changes ${stray.join(", ")}`);
+  if (!e.workflow_ok) return why("it changes more of the cleanup workflow than its schedule");
+  if (e.outside.length > 0) return why(`it changes settings that need a second approval: ${e.outside.join(", ")}`);
+  if (e.invalid.length > 0) return why(e.invalid.join(" "));
+  if (e.changed.length === 0) return why("it changes no setting");
+  return { ok: true, note: `Settings change by ${pr.author}, a trusted person: ${e.changed.join(", ")}. Counted as their approval because only settings a person may change were touched.` };
+}
+
 export function runPolicy(ctx: PolicyContext): PolicyResult {
   const { policy, pr } = ctx;
   const failures: PolicyFailure[] = [];
   const notes: string[] = [];
 
-  const approvedByHuman = hasTrustedHumanApproval(ctx);
+  const settings = settingsApproval(ctx);
+  if (settings.note !== null) notes.push(settings.note);
+  const approvedByHuman = hasTrustedHumanApproval(ctx) || settings.ok;
 
   const appChanges = appRequestedChanges(ctx);
   if (appChanges.length > 0) {

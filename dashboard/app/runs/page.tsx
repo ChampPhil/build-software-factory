@@ -2,9 +2,11 @@
 
 import { useMemo, useState } from "react";
 import { readSession } from "@/lib/session";
-import { useClient, useIndex, useRun } from "@/lib/data";
+import { useClient, useIndex, useRun, useVerifierReport } from "@/lib/data";
+import { Evidence } from "@/components/evidence";
 import { PageHead, Section, Empty, Note, PipelineTag, Dot, Pips } from "@/components/primitives";
 import { timeline, costBreakdown, costMismatch, formatDuration, formatUsd } from "@/lib/metrics";
+import type { GitHubClient } from "@/lib/github";
 import type { RunFile, RunGate } from "@/lib/types";
 
 /**
@@ -47,7 +49,7 @@ export default function Runs() {
             written once, at the end of the run.
           </Empty>
         )}
-        {run.state === "ready" && run.data !== null && <RunDetail run={run.data} repo={session?.repo} />}
+        {run.state === "ready" && run.data !== null && <RunDetail run={run.data} repo={session?.repo} client={client} />}
       </>
     );
   }
@@ -80,7 +82,8 @@ export default function Runs() {
   );
 }
 
-function RunDetail({ run, repo }: { run: RunFile; repo?: string | undefined }) {
+function RunDetail({ run, repo, client }: { run: RunFile; repo?: string | undefined; client: GitHubClient | null }) {
+  const verifier = useVerifierReport(client, run.work_item);
   const rows = timeline(run);
   const { rows: costRows, total } = costBreakdown(run);
   const gap = costMismatch(run);
@@ -179,6 +182,12 @@ function RunDetail({ run, repo }: { run: RunFile; repo?: string | undefined }) {
           </div>
         )}
       </Section>
+
+      {client !== null && verifier.state === "ready" && verifier.data !== null && (
+        <Section title="What the verifier saw" lede="The recording of the change working, then the screenshots. Play it here; GitHub's PR page can only show a still.">
+          <Evidence client={client} report={verifier.data} />
+        </Section>
+      )}
 
       {(run.artifacts?.stored?.length ?? 0) > 0 && (
         <Section title="Evidence" lede="Kept for twelve months, because a reviewer often looks after the workflow artifacts expire.">

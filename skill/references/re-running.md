@@ -1,7 +1,7 @@
 # Re-running the skill
 
 The skill is safe to run again. It detects an existing factory —
-`.factory/definition/factory.yaml` — and switches to update mode.
+the factory's definition under `.factory/definition/` — and switches to update mode.
 
 ## First: find out which mode you are in
 
@@ -16,9 +16,9 @@ touching anything.
 
 ## Update mode
 
-**Keep what the user has changed.** Their `factory.yaml`, their `policy.yaml`,
-their context files and their rubrics are theirs; they may have been edited by
-hand or by a definition PR. Treat the templates as a source for *new* things,
+**Keep what the user has changed.** Their settings, their trust rules, their
+context files and their rubrics are theirs; they were changed from the
+dashboard or by a definition PR. Treat the templates as a source for *new* things,
 not as the truth.
 
 So:
@@ -62,6 +62,34 @@ stale for gh-aw to run, a missing secret, a ref that was deleted.
    template would discard them.
 3. **Recompile the lock files** if gh-aw's version check is failing them. This
    is the path for a user who declined the recompiler App.
+
+## Requests to change the factory
+
+People ask for changes to how the factory runs on the dashboard's **Ask the
+factory** box, which files an issue labelled `factory:ask`. No agent works on
+those; they wait for you. In update mode, and whenever the user says "update my
+factory", list them first:
+
+```
+gh issue list --label factory:ask --state open --json number,title,body
+```
+
+For each one:
+
+1. Say what was asked, in the person's own words.
+2. If it is a setting the dashboard controls (`bsf settings` lists them), make
+   it on a branch with `bsf settings --set id=value[,id=value]`, then open a pull
+   request labelled `factory:settings`. The factory's policy check passes it on
+   its author's say-so, because only settings a person may change were
+   touched, and it merges like any other pull request. Do not edit the file by
+   hand.
+3. Anything else (a model, a limit, the trusted list, the name of the repo's own
+   test check) is a change to the factory's definition. Make it as a pull
+   request without that label, so a trusted person's approval is required, and
+   say in the description what it changes and why.
+4. Put `Closes #N` in the pull request and reply on the issue with the link.
+5. If you cannot do what was asked, say so on the issue, in plain words, and
+   leave it open. Never ask the person to edit a file themselves.
 
 ## Failure handling, in any mode
 

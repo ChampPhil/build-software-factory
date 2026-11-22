@@ -33,6 +33,23 @@ function stubFetch(
 
 const auth = { token: "github_pat_test", repo: "owner/name" };
 
+describe("the GitHub client in a browser", () => {
+  it("calls the global fetch as a plain function, not as a method of the client", async () => {
+    // Browsers throw "Illegal invocation" when fetch runs with any `this` but the window.
+    const real = globalThis.fetch;
+    const strict = function (this: unknown): Promise<Response> {
+      if (this !== undefined && this !== globalThis) throw new TypeError("Illegal invocation");
+      return Promise.resolve(new Response("{}", { status: 200 }));
+    };
+    globalThis.fetch = strict;
+    try {
+      await new GitHubClient(auth).get("repos/owner/name");
+    } finally {
+      globalThis.fetch = real;
+    }
+  });
+});
+
 describe("the GitHub client", () => {
   it("sends the token and the API version on every request", async () => {
     const { fetch, calls } = stubFetch({ "repos/owner/name": { body: { full_name: "owner/name" } } });

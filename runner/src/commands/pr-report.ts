@@ -4,6 +4,7 @@ import type { GitHub } from "../lib/github.js";
 import { MEDIA_REF } from "../lib/dataref.js";
 import { FactoryStore, json, workItemPath } from "../lib/store.js";
 import { assertValid } from "../lib/schema.js";
+import { clock, mb, processRecordings, VIDEO_EXT as RECORDING_EXT, type RecordedVideo } from "../lib/recordings.js";
 
 /**
  * PR reports: what a person sees on every factory PR, setup PR and escalation.
@@ -44,6 +45,8 @@ export interface StoredReport {
   readonly media_prefix: string;
   /** Text proof (a log, an API response), kept so the PR can show it inline. */
   readonly inline: Readonly<Record<string, string>>;
+  /** What each stored recording is, so the PR can say how long it runs and how big it is. */
+  readonly videos?: readonly { readonly file: string; readonly seconds: number | null; readonly bytes: number }[];
   readonly problems: readonly string[];
   readonly stored_at: string;
 }
@@ -53,7 +56,7 @@ const FILE_CAP_BYTES = 10 * 1024 * 1024;
 const INLINE_CAP = 4000;
 const TEXT_EXT = new Set([".json", ".txt", ".log", ".md", ".html", ".xml", ".csv", ".yaml", ".yml"]);
 const IMAGE_EXT = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg"]);
-const VIDEO_EXT = new Set([".mp4", ".webm", ".mov"]);
+const VIDEO_EXT = RECORDING_EXT;
 
 export const reportPath = (workItem: string, role: string): string => `reports/${workItem}/${role}.json`;
 
@@ -80,6 +83,36 @@ export function filesOf(r: PrReport): string[] {
 }
 
 const clip = (text: string, max: number): string => (text.length <= max ? text : `${text.slice(0, max - 1).trimEnd()}…`);
+
+/**
+ * Put the recordings a role made into its report. A recording the report
+ * already names is swapped for its stored copy and preview; one it never
+ * mentioned is added at the front, because a person should see the video
+ * before anything else. Either way the model does not decide whether a
+ * recording reaches the PR: if it recorded, it is shown.
+ */
+export function attachRecordings(report: PrReport, items: readonly RecordedVideo[]): PrReport {
+  if (items.length === 0) return report;
+  const bySource = new Map(items.map((i) => [i.source, i]));
+  const named = new Set<string>();
+  const blocks = report.blocks.map((b): Block => {
+    if (b.type !== "file") return b;
+    const item = bySource.get(b.file);
+    if (item === undefined) return b;
+    named.add(item.source);
+    const poster = item.poster ?? b.poster;
+    return { type: "file", file: item.file, caption: b.caption, ...(poster === undefined ? {} : { poster }) };
+  });
+  const added = items
+    .filter((i) => !named.has(i.source))
+    .map((i): Block => ({
+      type: "file",
+      file: i.file,
+      caption: `Screen recording of the running app (${i.source.replace(/^.*\//, "").replace(/\.[^.]+$/, "")})`,
+      ...(i.poster === null ? {} : { poster: i.poster }),
+    }));
+  return { ...report, blocks: [...added, ...blocks] };
+}
 
 /**
  * Shorten what an agent wrote past the report's lengths and counts, rather
@@ -134,13 +167,20 @@ export async function storeReport(opts: {
 }): Promise<StoredReport | null> {
   const file = join(opts.dir, REPORT_FILE);
   if (!existsSync(file)) return null;
-  const { report, trimmed } = fitReport(JSON.parse(readFileSync(file, "utf8")) as PrReport);
+  const fitted = fitReport(JSON.parse(readFileSync(file, "utf8")) as PrReport);
+  const trimmed = fitted.trimmed;
+  // Recordings are made to fit before anything is stored, so the data ref only
+  // ever holds the small copy and a runaway session cannot fill it.
+  const recorded = processRecordings(opts.dir);
+  const report = attachRecordings(fitted.report, recorded.items);
   assertValid("pr-report", report);
 
-  const prefix = `reports/${opts.workItem}/${opts.role}-${opts.attempt}`;
+  // Dated, because the monthly media squash decides expiry from the date in the
+  // path, and recordings are the files most worth expiring.
+  const prefix = `reports/${opts.now.slice(0, 10)}/${opts.workItem}/${opts.role}-${opts.attempt}`;
   const changes: { path: string; content: string; encoding: "base64" }[] = [];
   const inline: Record<string, string> = {};
-  const problems: string[] = [...trimmed];
+  const problems: string[] = [...trimmed, ...recorded.problems];
   for (const rel of filesOf(report)) {
     const abs = inside(opts.dir, rel);
     if (abs === null || !existsSync(abs)) {
@@ -166,6 +206,7 @@ export async function storeReport(opts: {
     media_commit: commit,
     media_prefix: prefix,
     inline,
+    ...(recorded.items.length === 0 ? {} : { videos: recorded.items.map((v) => ({ file: v.file, seconds: v.seconds, bytes: v.bytes })) }),
     problems,
     stored_at: opts.now,
   };
@@ -188,6 +229,8 @@ export interface RenderInput {
   readonly footer?: string;
   /** For an escalation: why it stopped, shown first. */
   readonly lead?: readonly string[];
+  /** The change touches what a person can see, so the PR must carry a video of it working. */
+  readonly needsVideo?: boolean;
 }
 
 export interface Rendered {
@@ -223,11 +266,14 @@ export function renderBlock(repo: string, stored: StoredReport, b: Block): strin
   const ext = extname(b.file).toLowerCase();
   if (IMAGE_EXT.has(ext)) return `![${b.caption}](${url(repo, stored, b.file, true)})\n<sub>${b.caption}</sub>`;
   if (VIDEO_EXT.has(ext)) {
-    // GitHub plays a video only from its own uploads, so a still or GIF of it
-    // stands in, linking to the file.
+    // GitHub plays a video only from its own uploads, so an animated GIF (or a
+    // still) of it stands in, linking to the file.
+    const info = stored.videos?.find((v) => v.file === b.file);
+    const meta = info === undefined ? "" : ` · ${[info.seconds === null ? null : clock(info.seconds), mb(info.bytes)].filter((x) => x !== null).join(" · ")}`;
+    const video = url(repo, stored, b.file, true);
     return b.poster !== undefined
-      ? `[![${b.caption} — play the video](${url(repo, stored, b.poster, true)})](${url(repo, stored, b.file, true)})\n<sub>▶ ${b.caption}</sub>`
-      : `▶ [${b.caption} (video)](${url(repo, stored, b.file, true)})`;
+      ? `[![${b.caption} — play the video](${url(repo, stored, b.poster, true)})](${video})\n<sub>▶ ${b.caption}${meta} · [open the video](${video})</sub>`
+      : `▶ [${b.caption} (video)](${video})${meta}`;
   }
   const text = stored.inline[b.file];
   if (text !== undefined) {
@@ -259,6 +305,10 @@ export function renderReport(input: RenderInput): Rendered {
     for (const b of r.report.blocks) proof.push(renderBlock(input.repo, r, b), "");
   }
   if (proof.length === 0) problems.push("there is no proof: no screenshot, recording, log or diagram");
+  if (input.needsVideo === true) {
+    const hasVideo = input.reports.some((r) => r.report.blocks.some((b) => b.type === "file" && VIDEO_EXT.has(extname(b.file).toLowerCase())));
+    if (!hasVideo) problems.push("this change touches the UI, and no role recorded a video of it working");
+  }
 
   const focus = input.reports.flatMap((r) => r.report.focus ?? []);
   const tail: string[] = [];
@@ -330,6 +380,16 @@ interface SpecDoc {
   readonly title?: string;
   readonly spec?: Record<string, unknown> | null;
   readonly id: string;
+  readonly pipeline?: string;
+}
+
+/**
+ * Whether a PR must carry a video: product work whose spec says it touches
+ * the UI. Gardening and hardening change no behavior on purpose, so their
+ * proof is the gates' before-and-after, not a recording.
+ */
+export function needsVideo(item: SpecDoc | null): boolean {
+  return item?.pipeline === "product_work" && item.spec?.["ui_change"] === true;
 }
 
 /** The spec, as markdown a person reads. */
@@ -376,6 +436,7 @@ export async function publishReport(opts: {
     kind: "change",
     reports,
     links,
+    needsVideo: needsVideo(item),
     footer: opts.footer ?? `Work item ${opts.workItem}`,
   });
   await opts.gh.send("PATCH", `repos/${opts.gh.repo}/pulls/${opts.pr}`, { body: rendered.body });
@@ -486,7 +547,7 @@ export async function renderSetupReport(opts: {
   ];
   const full: PrReport = { ...report, blocks, focus: [...(report.focus ?? []), ...opts.extraFocus] };
 
-  const prefix = `reports/setup-${opts.runId}/setup-1`;
+  const prefix = `reports/${opts.now.slice(0, 10)}/setup-${opts.runId}/setup-1`;
   const changes: { path: string; content: string; encoding: "base64" }[] = [];
   const inline: Record<string, string> = {};
   for (const rel of filesOf(full)) {

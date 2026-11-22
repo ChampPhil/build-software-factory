@@ -1,0 +1,20 @@
+name: Tidy this
+description: Clean something up without changing what it does.
+title: "[Tidy] "
+labels: ["factory:tidy"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What should be tidied?
+      description: A file, a folder, a pattern, or "everything that does X".
+    validations:
+      required: true
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: What should it look like when it is done? Behaviour must not change.
+      placeholder: One date-formatting helper, used everywhere, with the old copies deleted.
+    validations:
+      required: false

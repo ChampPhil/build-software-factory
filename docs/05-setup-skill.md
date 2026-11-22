@@ -152,8 +152,11 @@ The factory goes live when the user merges the setup PR.
 1. **Open the setup PR** from the `factory/setup` branch, pushed with the user's own credentials (the App can't push workflow files). It contains the guardrails, the mechanical fixes (the formatter as its own commit), the factory definition, workflows, hooks and `assessment.md`.
 2. **Run the gates on the setup PR itself,** so the user sees every gate pass before merging.
 3. **The user merges it.** On merge, `factory-sync` adds the factory's required checks where the plan allows it, keeping every existing protection rule, and `factory-garden` picks up the seeded cleanup work that night.
-4. **Smoke test:** the skill opens a small issue ("Add a factory badge to the README"), waits for the factory to produce a draft PR, and shows the user the dashboard link.
-5. **Hand-off message:** what's running, where to watch it (the dashboard), how to request work (issues, Slack, Linear), that all auto-merge toggles start off, and the enforcement level for their plan.
+4. **First request:** setup saves one small, safe, visible suggestion drawn from the repo to `.factory/first-request.json` (title, details, goal), which the dashboard offers on an empty factory, and creates the `factory:accept`, `factory:harden` and `factory:tidy` labels so the issue forms (installed under `.github/ISSUE_TEMPLATE/`) never lose one.
+5. **Smoke test:** the skill opens that request (or a small one such as "Add a factory badge to the README") as an issue, waits for the factory's comment that it has read it and for a draft PR, and shows the user the dashboard link.
+5. **Hand-off message:** what's running, where to watch it (the dashboard), how to request work (issues, Slack, Linear), that all auto-merge toggles start off, how to change how it runs (the dashboard's Factory page, or the Ask the factory box; never a file), and the enforcement level for their plan.
+
+**Later changes.** The skill never asks a user to edit a definition file. In update mode it first lists open issues labelled `factory:ask`, and makes each change itself: a setting with `bsf settings --set id=value`, opened as a pull request labelled `factory:settings`; anything else as a pull request a trusted person approves. It closes the issue with the link.
 
 The newly set-up factory starts with a human approving draft PRs in all three pipelines; the user turns on auto-merge per pipeline from the dashboard when ready.
 

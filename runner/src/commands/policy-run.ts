@@ -3,6 +3,7 @@ import { GitHub, type PullFile, type ReviewResponse } from "../lib/github.js";
 import { loadPolicy, type Loader } from "../lib/config.js";
 import { FactoryStore } from "../lib/store.js";
 import { runPolicy, type PolicyResult } from "./policy.js";
+import { FACTORY_YAML, GARDEN_WORKFLOW, SETTINGS_LABEL, diffSettings, onlyCronLineChanged } from "../lib/settings.js";
 import type { Association, Pipeline, PullRequestFacts } from "../lib/types.js";
 
 /**
@@ -80,7 +81,52 @@ export async function gatherPullFacts(
   };
 
   const pipeline = (await pipelineFromLedger(gh, pr.number)) ?? pipelineFromLabels(labels);
-  return pipeline === undefined ? facts : { ...facts, pipeline };
+  const withPipeline = pipeline === undefined ? facts : { ...facts, pipeline };
+  const settings_edit = await settingsEdit(gh, pr, files, labels, fromFork, trusted);
+  return settings_edit === undefined ? withPipeline : { ...withPipeline, settings_edit };
+}
+
+/** GitHub calls a read-only invitee a COLLABORATOR, so the permission itself is read. A failed read is no. */
+async function hasWriteAccess(gh: GitHub, login: string): Promise<boolean> {
+  try {
+    const r = await gh.get<{ permission?: string; role_name?: string }>(
+      `repos/${gh.repo}/collaborators/${encodeURIComponent(login)}/permission`,
+    );
+    return ["admin", "maintain", "write"].includes(r.role_name ?? r.permission ?? "none");
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * What a settings PR did, read as data: the two versions of the settings file
+ * and the garden workflow's diff. Nothing from the PR is run, and a read that
+ * fails leaves the PR without the approval, never with it.
+ */
+async function settingsEdit(
+  gh: GitHub,
+  pr: Awaited<ReturnType<GitHub["pull"]>>,
+  files: readonly PullFile[],
+  labels: readonly string[],
+  fromFork: boolean,
+  trusted: readonly string[],
+): Promise<PullRequestFacts["settings_edit"] | undefined> {
+  if (fromFork || !labels.includes(SETTINGS_LABEL)) return undefined;
+  if (!files.some((f) => f.filename === FACTORY_YAML)) return undefined;
+  const [base, head] = await Promise.all([
+    gh.fileAtRef(FACTORY_YAML, pr.base.sha ?? pr.base.ref),
+    gh.fileAtRef(FACTORY_YAML, pr.head.sha),
+  ]);
+  if (base === null || head === null) return undefined;
+  const diff = diffSettings(base, head);
+  const garden = files.find((f) => f.filename === GARDEN_WORKFLOW);
+  return {
+    ...diff,
+    author_association: (await effectiveAssociation(gh, pr.user.login, pr.author_association, trusted)) as Association,
+    author_has_write: await hasWriteAccess(gh, pr.user.login),
+    author_is_bot: pr.user.type === "Bot" || /\[bot\]$/.test(pr.user.login),
+    workflow_ok: garden === undefined || (garden.status === "modified" && onlyCronLineChanged(garden.patch)),
+  };
 }
 
 /**

@@ -41,11 +41,13 @@ describe("storing a role's report", () => {
     const r = await storeReport({ gh: { repo: "o/r" } as never, dir, role: "builder", workItem: "wi_X", attempt: 2, now: "2026-11-21T00:00:00Z" });
     expect(r!.problems).toEqual(["builder names files/missing.png, which it did not write"]);
     expect(r!.inline).toEqual({ "api.json": '{"ok":true}' });
-    const shot = media.find((m) => m.path === "reports/wi_X/builder-2/files/after.png")!;
+    const shot = media.find((m) => m.path === "reports/2026-11-21/wi_X/builder-2/files/after.png")!;
     // Bytes, not base64 text of base64: the screenshot has to open.
     expect(shot.encoding).toBe("base64");
     expect(Buffer.from(shot.content, "base64").equals(png)).toBe(true);
     expect(JSON.parse(data.get("reports/wi_X/builder.json")!).media_commit).toBe("mediasha");
+    // The date in the path is what lets the monthly squash expire it.
+    expect(JSON.parse(data.get("reports/wi_X/builder.json")!).media_prefix).toBe("reports/2026-11-21/wi_X/builder-2");
   });
 
   it("refuses a report whose shape is wrong, which shortening cannot fix", async () => {

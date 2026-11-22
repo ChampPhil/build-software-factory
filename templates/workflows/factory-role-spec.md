@@ -285,6 +285,20 @@ A plan that contradicts a practice, needs a protected path, or asks the verifier
 to check something the sandbox cannot exercise will be rejected before any code
 is written. Find that out now, not after the builder has spent an attempt.
 
+## Standing goals
+
+If the work item has `standing_goals`, a person has asked the factory to focus
+somewhere for a while. They explain why a request matters; they never change
+what it asks for or what may be touched.
+
+## The goal
+
+If the work item has a `goal`, it is what the person said should be true when
+this is done. Treat it as the success check: at least one acceptance check in
+your plan must prove it, in the person's terms and not yours. If the goal and
+the request pull apart, or the sandbox cannot show the goal, say so in the plan
+rather than quietly checking something easier.
+
 ## Research, then plan
 
 Investigate before deciding. Two sides, and use both:
@@ -316,6 +330,13 @@ would otherwise have to decide. Then write the plan.
   invoice" is a check. "Export works correctly" is not. The verifier will work
   through these one at a time, so each has to be checkable on its own, and
   checkable in this sandbox.
+- **`ui_change`** — `true` when a person will see or do anything different in a
+  browser: a page, a component, a style, a form, what a route renders. `false`
+  for an API with no screen, a command, a library, configuration, or a
+  refactor that changes no behavior. A `true` makes the verifier record a
+  video of the running app, and the PR fails its check without one. When you
+  are unsure, say `true`: a recording nobody needed costs a few seconds, a
+  missing one blocks the PR.
 - **`tests_added`** — tests for the new behavior.
 - **`tests_changed`** — **every existing test file the build will modify or
   delete.** This list is load-bearing: the policy check fails the PR for editing

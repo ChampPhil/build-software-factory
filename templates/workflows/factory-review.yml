@@ -1,8 +1,8 @@
 # factory-review — the scheduled review that makes the factory improve itself.
 #
 # Scores recent runs against the rubrics, groups the failures, and routes each
-# one: a code-level problem to hardening, a factory-level problem to a
-# definition change. A definition change is benchmark-gated and needs a human.
+# one. In v1.0 every problem goes to hardening; the definition route
+# (benchmark-gated, needs a human) is off until v1.1.
 name: factory-review
 
 on:

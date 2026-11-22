@@ -1,3 +1,4 @@
+import { activeGoals, goalLines, readGoals } from "./standing-goals.js";
 import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import type { GitHub } from "../lib/github.js";
@@ -93,6 +94,9 @@ export async function fetchWorkItem(opts: FetchWorkItemOptions): Promise<FetchWo
     trusted,
   );
 
+  const lane = (["product_work", "gardening", "hardening"] as const).find((l) => l === item.pipeline);
+  const standing = goalLines(activeGoals(await readGoals(store).catch(() => null), new Date().toISOString(), lane));
+  const extra = item as unknown as { goal?: unknown; success_check?: unknown };
   const triage = opts.withTriage === true ? await readTriageNotes(store, item) : null;
   const shortlist = opts.withShortlist === true ? await duplicateShortlist(store, item) : null;
 
@@ -109,6 +113,11 @@ export async function fetchWorkItem(opts: FetchWorkItemOptions): Promise<FetchWo
       : null,
     related: item.related ?? [],
     spec: item.spec,
+    // What done means, as the person and the chief of staff wrote it. The spec
+    // makes at least one acceptance check prove it.
+    ...(typeof extra.goal === "string" ? { goal: extra.goal } : {}),
+    ...(typeof extra.success_check === "string" ? { success_check: extra.success_check } : {}),
+    ...(standing.length === 0 ? {} : { standing_goals: standing }),
     ...(triage === null ? {} : { triage }),
     ...(shortlist === null ? {} : { possible_duplicates: shortlist }),
   };
@@ -166,6 +175,8 @@ async function readTriageNotes(store: FactoryStore, item: WorkItemFile): Promise
 export interface Spec {
   plan: string;
   acceptance_checks: string[];
+  /** Whether the change alters what a person sees or does in a browser; if so the PR needs a video. */
+  ui_change?: boolean;
   files?: string[];
   feature_folders?: string[];
   tests_added?: string[];

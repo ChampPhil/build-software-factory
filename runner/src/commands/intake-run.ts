@@ -1,7 +1,13 @@
+import { acknowledgement } from "./acknowledge.js";
+import { applyControl, controlDispatch, focusComment, routeRequest, type Router, type RoutableDoc } from "./routing-run.js";
+import { isTrustedActor } from "./policy.js";
+import type { WorkItemDraft } from "./intake.js";
 import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { effectiveAssociation, type GitHub } from "../lib/github.js";
-import { FactoryStore, CURSOR, INCOMING, LEDGER, json, workItemPath } from "../lib/store.js";
+import { FactoryStore, CURSOR, INCOMING, LEDGER, json, workItemPath, runPath } from "../lib/store.js";
+import type { CorrectionRecord } from "./corrections.js";
+import { decideCandidate, candidateRequest } from "./candidate-decisions.js";
 import type { Change } from "../lib/dataref.js";
 import { runIntake, chooseDispatches, type IncomingEvent, type EventKind, type IntakeResult, type LedgerOpenItem, type DispatchDecision } from "./intake.js";
 import type { Policy, Association, Pipeline as QueuedPipeline } from "../lib/types.js";
@@ -38,6 +44,8 @@ export interface IntakeRunOptions {
   readonly ref?: string;
   /** Set to skip dispatching, for a dry run. */
   readonly plan?: boolean;
+  /** The chief of staff. Without one, the fixed table's route stands. */
+  readonly router?: Router;
 }
 
 export interface IntakeRunReport {
@@ -45,6 +53,10 @@ export interface IntakeRunReport {
   readonly dispatched: readonly string[];
   readonly commit: string | null;
   readonly decision: DispatchDecision;
+  /** The issues the factory commented on to say it had read them. */
+  readonly acknowledged: readonly number[];
+  /** The work items the chief of staff routed. */
+  readonly routed: readonly string[];
 }
 
 /**
@@ -55,8 +67,12 @@ export interface IntakeRunReport {
 interface Payload {
   action?: string;
   issue?: { number?: number; title?: string; body?: string | null; labels?: { name?: string }[]; user?: { login?: string; type?: string }; author_association?: string; state?: string; pull_request?: unknown };
-  comment?: { id?: number; body?: string | null; user?: { login?: string; type?: string }; author_association?: string; created_at?: string };
+  comment?: { id?: number; body?: string | null; user?: { login?: string; type?: string }; author_association?: string; created_at?: string; html_url?: string };
+  review?: { body?: string | null; state?: string; user?: { login?: string; type?: string }; author_association?: string; submitted_at?: string; html_url?: string };
   pull_request?: { number?: number; head?: { repo?: { full_name?: string } | null }; base?: { repo?: { full_name?: string } } };
+  /** For a `pull_request` `synchronize`: the branch head before and after the push. */
+  before?: string;
+  after?: string;
   label?: { name?: string };
   sender?: { login?: string; type?: string };
   workflow_run?: { conclusion?: string; head_branch?: string; name?: string; id?: number };
@@ -154,6 +170,7 @@ export function normalizeEvent(
       actor_association: assoc(payload.comment.author_association),
       actor_is_bot: payload.comment.user?.type === "Bot",
       ...(payload.comment.body == null ? {} : { body: payload.comment.body }),
+      ...(payload.comment.html_url === undefined ? {} : { url: payload.comment.html_url }),
       ...(onPr
         ? { ref: `#${payload.pull_request?.number ?? payload.issue?.number ?? 0}`, pr: payload.pull_request?.number ?? payload.issue?.number ?? 0 }
         : { ref: `#${payload.issue?.number ?? 0}` }),
@@ -162,6 +179,47 @@ export function normalizeEvent(
       ...(payload.pull_request === undefined
         ? {}
         : { from_fork: isFork(payload.pull_request) }),
+    };
+  }
+
+  // A review someone submitted. An approval is the gate working, and a comment
+  // review with no body is only the envelope for its inline comments, which
+  // arrive as their own events.
+  if (eventName === "pull_request_review" && payload.review !== undefined && payload.pull_request !== undefined) {
+    if (payload.action !== "submitted") return null;
+    const state = (payload.review.state ?? "").toUpperCase();
+    if (state !== "CHANGES_REQUESTED" && state !== "COMMENTED") return null;
+    if (state === "COMMENTED" && (payload.review.body ?? "").trim() === "") return null;
+    return {
+      id,
+      kind: "pr_review",
+      at: payload.review.submitted_at ?? now,
+      actor: payload.review.user?.login ?? "unknown",
+      actor_association: assoc(payload.review.author_association),
+      actor_is_bot: payload.review.user?.type === "Bot",
+      review_state: state,
+      ...(payload.review.body == null ? {} : { body: payload.review.body }),
+      ...(payload.review.html_url === undefined ? {} : { url: payload.review.html_url }),
+      ref: `#${payload.pull_request.number ?? 0}`,
+      pr: payload.pull_request.number ?? 0,
+      from_fork: isFork(payload.pull_request),
+    };
+  }
+
+  // A push to a PR's branch by someone other than the factory. What they
+  // changed is filled in by the caller, which can ask GitHub; this stays pure.
+  if (eventName === "pull_request_target" || eventName === "pull_request") {
+    if (payload.action !== "synchronize" || payload.pull_request?.number === undefined) return null;
+    return {
+      id,
+      kind: "human_push",
+      at: now,
+      actor: payload.sender?.login ?? "unknown",
+      actor_association: "NONE",
+      actor_is_bot: payload.sender?.type === "Bot",
+      ref: `#${payload.pull_request.number}`,
+      pr: payload.pull_request.number,
+      from_fork: isFork(payload.pull_request),
     };
   }
 
@@ -218,6 +276,18 @@ export function normalizeEvent(
   return null;
 }
 
+/** `kind=candidate_accept|candidate_reject` on a dispatch, with the candidate's id as the title. */
+export function candidateDecision(
+  eventName: string,
+  payload: Payload,
+): { readonly id: string; readonly status: "accepted" | "rejected"; readonly by: string } | null {
+  if (eventName !== "workflow_dispatch") return null;
+  const kind = payload.inputs?.["kind"];
+  const id = (payload.inputs?.["title"] ?? "").trim();
+  if ((kind !== "candidate_accept" && kind !== "candidate_reject") || id === "") return null;
+  return { id, status: kind === "candidate_accept" ? "accepted" : "rejected", by: payload.sender?.login ?? "unknown" };
+}
+
 /** Whether a comment is `/retry` (optionally followed by a reason). */
 export function retryRequested(body: string | null | undefined): boolean {
   return body != null && /^\s*\/retry(\s|$)/.test(body);
@@ -247,7 +317,44 @@ function isFork(pr: NonNullable<Payload["pull_request"]>): boolean {
 export async function runIntakeCommand(opts: IntakeRunOptions): Promise<IntakeRunReport> {
   const store = new FactoryStore(opts.gh);
   const payload = JSON.parse(readFileSync(opts.eventPath, "utf8")) as Payload;
-  const raw = normalizeEvent(opts.eventName, payload, opts.now);
+  // A person accepting or rejecting a candidate on the dashboard. Rejecting is
+  // only a record; accepting is also a request to harden against it now, which
+  // goes in as a correction like any other.
+  const picked = candidateDecision(opts.eventName, payload);
+  let fromCandidate: IncomingEvent | null = null;
+  if (picked !== null) {
+    const done = await decideCandidate({ gh: opts.gh, id: picked.id, status: picked.status, by: picked.by, now: opts.now });
+    if (done.candidate !== null && picked.status === "accepted") {
+      const ask = candidateRequest(done.candidate);
+      fromCandidate = {
+        id: eventId(payload, opts.now), kind: "correction", at: opts.now, actor: picked.by, actor_association: "COLLABORATOR",
+        title: ask.title, body: ask.body, ref: `candidate:${picked.id}`,
+      };
+    }
+  }
+  // The dashboard's direct controls: a standing goal added or removed, a route changed.
+  const control = controlDispatch(opts.eventName, payload);
+  if (control !== null) await applyControl(store, control, opts.now);
+
+  // `/focus` in a comment, from someone the factory trusts, is a standing goal.
+  let focused = false;
+  const focus = focusComment(opts.eventName, payload);
+  if (focus !== null) {
+    const association = await effectiveAssociation(opts.gh, focus.actor, focus.association, opts.policy.trust.associations);
+    if (isTrustedActor(opts.policy, focus.actor, association as Association, { isBot: focus.isBot })) {
+      await applyControl(store, { kind: "goal_add", text: focus.text, lane: focus.lane, by: focus.actor }, opts.now);
+      focused = true;
+      if (focus.number !== null && opts.plan !== true) {
+        await opts.gh
+          .send("POST", `repos/${opts.gh.repo}/issues/${focus.number}/comments`, {
+            body: `Recorded as a standing goal${focus.lane === null ? "" : ` for ${focus.lane.replace("_", " ")}`}: ${focus.text}\n\nThe factory weighs it when it routes new requests. Remove it from the dashboard's Factory page.`,
+          })
+          .catch(() => undefined);
+      }
+    }
+  }
+  const normalized = picked !== null ? fromCandidate : control !== null || focused ? null : normalizeEvent(opts.eventName, payload, opts.now);
+  const raw = normalized?.kind === "human_push" ? await enrichPush(opts.gh, normalized, payload) : normalized;
   const incoming =
     raw === null
       ? null
@@ -310,7 +417,10 @@ export async function runIntakeCommand(opts: IntakeRunOptions): Promise<IntakeRu
     ...(o.pr === undefined ? {} : { pr: o.pr }),
   }));
 
+  const prItems = await prItemsFor(store, ledger, queued.filter((e) => e.id > cursor));
+
   const result = runIntake(queued, {
+    prItems,
     policy: opts.policy,
     triggers: opts.triggers,
     cursor,
@@ -331,9 +441,27 @@ export async function runIntakeCommand(opts: IntakeRunOptions): Promise<IntakeRu
   const changes: Change[] = [];
   const newItems: { id: string; priority: "high" | "normal"; pipeline: string; created_at: string; fingerprint: string; status: string; source_ref: string | null }[] = [];
 
-  // Answers and admissions put an existing item back in the queue.
-  const requeued = new Map<string, string>();
+  // The chief of staff decides what each new request is, before anything is
+  // written or dispatched, so the pipeline on the work item is the one that runs.
+  const routed: string[] = [];
+  const questions: { issue: string | null; text: string }[] = [];
+  const decisions = [];
   for (const d of result.decisions) {
+    if (opts.router !== undefined && d.workItem !== null && d.outcome === "queued") {
+      const r = await routeRequest(store, opts.router, d.workItem as unknown as RoutableDoc & WorkItemDraft, opts.now);
+      if (r !== null) {
+        routed.push(d.workItem.id);
+        if (r.question !== null) questions.push({ issue: d.workItem.source.ref, text: r.question });
+        decisions.push({ ...d, workItem: r.item });
+        continue;
+      }
+    }
+    decisions.push(d);
+  }
+
+  // Answers and admissions put an existing item back in the queue.
+  const requeued = new Map<string, { status: string; pipeline: string; priority?: string }>();
+  for (const d of decisions) {
     if ((d.outcome !== "answers_open_item" && d.outcome !== "admits_open_item" && d.outcome !== "retries_open_item") || d.openItem === undefined) continue;
     const doc = await store.get<{ status: string; body: string } & Record<string, unknown>>(workItemPath(d.openItem), "work-item");
     if (doc === null) continue;
@@ -341,11 +469,25 @@ export async function runIntakeCommand(opts: IntakeRunOptions): Promise<IntakeRu
       d.outcome === "answers_open_item" && (d.event.body ?? "").trim() !== ""
         ? `${doc.body}\n\nAnswer from @${d.event.actor}:\n${d.event.body ?? ""}`
         : doc.body;
-    changes.push({ path: workItemPath(d.openItem), content: json({ ...doc, status: "queued", body }) });
-    requeued.set(d.openItem, "queued");
+    let next: Record<string, unknown> = { ...doc, status: "queued", body };
+    // A request admitted late, or one that was waiting on the chief of staff's
+    // question, is routed now, with the answer in front of it.
+    if (opts.router !== undefined) {
+      const r = await routeRequest(store, opts.router, { id: d.openItem, ...next } as unknown as RoutableDoc, opts.now);
+      if (r !== null) {
+        routed.push(d.openItem);
+        next = { ...r.item };
+        if (r.question !== null) {
+          const ref = (doc["source"] as { ref?: string | null } | undefined)?.ref ?? null;
+          questions.push({ issue: ref, text: r.question });
+        }
+      }
+    }
+    changes.push({ path: workItemPath(d.openItem), content: json(next) });
+    requeued.set(d.openItem, { status: String(next["status"]), pipeline: String(next["pipeline"] ?? doc["pipeline"]) });
   }
 
-  for (const d of result.decisions) {
+  for (const d of decisions) {
     if (d.workItem === null) continue;
     changes.push({ path: workItemPath(d.workItem.id), content: json(d.workItem) });
     newItems.push({
@@ -359,12 +501,19 @@ export async function runIntakeCommand(opts: IntakeRunOptions): Promise<IntakeRu
     });
   }
 
+  // What a person corrected is kept on the run it corrected, which is where
+  // scoring and the review read `human_corrections` from.
+  changes.push(...(await correctionChanges(store, result.decisions)));
+
   if (newItems.length > 0 || requeued.size > 0 || result.cursor !== cursor) {
     const nextLedger = {
       ...ledger,
       updated_at: opts.now,
       open: [
-        ...ledger.open.map((o) => (requeued.has(o.work_item) ? { ...o, status: "queued" } : o)),
+        ...ledger.open.map((o) => {
+          const p = requeued.get(o.work_item);
+          return p === undefined ? o : { ...o, status: p.status, pipeline: p.pipeline };
+        }),
         ...newItems
           .filter((i) => !ledger.open.some((o) => o.work_item === i.id))
           .map((i) => ({
@@ -399,10 +548,10 @@ export async function runIntakeCommand(opts: IntakeRunOptions): Promise<IntakeRu
   const queuedItems = [
     ...newItems.filter((i) => i.status === "queued"),
     ...ledger.open
-      .filter((o) => (o.status === "queued" || requeued.has(o.work_item)) && !newItems.some((i) => i.id === o.work_item))
+      .filter((o) => (o.status === "queued" || requeued.get(o.work_item)?.status === "queued") && !newItems.some((i) => i.id === o.work_item))
       .map((o) => ({
         id: o.work_item,
-        pipeline: o.pipeline,
+        pipeline: requeued.get(o.work_item)?.pipeline ?? o.pipeline,
         priority: o.priority ?? ("normal" as const),
         created_at: o.created_at ?? opts.now,
         fingerprint: o.fingerprint ?? "",
@@ -431,7 +580,115 @@ export async function runIntakeCommand(opts: IntakeRunOptions): Promise<IntakeRu
     }
   }
 
-  return { result, dispatched, commit, decision };
+  // Say so on the issue, last: the request is already safe in the data ref,
+  // so a comment that fails to post loses nothing.
+  const acknowledged: number[] = [];
+  if (opts.plan !== true) {
+    for (const q of questions) {
+      const n = /^#(\d+)$/.exec(q.issue ?? "")?.[1];
+      if (n === undefined) continue;
+      try {
+        await opts.gh.send("POST", `repos/${opts.gh.repo}/issues/${n}/comments`, {
+          body: `One question before I start: ${q.text}\n\nReply here and the factory picks the request up again. Nothing times out, so take as long as you need.`,
+        });
+      } catch {
+        // The item is already waiting; a comment that fails to post loses nothing.
+      }
+    }
+    for (const d of decisions) {
+      const ack = acknowledgement(d, opts.policy.trust.accept_label);
+      if (ack === null) continue;
+      try {
+        await opts.gh.send("POST", `repos/${opts.gh.repo}/issues/${ack.issue}/comments`, { body: ack.body });
+        acknowledged.push(ack.issue);
+      } catch {
+        // A missing permission or a deleted issue must not fail intake.
+      }
+    }
+  }
+
+  return { result, dispatched, commit, decision, acknowledged, routed };
+}
+
+/* ------------------------------------------------------------- corrections */
+
+/**
+ * What a person pushed onto a factory branch, for the correction it becomes:
+ * the commit messages and the files they touched.
+ */
+async function enrichPush(gh: GitHub, ev: IncomingEvent, payload: Payload): Promise<IncomingEvent> {
+  const { before, after } = payload;
+  if (before === undefined || after === undefined || /^0+$/.test(before)) return ev;
+  try {
+    const cmp = await gh.get<{ html_url?: string; commits?: { commit?: { message?: string } }[]; files?: { filename?: string }[] }>(
+      `repos/${gh.repo}/compare/${before}...${after}`,
+    );
+    const messages = (cmp.commits ?? []).map((c) => (c.commit?.message ?? "").split("\n")[0]!.trim()).filter((m) => m !== "");
+    const files = (cmp.files ?? []).map((f) => f.filename ?? "").filter((f) => f !== "");
+    return {
+      ...ev,
+      ...(messages.length === 0 ? {} : { body: messages.join("; ") }),
+      ...(files.length === 0 ? {} : { files }),
+      ...(cmp.html_url === undefined ? {} : { url: cmp.html_url }),
+    };
+  } catch {
+    // The push is still a correction; it just carries less to read.
+    return ev;
+  }
+}
+
+/** For each PR a pending event is about: the work item behind it, if the factory opened it. */
+export async function prItemsFor(
+  store: FactoryStore,
+  ledger: { readonly open: readonly { work_item: string; pipeline: string; pr?: number | null }[]; readonly recent: readonly { work_item: string; pr?: number | null }[] },
+  pending: readonly IncomingEvent[],
+): Promise<Record<string, { work_item: string; pipeline: QueuedPipeline }>> {
+  const out: Record<string, { work_item: string; pipeline: QueuedPipeline }> = {};
+  for (const e of pending) {
+    if (e.pr === undefined || out[String(e.pr)] !== undefined) continue;
+    const open = ledger.open.find((o) => o.pr === e.pr);
+    if (open !== undefined) {
+      out[String(e.pr)] = { work_item: open.work_item, pipeline: open.pipeline as QueuedPipeline };
+      continue;
+    }
+    const recent = ledger.recent.find((r) => r.pr === e.pr);
+    if (recent === undefined) continue;
+    const doc = await store.get<{ pipeline?: string }>(workItemPath(recent.work_item), "work-item").catch(() => null);
+    if (doc?.pipeline !== undefined) out[String(e.pr)] = { work_item: recent.work_item, pipeline: doc.pipeline as QueuedPipeline };
+  }
+  return out;
+}
+
+/** Append each captured correction to the run whose PR it was said on. */
+export async function correctionChanges(
+  store: FactoryStore,
+  decisions: readonly { readonly correction?: CorrectionRecord | undefined; readonly correctedItem?: string | undefined; readonly outcome: string }[],
+): Promise<Change[]> {
+  const byRun = new Map<string, { doc: Record<string, unknown>; added: CorrectionRecord[] }>();
+  for (const d of decisions) {
+    if (d.correction === undefined || d.correctedItem === undefined) continue;
+    if (d.outcome !== "correction_captured" && d.outcome !== "context_for_open_item") continue;
+    const item = await store.get<{ runs?: readonly string[] }>(workItemPath(d.correctedItem), "work-item").catch(() => null);
+    const runId = item?.runs?.[item.runs.length - 1];
+    if (runId === undefined) continue;
+    let entry = byRun.get(runId);
+    if (entry === undefined) {
+      const doc = await store.get<Record<string, unknown>>(runPath(runId), "run").catch(() => null);
+      if (doc === null) continue;
+      entry = { doc, added: [] };
+      byRun.set(runId, entry);
+    }
+    const c = d.correction;
+    if (!entry.added.some((a) => a.at === c.at && a.by === c.by && a.text === c.text)) entry.added.push(c);
+  }
+  const changes: Change[] = [];
+  for (const [runId, { doc, added }] of byRun) {
+    const have = (doc["human_corrections"] as CorrectionRecord[] | undefined) ?? [];
+    const fresh = added.filter((a) => !have.some((h) => h.at === a.at && h.by === a.by && h.text === a.text));
+    if (fresh.length === 0) continue;
+    changes.push({ path: runPath(runId), content: json({ ...doc, human_corrections: [...have, ...fresh] }) });
+  }
+  return changes;
 }
 
 /* ----------------------------------------------------------- missed issues */

@@ -285,6 +285,13 @@ days. Write your picks to `/tmp/gh-aw/agent/bsf/picks.json`.
 3. **Untested recent behavior** — code merged in the last 14 days with no tests
    or guardrails. This is what slipped past diff coverage.
 
+## Standing goals
+
+If `drift.json` has `standing_goals`, a person has asked the factory to focus
+somewhere for a while ("tidy the billing folder this month"). Let them break
+ties between items of similar size. They never let you pick something that is
+not drift, and they never override the rules above.
+
 ## Picking
 
 Up to `max_prs` items (from `/tmp/gh-aw/agent/bsf/garden-budget.json`), in this order: baselines

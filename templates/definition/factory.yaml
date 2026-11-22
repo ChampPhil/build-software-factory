@@ -8,6 +8,8 @@ harness: claude-code
 # Reasoning goes where the decisions are made — the spec says what to build
 # and how to check it — and cheaper models do the work the spec lays out.
 models:
+  # Routes each request a person makes and writes its goal. One small call, no tools.
+  chief_of_staff: claude-haiku-5-5
   triage: claude-haiku-5-5
   spec: claude-opus-5-5
   builder: claude-sonnet-5-5

@@ -1,3 +1,4 @@
+import { overlay, readDecisions, type CandidateLike } from "./candidate-decisions.js";
 import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { GitHub } from "../lib/github.js";
@@ -200,10 +201,13 @@ export async function hardenContext(opts: {
     "work-item",
   );
 
-  const candidates =
+  const stored =
     opts.candidatesPath !== undefined && existsSync(opts.candidatesPath)
-      ? (JSON.parse(readFileSync(opts.candidatesPath, "utf8")) as { candidates?: unknown[] }).candidates ?? []
+      ? (JSON.parse(readFileSync(opts.candidatesPath, "utf8")) as { candidates?: CandidateLike[] }).candidates ?? []
       : [];
+  // What people decided on the dashboard is laid over the file; a candidate
+  // someone rejected is not for the hardener to propose again.
+  const candidates = overlay(stored, await readDecisions(store).catch(() => null)).filter((c) => c.status !== "rejected");
 
   const existingRules = Object.keys(opts.baselines.rules ?? {});
 
@@ -219,7 +223,7 @@ export async function hardenContext(opts: {
       note:
         "Check existing_rules and existing_candidates before proposing anything: a second rule " +
         "for a class already covered is a rule nobody can act on. The ordered check for the " +
-        "strongest fix is in the role prompt; the point of this file is that you are not guessing " +
+        "way to change the codebase (a static rule, a stronger verification requirement, or a refactor) is in the role prompt; the point of this file is that you are not guessing " +
         "what already exists.",
     }),
   );

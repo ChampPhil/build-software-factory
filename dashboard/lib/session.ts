@@ -9,14 +9,26 @@
  * device".
  */
 
+import { DEMO_REPO, DEMO_TOKEN } from "./demo";
+
 const TOKEN_KEY = "bsf.token";
 const REPO_KEY = "bsf.repo";
 const REMEMBER_KEY = "bsf.remember";
+const REFRESH_KEY = "bsf.refresh";
+const EXPIRES_KEY = "bsf.expires";
 
 export interface Session {
   readonly token: string;
   readonly repo: string;
   readonly remembered: boolean;
+  /**
+   * Present only for a "Sign in with GitHub" session. Those tokens last 8
+   * hours, and this renews them without sending the person back to GitHub.
+   * A pasted token has neither field.
+   */
+  readonly refreshToken?: string;
+  /** When `token` stops working, in milliseconds since the epoch. */
+  readonly expiresAt?: number;
 }
 
 function store(remember: boolean): Storage | null {
@@ -41,7 +53,15 @@ export function readSession(): Session | null {
     const token = s.getItem(TOKEN_KEY);
     const repo = s.getItem(REPO_KEY);
     if (token !== null && token !== "" && repo !== null && repo !== "") {
-      return { token, repo, remembered: remember };
+      const refreshToken = s.getItem(REFRESH_KEY);
+      const expires = Number(s.getItem(EXPIRES_KEY));
+      return {
+        token,
+        repo,
+        remembered: remember,
+        ...(refreshToken !== null && refreshToken !== "" ? { refreshToken } : {}),
+        ...(Number.isFinite(expires) && expires > 0 ? { expiresAt: expires } : {}),
+      };
     }
   }
   return null;
@@ -54,9 +74,15 @@ export function writeSession(session: Session): void {
   s.setItem(TOKEN_KEY, session.token);
   s.setItem(REPO_KEY, session.repo);
   s.setItem(REMEMBER_KEY, String(session.remembered));
+  if (session.refreshToken !== undefined) s.setItem(REFRESH_KEY, session.refreshToken);
+  else s.removeItem(REFRESH_KEY);
+  if (session.expiresAt !== undefined) s.setItem(EXPIRES_KEY, String(session.expiresAt));
+  else s.removeItem(EXPIRES_KEY);
   // Never leave a copy in the other store.
   const other = store(!session.remembered);
   other?.removeItem(TOKEN_KEY);
+  other?.removeItem(REFRESH_KEY);
+  other?.removeItem(EXPIRES_KEY);
 }
 
 export function clearSession(): void {
@@ -66,7 +92,30 @@ export function clearSession(): void {
     s?.removeItem(TOKEN_KEY);
     s?.removeItem(REPO_KEY);
     s?.removeItem(REMEMBER_KEY);
+    s?.removeItem(REFRESH_KEY);
+    s?.removeItem(EXPIRES_KEY);
   }
+}
+
+/** The repository a link names, as `?repo=owner/name`, or null when there is none or it is malformed. */
+export function repoFromAddress(search: string): string | null {
+  const value = new URLSearchParams(search).get("repo");
+  return value !== null && validRepo(value) ? value.trim() : null;
+}
+
+/** Whether the address asks for the demo, as `?demo`. */
+export function demoFromAddress(search: string): boolean {
+  return new URLSearchParams(search).has("demo");
+}
+
+/**
+ * Start the demo. It is stored for this tab only, with a sentinel in place of a
+ * token, so a reload stays in the demo and nothing real is ever kept.
+ */
+export function startDemo(): Session {
+  const session: Session = { token: DEMO_TOKEN, repo: DEMO_REPO, remembered: false };
+  writeSession(session);
+  return session;
 }
 
 /** owner/name, and nothing else. */
@@ -84,117 +133,3 @@ export function looksLikeToken(value: string): boolean {
   return /^(github_pat_|ghp_|gho_|ghu_|ghs_)/.test(v) || /^[A-Za-z0-9_-]{40,}$/.test(v);
 }
 
-/* --------------------------------------------------------------- GitHub login */
-
-/**
- * The optional sign-in Worker (`/worker`). The dashboard works without it —
- * the user pastes a fine-grained token instead — so every function here
- * reports "not configured" rather than failing, and nothing calls it unless
- * the deployment set its URL.
- */
-
-const STATE_KEY = "bsf.oauth.state";
-const PENDING_REPO_KEY = "bsf.oauth.repo";
-
-export function workerUrl(): string | null {
-  const url = process.env["NEXT_PUBLIC_SIGNIN_WORKER"];
-  return url === undefined || url === "" ? null : url.replace(/\/$/, "");
-}
-
-/** A state value the callback can check, so a stray code cannot be replayed. */
-function newState(): string {
-  const bytes = new Uint8Array(24);
-  crypto.getRandomValues(bytes);
-  return [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
-}
-
-export interface StartResult {
-  readonly ok: boolean;
-  readonly url?: string;
-  readonly error?: string;
-}
-
-/** Ask the Worker where to send the user, remember the state, and hand it back. */
-export async function startGithubLogin(repo: string): Promise<StartResult> {
-  const base = workerUrl();
-  if (base === null) return { ok: false, error: "no sign-in Worker is configured for this dashboard" };
-  if (!validRepo(repo)) return { ok: false, error: "enter the repository as owner/name" };
-
-  const state = newState();
-  try {
-    // sessionStorage, not localStorage: the state is for this sitting only.
-    window.sessionStorage.setItem(STATE_KEY, state);
-    window.sessionStorage.setItem(PENDING_REPO_KEY, repo.trim());
-  } catch {
-    return { ok: false, error: "this browser is blocking storage, so sign-in cannot complete; paste a token instead" };
-  }
-
-  const redirect = `${window.location.origin}${window.location.pathname}`;
-  const res = await fetch(`${base}/start?redirect_uri=${encodeURIComponent(redirect)}&state=${state}`);
-  if (!res.ok) return { ok: false, error: `the sign-in Worker answered ${res.status}` };
-  const body = (await res.json()) as { authorize_url?: string; error?: string };
-  if (body.authorize_url === undefined) return { ok: false, error: body.error ?? "the Worker returned no URL" };
-  return { ok: true, url: body.authorize_url };
-}
-
-export interface CallbackResult {
-  readonly handled: boolean;
-  readonly session?: Session;
-  readonly error?: string;
-}
-
-/**
- * Finish the login if this page load is the OAuth callback.
- *
- * The state must match what was stored, or the code is ignored: a `?code=` a
- * third party put in a link is exactly what that check is for. The query
- * string is cleared either way, so a reload cannot replay it and the code
- * does not sit in the address bar or in history.
- */
-export async function completeGithubLogin(remember = false): Promise<CallbackResult> {
-  if (typeof window === "undefined") return { handled: false };
-  const params = new URLSearchParams(window.location.search);
-  const code = params.get("code");
-  const state = params.get("state");
-  if (code === null || state === null) return { handled: false };
-
-  const clean = (): void => {
-    window.history.replaceState({}, "", `${window.location.origin}${window.location.pathname}`);
-  };
-
-  let expected: string | null = null;
-  let repo: string | null = null;
-  try {
-    expected = window.sessionStorage.getItem(STATE_KEY);
-    repo = window.sessionStorage.getItem(PENDING_REPO_KEY);
-    window.sessionStorage.removeItem(STATE_KEY);
-    window.sessionStorage.removeItem(PENDING_REPO_KEY);
-  } catch {
-    /* handled below */
-  }
-  clean();
-
-  if (expected === null || state !== expected) {
-    return { handled: true, error: "this sign-in did not start here, so it was not completed" };
-  }
-  if (repo === null || !validRepo(repo)) {
-    return { handled: true, error: "the repository was lost between steps; try signing in again" };
-  }
-
-  const base = workerUrl();
-  if (base === null) return { handled: true, error: "no sign-in Worker is configured for this dashboard" };
-
-  const res = await fetch(`${base}/exchange`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ code, redirect_uri: `${window.location.origin}${window.location.pathname}` }),
-  });
-  const body = (await res.json().catch(() => ({}))) as { access_token?: string; error?: string };
-  if (!res.ok || body.access_token === undefined) {
-    return { handled: true, error: body.error ?? `the sign-in Worker answered ${res.status}` };
-  }
-
-  const session: Session = { token: body.access_token, repo, remembered: remember };
-  writeSession(session);
-  return { handled: true, session };
-}

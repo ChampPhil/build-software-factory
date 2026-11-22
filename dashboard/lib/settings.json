@@ -1,0 +1,86 @@
+{
+  "schema": "settings/1",
+  "settings": [
+    {
+      "id": "monthly_budget",
+      "path": "budget.monthly_usd",
+      "kind": "number",
+      "min": 1,
+      "max": 100000,
+      "unit": "usd",
+      "label": "Monthly budget",
+      "help": "The most the factory spends on models in a month. A hard cap: agent steps stop before they could pass it."
+    },
+    {
+      "id": "share_product_work",
+      "path": "budget.shares.product_work",
+      "kind": "integer",
+      "min": 0,
+      "max": 100,
+      "unit": "percent",
+      "label": "Product work share",
+      "help": "Percent of the budget product work may use. The three shares add up to 100."
+    },
+    {
+      "id": "share_gardening",
+      "path": "budget.shares.gardening",
+      "kind": "integer",
+      "min": 0,
+      "max": 100,
+      "unit": "percent",
+      "label": "Gardening share",
+      "help": "Percent of the budget the nightly cleanup may use."
+    },
+    {
+      "id": "share_review",
+      "path": "budget.shares.review_and_benchmarks",
+      "kind": "integer",
+      "min": 0,
+      "max": 100,
+      "unit": "percent",
+      "label": "Review share",
+      "help": "Percent of the budget the scheduled review may use."
+    },
+    {
+      "id": "auto_merge_product_work",
+      "path": "pipelines.product_work.auto_merge",
+      "kind": "boolean",
+      "label": "Merge product work by itself",
+      "help": "Off: a person approves each draft PR. Turn on only when its revert rate gives you reason to."
+    },
+    {
+      "id": "auto_merge_gardening",
+      "path": "pipelines.gardening.auto_merge",
+      "kind": "boolean",
+      "label": "Merge gardening by itself",
+      "help": "Off: a person approves each cleanup PR."
+    },
+    {
+      "id": "auto_merge_hardening",
+      "path": "pipelines.hardening.auto_merge",
+      "kind": "boolean",
+      "label": "Merge hardening by itself",
+      "help": "Off: a person approves each hardening PR."
+    },
+    {
+      "id": "gardening_prs",
+      "path": "pipelines.gardening.max_prs_per_run",
+      "kind": "integer",
+      "min": 1,
+      "max": 10,
+      "unit": "prs",
+      "label": "Cleanup PRs per night",
+      "help": "How many cleanup PRs the nightly gardening run may open."
+    },
+    {
+      "id": "gardening_hour",
+      "path": "pipelines.gardening.schedule",
+      "kind": "cron_hour",
+      "min": 0,
+      "max": 23,
+      "unit": "utc_hour",
+      "label": "Cleanup time",
+      "help": "The hour (UTC) the nightly cleanup starts. Changing it also changes the schedule in the cleanup workflow."
+    }
+  ]
+}

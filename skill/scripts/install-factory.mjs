@@ -61,6 +61,9 @@ const PLAN = [
   // The rule packs setup installs from: each rule with the code it must fail
   // on and the code it must pass.
   [join(repoRoot, "rules"), ".factory/rules"],
+  // The four request forms: a form field replaces the label a person would
+  // otherwise have to know.
+  [join(repoRoot, "templates/issue-forms"), ".github/ISSUE_TEMPLATE"],
   [join(repoRoot, "templates/workflows"), ".github/workflows"],
   [join(repoRoot, "templates/compiled"), ".github/workflows"],
 ];

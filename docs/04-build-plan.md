@@ -157,7 +157,7 @@ Run for every milestone release.
 
 - [ ] All acceptance criteria for the milestone pass on CI fixtures and Philip's old repo
 - [ ] Runner Action published and tagged (`@v0.1`, `@v0.2`, `@v1`), with the release's commit SHA (what workflows pin) and the schema versions it reads and writes listed in the release notes, since that changelog is what users see in their upgrade PR
-- [ ] Dashboard deployed to Cloudflare Pages; sign-in Worker deployed (from v0.2)
+- [ ] Dashboard deployed to Cloudflare Pages; sign-in function deployed with it (from v0.2)
 - [ ] README: what it is in two sentences, three-step quickstart, a captioned demo video (no voiceover), enforcement by GitHub plan, what it's built on (gh-aw, memex and the tools in the Architecture doc's reuse table), and how it differs from prior art (gh-aw on its own, addyosmani/factory and other software factories)
 - [ ] Cost disclosure: what the factory spends from the user's model API key and Actions minutes, with typical monthly ranges from the fixtures
 - [ ] Security review: trust check (including integration-bot issues), untrusted-text stripping, redaction, App permissions (no `workflows`), the `pull_request_target` policy check never running PR code, per-job token scopes, no token in the sandbox and its network allowlist, policy loaded from main, fork behavior

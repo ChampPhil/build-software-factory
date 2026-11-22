@@ -78,6 +78,8 @@ export interface LedgerOpenItem {
   readonly pr?: number | null;
   readonly priority?: "high" | "normal";
   readonly created_at?: string;
+  /** The issue or PR it came from, as `#N`. */
+  readonly source_ref?: string | null;
   readonly fixes?: readonly string[];
 }
 
@@ -229,4 +231,56 @@ export interface BenchmarkResultFile {
   readonly admitted: boolean;
   readonly reasons: readonly string[];
   readonly regressed?: readonly string[];
+}
+
+/** A role's report as the runner stores it: which files it kept, and where. */
+export interface StoredRoleReport {
+  readonly role: string;
+  readonly attempt: number;
+  readonly media_prefix: string;
+  readonly report: {
+    readonly blocks?: readonly (
+      | { readonly type: "file"; readonly file: string; readonly caption: string; readonly poster?: string }
+      | { readonly type: string }
+    )[];
+  };
+  readonly videos?: readonly { readonly file: string; readonly seconds: number | null; readonly bytes: number }[];
+}
+
+/** What people decided about candidates on the dashboard, kept on the data ref. */
+export interface DecisionsFile {
+  readonly schema: string;
+  readonly decisions: Readonly<Record<string, { readonly status: "accepted" | "rejected"; readonly by: string; readonly at: string }>>;
+}
+
+/** The part of a work item the corrections list reads. */
+export interface WorkItemDoc {
+  readonly id: string;
+  readonly created_at: string;
+  readonly pipeline: Pipeline;
+  readonly title: string;
+  readonly body: string | null;
+  readonly status: string;
+  readonly pr: number | null;
+  readonly parent: string | null;
+  readonly source: { readonly kind: string; readonly ref: string | null; readonly actor: string };
+  readonly goal?: string;
+  readonly success_check?: string;
+  readonly routing?: RoutingDoc;
+}
+
+/** Who chose a request's pipeline, and why. */
+export interface RoutingDoc {
+  readonly by: "chief_of_staff" | "table" | "person";
+  readonly reason: string;
+  readonly at: string;
+  readonly from?: string;
+  readonly pending?: boolean;
+  readonly overrides?: readonly { readonly by: string; readonly at: string; readonly from: string; readonly to: string }[];
+}
+
+/** The standing goals file on the data ref. */
+export interface StandingGoalsFile {
+  readonly schema: string;
+  readonly goals: readonly { readonly id: string; readonly text: string; readonly lane: string | null; readonly by: string; readonly at: string; readonly until: string | null }[];
 }

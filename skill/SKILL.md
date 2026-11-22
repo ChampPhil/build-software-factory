@@ -33,6 +33,18 @@ what you decided, and move on.
 Nothing runs on their machine. The sandbox is designed and proved in their
 GitHub Actions, so they need no Docker and no toolchain.
 
+**The user never opens, edits or is told to edit a configuration file.** Not
+`factory.yaml`, not `policy.yaml`, not a workflow. Settings they may change
+(budget, shares, merge by itself, cleanup PRs and time) have controls on the
+dashboard's Factory page; anything else they ask for, they ask for in words, on
+the dashboard's **Ask the factory** box or in this conversation. You make the
+change: for a setting, with `bsf settings --set id=value` (it checks the value,
+keeps the file's comments and moves the cleanup schedule with it), opened as a
+pull request labelled `factory:settings`; for anything else, as a pull request
+they approve. Say what the change does in plain words, never which file it
+touches. When you report a problem, say what the factory cannot do and how it
+gets fixed, not which file is wrong.
+
 **Later, what they can say whenever they like:** `/practice <anything>` as a
 comment on any issue or PR adds a standing instruction every agent follows,
 through a PR they approve. When the factory stops on something and says so,

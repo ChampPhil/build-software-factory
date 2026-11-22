@@ -1,10 +1,17 @@
 "use client";
 
+import { routingCandidates } from "./routing";
+import { FACTORY_YAML } from "./settings";
+
+import { questionFrom, type Waiting } from "./questions";
+import { readFirstRequest, type FirstRequest } from "./request";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { GitHubClient, GitHubHttpError, type Auth } from "./github";
+import { demoFetch, isDemo } from "./demo";
+import { overlayDecisions, correctionCandidates, correctionsOf } from "./corrections";
 import type {
   IndexFile, LedgerFile, LiveFile, RunFile, BaselinesFile, CoverageFile, CandidatesFile,
-  ReviewFile, BenchmarkResultFile,
+  ReviewFile, BenchmarkResultFile, StoredRoleReport, DecisionsFile, WorkItemDoc, StandingGoalsFile, LedgerOpenItem,
 } from "./types";
 
 /**
@@ -29,7 +36,12 @@ export function useClient(auth: Auth | null): GitHubClient | null {
   const token = auth?.token ?? null;
   const repo = auth?.repo ?? null;
   useEffect(() => {
-    setClient(token === null || repo === null ? null : new GitHubClient({ token, repo }));
+    // Demo mode hands the same client a stand-in for GitHub, so every page runs its real code.
+    setClient(
+      token === null || repo === null
+        ? null
+        : new GitHubClient({ token, repo }, isDemo(token, repo) ? demoFetch() : undefined),
+    );
   }, [token, repo]);
   return client;
 }
@@ -53,12 +65,19 @@ export function usePolled<T>(
   const [result, setResult] = useState<Loaded<T>>({ state: "loading" });
   const visible = useVisible();
   const tick = useRef(0);
+  // `load` is a new closure on every render. Keeping it in a ref, and keying
+  // the effect on the caller's `deps` instead, stops each result from starting
+  // the next request. Each call site lists what its `load` depends on.
+  const loadRef = useRef(load);
+  loadRef.current = load;
+  const hasLoad = load !== null;
 
   const run = useCallback(async () => {
-    if (load === null) return;
+    const current = loadRef.current;
+    if (current === null) return;
     const mine = ++tick.current;
     try {
-      const data = await load();
+      const data = await current();
       if (tick.current === mine) setResult({ state: "ready", data, at: new Date() });
     } catch (err) {
       if (tick.current !== mine) return;
@@ -67,16 +86,15 @@ export function usePolled<T>(
       setResult({ state: "error", error: message, retry: () => void run() });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [load, ...deps]);
+  }, [...deps]);
 
   useEffect(() => {
-    if (load === null) return;
+    if (!hasLoad) return;
     void run();
     if (!visible) return;
     const id = setInterval(() => void run(), everyMs);
     return () => clearInterval(id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [run, everyMs, visible, load === null]);
+  }, [run, everyMs, visible, hasLoad]);
 
   return result;
 }
@@ -114,14 +132,35 @@ export function useGuardrails(client: GitHubClient | null): Loaded<{
     client === null
       ? null
       : async () => {
-          const [baselines, coverage, candidates] = await Promise.all([
-            client.fileFromRef<BaselinesFile>("guardrails/baselines.json"),
-            client.fileFromRef<CoverageFile>("guardrails/coverage.json"),
-            client.fileFromRef<CandidatesFile>("guardrails/candidates.json"),
+          // The rules, baselines and candidates are files in the repo, changed by
+          // reviewed PRs; only what people decided about candidates is on the data ref.
+          const [baselines, coverage, candidates, decisions] = await Promise.all([
+            client.fileFromRepo<BaselinesFile>(".factory/guardrails/baselines.json"),
+            client.fileFromRepo<CoverageFile>(".factory/guardrails/coverage.json"),
+            client.fileFromRepo<CandidatesFile>(".factory/guardrails/candidates.json"),
+            client.fileFromRef<DecisionsFile>("guardrails/candidate-decisions.json"),
           ]);
-          return { baselines, coverage, candidates };
+          return { baselines, coverage, candidates: overlayDecisions(candidates, decisions) };
         };
   return usePolled(load, 60_000, [client?.repo]);
+}
+
+/**
+ * The corrections the factory has hardened against, newest first, each with the
+ * words that started it. Reads the hardening work items the ledger knows
+ * about; a merged item's pipeline is only in its own file, so the most recent
+ * few are opened.
+ */
+export function useCorrections(client: GitHubClient | null, ledger: LedgerFile | null): Loaded<readonly WorkItemDoc[]> {
+  const ids = ledger === null ? null : correctionCandidates(ledger.open, ledger.recent);
+  const load =
+    client === null || ids === null
+      ? null
+      : async () => {
+          const docs = await Promise.all(ids.map((id) => client.fileFromRef<WorkItemDoc>(`work-items/${id}.json`)));
+          return correctionsOf(docs.filter((d): d is WorkItemDoc => d !== null));
+        };
+  return usePolled(load, 60_000, [client?.repo, ids?.join(",")]);
 }
 
 /**
@@ -165,4 +204,75 @@ export function useRun(client: GitHubClient | null, id: string | null): Loaded<R
   const load =
     client === null || id === null ? null : () => client.fileFromRef<RunFile>(`runs/${id}.json`);
   return usePolled(load, 60_000, [client?.repo, id]);
+}
+
+/** What the verifier kept as proof for a work item: screenshots, recordings, logs. */
+export function useVerifierReport(client: GitHubClient | null, workItem: string | null): Loaded<StoredRoleReport | null> {
+  const load =
+    client === null || workItem === null
+      ? null
+      : () => client.fileFromRef<StoredRoleReport>(`reports/${workItem}/verifier.json`);
+  return usePolled(load, 60_000, [client?.repo, workItem]);
+}
+
+/** What the factory asked, for each item waiting on an answer. Keyed by issue number. */
+export function useQuestions(
+  client: GitHubClient | null,
+  waiting: readonly Waiting[],
+): Loaded<Readonly<Record<number, string | null>>> {
+  const issues = waiting.flatMap((w) => (w.issue === null ? [] : [w.issue]));
+  const load =
+    client === null || issues.length === 0
+      ? null
+      : async () => {
+          const entries = await Promise.all(
+            issues.map(async (n) => [n, questionFrom(await client.issueComments(n))] as const),
+          );
+          return Object.fromEntries(entries);
+        };
+  return usePolled(load, 30_000, [client?.repo, issues.join(",")]);
+}
+
+/** The first request setup left, offered only while the factory has done nothing yet. */
+export function useFirstRequest(client: GitHubClient | null, empty: boolean): Loaded<FirstRequest | null> {
+  const load =
+    client === null || !empty
+      ? null
+      : async () => readFirstRequest(await client.fileFromRepo<unknown>(".factory/first-request.json"));
+  return usePolled(load, 120_000, [client?.repo, empty]);
+}
+
+/** The factory's settings, as the Factory page's controls read them. Bump `version` to read again after a change. */
+export function useFactorySettings(client: GitHubClient | null, version = 0): Loaded<string | null> {
+  const load = client === null ? null : async () => (await client.textFromRepo(FACTORY_YAML))?.text ?? null;
+  return usePolled(load, 120_000, [client?.repo, version]);
+}
+
+/** Who the factory acts for: everyone with write access. Null when the token cannot list them. */
+export function useWriters(client: GitHubClient | null): Loaded<readonly { login: string; role: string }[] | null> {
+  const load =
+    client === null
+      ? null
+      : async () => {
+          try { return await client.writers(); } catch { return null; }
+        };
+  return usePolled(load, 300_000, [client?.repo]);
+}
+
+/** Routing detail for each open work item, keyed by id. */
+export function useRouting(client: GitHubClient | null, open: readonly LedgerOpenItem[]): Loaded<Readonly<Record<string, WorkItemDoc>>> {
+  const ids = routingCandidates(open);
+  const load =
+    client === null || ids.length === 0
+      ? null
+      : async () => {
+          const docs = await Promise.all(ids.map((id) => client.fileFromRef<WorkItemDoc>(`work-items/${id}.json`)));
+          return Object.fromEntries(docs.flatMap((d) => (d === null ? [] : [[d.id, d] as const])));
+        };
+  return usePolled(load, 60_000, [client?.repo, ids.join(",")]);
+}
+
+export function useStandingGoals(client: GitHubClient | null): Loaded<StandingGoalsFile | null> {
+  const load = client === null ? null : () => client.fileFromRef<StandingGoalsFile>("standing-goals.json");
+  return usePolled(load, 60_000, [client?.repo]);
 }

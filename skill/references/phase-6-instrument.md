@@ -98,6 +98,16 @@ Current guardrail counts, the coverage floor and the open issue count go into
 `index.json`, so the dashboard shows progress from day one rather than from
 whenever someone first looks.
 
+## 7. Offer the local correction hook
+
+Corrections made in a developer's own Claude Code sessions are as valuable as
+PR comments. Offer, and only with the user's consent, to run
+`bsf local-hook --install`. It writes to `.claude/settings.local.json` (personal,
+not committed), sends only prompts that read as corrections, redacts secrets,
+and refuses public repos unless the user passes `--allow-public`. Say plainly
+what leaves their machine. If they decline, nothing is lost: PR corrections
+are still captured.
+
 ## What to watch for
 
 - **Re-running setup must not reset the records.** If the data ref exists,

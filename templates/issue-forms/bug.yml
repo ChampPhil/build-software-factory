@@ -1,0 +1,26 @@
+name: Bug
+description: Something is broken. The factory will try to reproduce it first.
+title: "[Bug] "
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What goes wrong?
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: How to see it
+      description: Steps, a link, or the page where it happens. Leave blank if you are not sure.
+    validations:
+      required: false
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: What should be true once it is fixed?
+      placeholder: Saving a profile with an empty name shows an error and does not crash.
+    validations:
+      required: false

@@ -254,7 +254,7 @@ Benchmarks also answer "is the new model worth it?" with a cost vs. quality grap
 - **Client-side fetching** → the browser asks other services for data directly. Here: the browser calls the **GitHub API** using the user's own GitHub access.
 - **Next.js** can be either kind: with `output: 'export'` it builds into a static app. Pages that depend on IDs only known at runtime use a fixed page that reads the ID from the URL (`/run?id=123`).
 - Static hosting such as **Cloudflare Pages** serves static files free with unlimited bandwidth.
-- The one server step is **sign-in**: GitHub's login needs a tiny token exchange, run on a free Cloudflare Worker, or skipped if users paste a fine-grained token.
+- The one server step is **sign-in**: GitHub's login needs a tiny token exchange, run as a Pages Function on the dashboard's own address (free), and skipped if users paste a fine-grained token instead.
 
 **Analogy.** A static app is a printed instruction kit mailed to everyone; all the building happens at the recipient's kitchen table. A server app is a restaurant that cooks every order.
 

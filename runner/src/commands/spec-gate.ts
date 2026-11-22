@@ -11,6 +11,7 @@ import { minimatch } from "minimatch";
  */
 
 export interface SpecLike {
+  readonly ui_change?: unknown;
   readonly files?: readonly string[];
   readonly research?: readonly { readonly claim?: unknown; readonly source?: unknown }[];
 }
@@ -23,6 +24,8 @@ export interface SpecGateInput {
   readonly protectedPaths: readonly string[];
   /** Paths this pipeline is allowed to change despite their protection. */
   readonly pipelineExclusions?: readonly string[];
+  /** The work item's pipeline. Product work must say whether it touches the UI. */
+  readonly pipeline?: string;
 }
 
 /**
@@ -71,6 +74,17 @@ export function sourceProblem(source: string, root: string): string | null {
 export function specProblems(input: SpecGateInput): readonly string[] {
   const problems: string[] = [];
   const research = input.spec.research ?? [];
+
+  // Whether the change touches the UI decides whether its PR must carry a
+  // video, so it is the spec's call, made before any code exists, and not
+  // something the builder or verifier can decide in their own favour later.
+  if (input.spec.ui_change !== undefined && typeof input.spec.ui_change !== "boolean") {
+    problems.push("ui_change must be true or false");
+  } else if (input.pipeline === "product_work" && input.spec.ui_change === undefined) {
+    problems.push(
+      "the spec does not say whether the change touches the UI: set ui_change to true if a person will see or do anything different in a browser, false if not",
+    );
+  }
 
   // Research the plan rests on. A plan with none is a plan from memory.
   if (research.length === 0) {
