@@ -273,3 +273,24 @@ export async function releaseReports(store: FactoryStore, keys: readonly string[
   if (marks.length > 0) await store.put(marks, `sandbox reports: ${marks.length} back to waiting, their amendment never ran`);
   return marks.length;
 }
+
+/**
+ * The reports that say this change could not be judged: filed for it since
+ * `since`, and not yet repaired, dropped or put to a person. While any exist,
+ * rebuilding the change only repeats a verdict the sandbox cannot give, so the
+ * run holds it instead; the repair verifies it again when it lands.
+ */
+export async function reportsHolding(store: FactoryStore, workItem: string, since: string): Promise<readonly string[]> {
+  const held: string[] = [];
+  for (const path of await store.data.list(REPORTS)) {
+    const d = await store.data.readJson<StoredReport>(path).catch(() => null);
+    if (d === null || d.work_item !== workItem) continue;
+    if (d.dropped_at !== undefined || d.escalated_at !== undefined) continue;
+    const last = d.last_reported_at ?? d.reported_at;
+    if (last < since) continue;
+    if (d.landed_at !== undefined && last <= d.landed_at) continue;
+    held.push(path.slice(REPORTS.length).replace(/\.json$/, ""));
+  }
+  return held;
+}
+

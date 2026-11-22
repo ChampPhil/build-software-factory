@@ -177,6 +177,41 @@ describe("finishRun", () => {
     expect(failures.items[0].text).toContain("no-unused-vars");
   });
 
+  it("holds a change the sandbox could not judge: no rebuild, no escalation, verified again once the repair lands", async () => {
+    files.set(`live/${RUN}.json`, JSON.stringify({ started_at: "2026-11-22T00:00:00.000Z" }));
+    files.set("sandbox-reports/abc.json", JSON.stringify({ work_item: WI, reported_at: "2026-11-22T00:10:00.000Z", last_reported_at: "2026-11-22T00:10:00.000Z" }));
+    const { gh, dispatched, sent } = fakeGh([[
+      { name: "factory/gate-static", status: "completed", conclusion: "success" },
+      { name: "factory/gates", status: "completed", conclusion: "failure" },
+    ]]);
+    const r = await finishRun({ ...base, gh, attempt: 3, pr: 5 });
+    expect(r.next).toBe("wait_sandbox");
+    expect(dispatched).toEqual([]);
+    expect(sent.some((x) => x.path.endsWith("/issues/5/comments"))).toBe(false);
+    expect(JSON.parse(files.get(`work-items/${WI}.json`)!).status).toBe("in_review");
+    expect(files.has(gateFailuresPath(WI))).toBe(false);
+  });
+
+  it("still retries a change whose own static gate failed, even with a sandbox report open", async () => {
+    files.set(`live/${RUN}.json`, JSON.stringify({ started_at: "2026-11-22T00:00:00.000Z" }));
+    files.set("sandbox-reports/abc.json", JSON.stringify({ work_item: WI, reported_at: "2026-11-22T00:10:00.000Z", last_reported_at: "2026-11-22T00:10:00.000Z" }));
+    const { gh, dispatched } = fakeGh([[
+      { name: "factory/gate-static", status: "completed", conclusion: "failure" },
+      { name: "factory/gates", status: "completed", conclusion: "failure" },
+    ]]);
+    expect((await finishRun({ ...base, gh, attempt: 1, pr: 5 })).next).toBe("retry");
+    expect(dispatched).toHaveLength(1);
+  });
+
+  it("does not hold on a report that was repaired, put to a person, or filed before this run", async () => {
+    files.set(`live/${RUN}.json`, JSON.stringify({ started_at: "2026-11-22T00:00:00.000Z" }));
+    files.set("sandbox-reports/a.json", JSON.stringify({ work_item: WI, reported_at: "2026-11-22T00:10:00.000Z", last_reported_at: "2026-11-22T00:10:00.000Z", landed_at: "2026-11-22T00:20:00.000Z" }));
+    files.set("sandbox-reports/b.json", JSON.stringify({ work_item: WI, reported_at: "2026-11-22T00:10:00.000Z", escalated_at: "2026-11-22T00:30:00.000Z" }));
+    files.set("sandbox-reports/c.json", JSON.stringify({ work_item: WI, reported_at: "2026-11-21T00:10:00.000Z", last_reported_at: "2026-11-21T00:10:00.000Z" }));
+    const { gh } = fakeGh([[{ name: "factory/gates", status: "completed", conclusion: "failure" }]]);
+    expect((await finishRun({ ...base, gh, attempt: 3, pr: 5 })).next).toBe("escalate");
+  });
+
   it("at the cap, escalates and says so on the PR", async () => {
     const { gh, sent, dispatched } = fakeGh([[{ name: "factory/gates", status: "completed", conclusion: "failure" }]]);
     const r = await finishRun({ ...base, gh, attempt: 3, pr: 5 });

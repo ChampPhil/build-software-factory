@@ -1,5 +1,6 @@
 import { runId as newRunId } from "../lib/ids.js";
 import { FactoryStore, LEDGER, json, livePath, runPath, workItemPath, type Ledger } from "../lib/store.js";
+import { reportsHolding } from "./sandbox-reports.js";
 import type { GitHub } from "../lib/github.js";
 import { afterGates, type AfterGates } from "./run-plan.js";
 import { GATE_CHECKS, GATES_CHECK } from "./gates-run.js";
@@ -197,7 +198,7 @@ async function gateChecks(gh: GitHub, sha: string): Promise<readonly GateCheck[]
 }
 
 export interface AfterGatesReport {
-  readonly next: AfterGates["next"] | "no_pr" | "timed_out" | "stood_down";
+  readonly next: AfterGates["next"] | "no_pr" | "timed_out" | "stood_down" | "wait_sandbox";
   readonly reason: string;
   readonly pr: number | null;
   readonly attempt: number;
@@ -322,14 +323,32 @@ export async function finishRun(opts: FinishRunOptions): Promise<AfterGatesRepor
     } else {
       const d = afterGates({ ...gateVerdicts(checks), attempt: opts.attempt, maxAttempts: opts.maxAttempts });
       report = { next: d.next, reason: d.reason, pr, attempt: "attempt" in d ? d.attempt : opts.attempt };
-      if (d.next === "retry" || d.next === "escalate") failures = gateFailures(checks, head, opts.attempt, opts.now());
+      if (d.next === "retry" || d.next === "escalate") {
+        // A verification the sandbox could not give is not the change's
+        // failure. Rebuilding would spend the budget on the same verdict, so
+        // the change waits for the repair and is verified again when it lands.
+        const stuck =
+          gateVerdicts(checks).staticGate !== "failed"
+            ? await reportsHolding(store, item.id, live?.started_at ?? opts.now()).catch(() => [])
+            : [];
+        if (stuck.length > 0) {
+          report = {
+            next: "wait_sandbox",
+            reason: `the sandbox could not judge this change (${stuck.length} report${stuck.length === 1 ? "" : "s"} filed); it is verified again once the repair lands`,
+            pr,
+            attempt: opts.attempt,
+          };
+        } else {
+          failures = gateFailures(checks, head, opts.attempt, opts.now());
+        }
+      }
     }
   }
 
   // Where the item goes. A run that timed out waiting is left in review with
   // its PR: the gates may still report, and merge reads them directly.
   const status: Status =
-    report.next === "clear" || report.next === "verify" || report.next === "timed_out"
+    report.next === "clear" || report.next === "verify" || report.next === "timed_out" || report.next === "wait_sandbox"
       ? "in_review"
       : report.next === "retry"
         ? "running"
@@ -509,6 +528,7 @@ const OUTCOME: Record<string, string> = {
   clear: "draft_pr",
   verify: "draft_pr",
   timed_out: "draft_pr",
+  wait_sandbox: "draft_pr",
   retry: "failed",
   escalate: "escalated",
   no_pr: "failed",
