@@ -19,7 +19,7 @@ live event has not occurred; **partly** says which half is which.
 | 6 | Setup completes on every fixture repo, and the sandbox matches the app | **Met**: nine fixtures, and a sign-in app's sandbox repaired itself live (below) |
 | 7 | Re-running the skill changes nothing unless asked | **Met** |
 | 8 | A schema-major upgrade arrives as a Dependabot PR, then migrates | **Deferred** until the repository is public |
-| 9 | On Philip's repo, three pipelines have each merged a PR | **Partly**: all three ran end to end; the sign-in sandbox is repaired, and the last verdict waits on GitHub Actions billing (below) |
+| 9 | On Philip's repo, three pipelines have each merged a PR | **Partly**: all three ran end to end; the sign-in sandbox is repaired, and the streak PR was verified by the factory in the repaired sandbox, all gates green |
 
 Also proven live, and not a numbered criterion because it was added after the
 plan was written: **the budget cannot be exceeded** (below).
@@ -155,10 +155,14 @@ with no person in the loop other than merging the factory's own upgrades:
    verifier's checkout. Fixed in the factory (the stuck branch is updated from
    main, the push gh-aw allows).
 6. The updated branch was verified in the repaired sandbox: the verifier's
-   browser ran its full pass with no checkout error. The run's detection step
-   then could not start: "recent account payments have failed or your spending
-   limit needs to be increased" (GitHub Actions billing on the owner's
-   account). That is outside the factory, and the verdict is pending it.
+   browser ran its full pass on the signed-in pages with no checkout error.
+   The run's detection step could not start for a while ("recent account
+   payments have failed or your spending limit needs to be increased": GitHub
+   Actions billing, outside the factory). After the owner raised the limit,
+   re-running the failed jobs recorded the verdict: `factory/gates` passed
+   ("Every planned gate passed"), with static and policy green and coverage
+   and tests neutral. The PR's stale `factory:escalated` label from the earlier
+   failed attempts was not cleared, and it had not merged when this was written.
 
 Two more things the live runs showed, both fixed: budget settle records were
 lost to concurrent writers on the data ref (each write is now checked after it
@@ -194,10 +198,10 @@ is built and frozen (`schema/SURFACE.json`, `bsf migrate`).
   when the hardener opens its PR, spec and build are now skipped. The label
   itself was documented and never implemented; it is now.
 
-Not met: nothing has merged on trinsports from these yet. The verifier could
-not check its pages because every team page is behind Google sign-in; the
-sandbox repair above fixes that, and the re-verification of the streak PR (#40)
-is waiting on GitHub Actions billing, not on the factory.
+Not yet merged on trinsports: the streak PR (#40) is verified and its gates
+are green, but it still carries stale escalation labels and had not merged when
+this was written. The verifier could not check these pages before the sandbox
+repair above, because every team page is behind Google sign-in.
 
 Trinsports spent its $35 and then $50 budget getting here, most of it on Opus
 specs, repair rounds and verifier runs that could not complete before the
@@ -205,8 +209,9 @@ fixes above; the budget cap held throughout.
 
 ## What is still needed
 
-1. **GitHub Actions billing on the owner's account**, then the streak PR (#40)
-   finishes its verification. Re-run the failed jobs of the last gates run.
+1. **Trinsports #40 merged**, and its stale `factory:escalated` label looked at:
+   the factory does not clear it when a verification comes from a push rather
+   than a factory run.
 2. **The repository made public**, then Dependabot alerts (criterion 8).
 3. **Fifty runs** on one repository for criterion 1 as written, and a paid
    benchmark for 2 and 5, if wanted.
