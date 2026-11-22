@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { reportState, sweepReports, recordReport, markLanded, MAX_ATTEMPTS } from "../src/commands/sandbox-reports.js";
+import { reportState, sweepReports, recordReport, markLanded, releaseReports, MAX_ATTEMPTS } from "../src/commands/sandbox-reports.js";
 import type { Ledger } from "../src/lib/store.js";
 
 const files = new Map<string, string>();
@@ -134,5 +134,28 @@ describe("sweepReports", () => {
     expect(r.dispatched).toBe(0);
     expect(gh.dispatched).toHaveLength(0);
     expect(r.why).toMatch(/already under way/);
+  });
+});
+
+describe("a repair that cannot run", () => {
+  it("is not started while the budget has no room, and the reports wait", async () => {
+    await recordReport(store, signIn, "wi_A", NOW);
+    const gh = fakeGh();
+    const r = await sweepReports({ gh: gh as never, store, ledger: ledger(), now: NOW, fits: async () => ({ ok: false, reason: "$4.00 left" }) });
+    expect(r.dispatched).toBe(0);
+    expect(gh.dispatched).toHaveLength(0);
+    expect(r.why).toMatch(/wait for budget: \$4.00 left/);
+  });
+
+  it("puts its reports back, uncounted, when it never reached a trial", async () => {
+    await recordReport(store, signIn, "wi_A", NOW);
+    await sweepReports({ gh: fakeGh() as never, store, ledger: ledger(), now: NOW });
+    const path = [...files.keys()][0]!;
+    expect(JSON.parse(files.get(path)!).attempts).toBe(1);
+    await releaseReports(store, [path.replace("sandbox-reports/", "").replace(".json", "")]);
+    const d = JSON.parse(files.get(path)!);
+    expect(d.attempts).toBe(0);
+    expect(d.dispatched_at).toBeUndefined();
+    expect(reportState(d, ledger(), NOW).state).toBe("ready");
   });
 });

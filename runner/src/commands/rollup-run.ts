@@ -45,6 +45,8 @@ export interface RollupOptions {
   readonly runWorkflow?: string;
   readonly ref?: string;
   readonly plan?: boolean;
+  /** Whether the budget has room for a sandbox amendment. */
+  readonly amendmentFits?: () => Promise<{ readonly ok: boolean; readonly reason: string }>;
   /** Squash the media ref when the month changed since the last squash. */
   readonly mediaRetentionMonths?: number;
 }
@@ -165,7 +167,11 @@ export async function runRollupCommand(opts: RollupOptions): Promise<RollupRepor
   // amendment to finish — goes to the next amendment from here.
   let amendment: string | undefined;
   try {
-    const sweep = await sweepReports({ gh: opts.gh, store, ledger: nextLedger, now: opts.now, ...(opts.plan === true ? { plan: true } : {}) });
+    const sweep = await sweepReports({
+      gh: opts.gh, store, ledger: nextLedger, now: opts.now,
+      ...(opts.plan === true ? { plan: true } : {}),
+      ...(opts.amendmentFits === undefined ? {} : { fits: opts.amendmentFits }),
+    });
     amendment = sweep.why;
   } catch (e) {
     amendment = `sandbox reports not swept: ${(e as Error).message}`;

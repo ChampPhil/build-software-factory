@@ -46,7 +46,7 @@ import { planRun, afterGates } from "./commands/run-plan.js";
 import { buildStepReport, writeStepReport, changedFilesFromGit, type Harness } from "./commands/step-report.js";
 import { pausedPipelines, type BudgetState } from "./commands/rollup.js";
 import {
-  BUDGET_PATH, reserve as reserveBudget, settle as settleBudget, sweepStale, rollMonth, used, creditsToUsd,
+  BUDGET_PATH, reserve as reserveBudget, settle as settleBudget, rollMonth, used, creditsToUsd,
   measuredUsd, detectionUsd, canStart, type BudgetDoc, type BudgetLimits, type BudgetMeasure,
 } from "./commands/budget.js";
 import { loadFactory, trustedRoot } from "./lib/config.js";
@@ -254,6 +254,8 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
       Write the manifest from the best measured round, at the tier it reached, with what it proved.
   bsf sandbox land --pr N --main PATH --candidate PATH   (AMEND in the environment)
       Merge a sandbox amendment when it is safe to, and verify again the changes it was for.
+  bsf sandbox release   (AMEND in the environment)
+      An amendment that never reached a trial: its reports wait again, the attempt not counted.
   bsf models
       Emit each role's model and the gardening budget from factory.yaml as step outputs.
   bsf consistency [--root PATH] [--json]
@@ -1253,7 +1255,7 @@ async function runCommand(second: string | undefined, args: Args, third?: string
     const { FactoryStore } = await import("./lib/store.js");
     const { sweepReports } = await import("./commands/sandbox-reports.js");
     const store = new FactoryStore(gh);
-    const sweep = await sweepReports({ gh, store, ledger: await store.ledger(now), now });
+    const sweep = await sweepReports({ gh, store, ledger: await store.ledger(now), now, fits: async () => amendmentFits(gh, await factoryConfig()) });
     process.stdout.write(`${sweep.why}\n`);
     return 0;
   }
@@ -1390,6 +1392,7 @@ async function rollupCommand(args: Args): Promise<number> {
       candidates_pending: 0,
     },
     health: await measuredHealth(gh, cfg),
+    amendmentFits: () => amendmentFits(gh, cfg),
     ...(args["plan"] === true ? { plan: true } : {}),
   });
 
@@ -1572,21 +1575,43 @@ async function budgetStatusCommand(): Promise<number> {
   return 0;
 }
 
-/** Charge holds whose step never settled, at their ceiling. Run by the rollup. */
+/** Whether the budget has room for a sandbox amendment's largest step: one setup round. */
+async function amendmentFits(gh: GitHub, cfg: Awaited<ReturnType<typeof factoryConfig>>): Promise<{ ok: boolean; reason: string }> {
+  const { FactoryStore } = await import("./lib/store.js");
+  const raw = await new FactoryStore(gh).data.readJson<BudgetDoc>(BUDGET_PATH).catch(() => null);
+  const doc = raw !== null && raw.schema === "budget/2" ? raw : null;
+  return canStart(doc, budgetLimits(cfg), "setup", cfg.models ?? {}, nowIso(), ["setup"]);
+}
+
+/**
+ * Settle holds whose step has ended but never settled: from the step's own
+ * measure, in its run's artifacts, and at the ceiling only when there is
+ * none. Run by the rollup and before a repair is started.
+ */
 async function sweepStaleHolds(gh: GitHub): Promise<void> {
   const { FactoryStore } = await import("./lib/store.js");
+  const { staleHolds, githubSweepDeps } = await import("./commands/budget-sweep.js");
   const store = new FactoryStore(gh);
   const now = nowIso();
-  const swept = await store.data.updateJson<BudgetDoc, readonly string[]>(
+  const raw = await store.data.readJson<BudgetDoc>(BUDGET_PATH);
+  if (raw === null || raw.schema !== "budget/2" || raw.inflight.length === 0) return;
+  const log = (l: string): void => void process.stdout.write(`${l}\n`);
+  const verdicts = await staleHolds(raw, now, STALE_HOLD_SEC, githubSweepDeps(gh, log));
+  if (verdicts.length === 0) return;
+  await store.data.updateJson<BudgetDoc, null>(
     BUDGET_PATH,
     (current) => {
-      if (current === null || current.schema !== "budget/2") return { next: null, result: [] };
-      const r = sweepStale(current, now, STALE_HOLD_SEC);
-      return { next: r.swept.length === 0 ? null : r.doc, result: r.swept };
+      if (current === null || current.schema !== "budget/2") return { next: null, result: null };
+      let doc = current;
+      for (const v of verdicts) {
+        if (!doc.inflight.some((f) => f.key === v.key)) continue;
+        doc = settleBudget(doc, { key: v.key, agentUsd: v.agentUsd, detectionUsd: v.detectionUsd, ...(v.pipeline === undefined ? {} : { pipeline: v.pipeline }) }, now).doc;
+      }
+      return { next: doc === current ? null : doc, result: null };
     },
-    "budget: charge stale holds at their ceiling",
+    `budget: settle ${verdicts.length} hold(s) whose step ended`,
   );
-  if (swept.length > 0) process.stdout.write(`budget: charged ${swept.length} unsettled step(s) at their ceiling\n`);
+  for (const v of verdicts) log(`budget: settled ${v.key}: ${v.why}`);
 }
 
 async function budgetCommand(args: Args): Promise<number> {
@@ -1908,7 +1933,7 @@ async function sandboxCommandCli(second: string | undefined, args: Args): Promis
     const now = nowIso();
     const workItem = typeof args["work-item"] === "string" ? args["work-item"] : undefined;
     await recordReport(store, r, workItem, now);
-    const sweep = await sweepReports({ gh, store, ledger: await store.ledger(now), now });
+    const sweep = await sweepReports({ gh, store, ledger: await store.ledger(now), now, fits: async () => amendmentFits(gh, await factoryConfig()) });
     process.stdout.write(`${sweep.why}\n`);
     return 0;
   }
@@ -2007,7 +2032,27 @@ async function sandboxCommandCli(second: string | undefined, args: Args): Promis
     setOutput("merged", String(r.merged));
     return 0;
   }
-  die("usage: bsf sandbox start | check | trial | freeze | land");
+  if (second === "release") {
+    // `bsf sandbox release`, with AMEND: the amendment ended before any
+    // trial, so its reports wait again and the attempt does not count.
+    const amendRaw = process.env["AMEND"] ?? "";
+    if (amendRaw.trim() === "") return 0;
+    let keys: string[] = [];
+    try {
+      keys = ((JSON.parse(amendRaw) as { reports?: { key?: unknown }[] }).reports ?? [])
+        .map((r) => r.key)
+        .filter((k): k is string => typeof k === "string");
+    } catch (e) {
+      die(`AMEND is not JSON: ${(e as Error).message}`);
+    }
+    const gh = new GitHub({ repo: requireRepo() });
+    const { FactoryStore } = await import("./lib/store.js");
+    const { releaseReports } = await import("./commands/sandbox-reports.js");
+    const n = await releaseReports(new FactoryStore(gh), keys);
+    process.stdout.write(`${n} report(s) wait again: the amendment never reached a trial\n`);
+    return 0;
+  }
+  die("usage: bsf sandbox start | check | trial | freeze | land | release");
 }
 
 async function modelsCommand(): Promise<number> {

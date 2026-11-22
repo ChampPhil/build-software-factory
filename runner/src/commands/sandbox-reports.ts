@@ -156,6 +156,12 @@ export async function sweepReports(opts: {
   readonly ledger: Ledger;
   readonly now: string;
   readonly plan?: boolean;
+  /**
+   * Whether the budget has room for an amendment's largest step. A repair
+   * started without room is refused at once, and counting that as a failed
+   * attempt would put a fixable sandbox to a person for want of money.
+   */
+  readonly fits?: () => Promise<{ readonly ok: boolean; readonly reason: string }>;
 }): Promise<AmendmentSweep> {
   const ready: (InadequacyReport & { key: string; work_item?: string })[] = [];
   const marks: { path: string; content: string }[] = [];
@@ -175,7 +181,10 @@ export async function sweepReports(opts: {
     if (st.state === "ready") pending.push({ path, d });
     if (st.state === "escalate") escalate.push({ path, d });
   }
-  const busy = (pending.length > 0 || escalate.length > 0) && (await amendmentUnderWay(opts.gh));
+  const underWay = (pending.length > 0 || escalate.length > 0) && (await amendmentUnderWay(opts.gh));
+  const room = pending.length > 0 && !underWay && opts.fits !== undefined ? await opts.fits() : { ok: true, reason: "" };
+  const busy = underWay;
+  if (!room.ok) pending.length = 0;
   let issue: number | undefined;
   if (!busy && escalate.length > 0 && opts.plan !== true) {
     const { title, body } = escalationIssue(escalate.map(({ path, d }) => ({ ...d, key: keyOf(path) })));
@@ -208,6 +217,7 @@ export async function sweepReports(opts: {
     ready.length > 0 ? `started factory-setup to amend the sandbox for ${ready.length} report(s)` : "",
     escalated > 0 ? `put ${escalated} report(s) to a person${issue === undefined ? "" : ` in #${issue}`} after ${MAX_ATTEMPTS} amendments` : "",
     busy ? "an amendment is already under way; the reports wait for the next one" : "",
+    !room.ok ? `the reports wait for budget: ${room.reason}` : "",
     ready.length === 0 && !busy && waiting > 0 ? `${waiting} report(s) wait for their change to merge` : "",
   ].filter((x) => x !== "").join("; ") || "no report waiting";
   return { dispatched: ready.length, waiting: busy ? waiting + pending.length : waiting, dropped, escalated, why };
@@ -227,5 +237,24 @@ export async function markLanded(store: FactoryStore, keys: readonly string[], n
     marks.push({ path, content: json({ ...d, landed_at: now }) });
   }
   if (marks.length > 0) await store.put(marks, `sandbox reports: ${marks.length} repaired by an amendment`);
+  return marks.length;
+}
+
+/**
+ * An amendment that never got as far as a trial (refused by the budget, or a
+ * runner failure) tried nothing: its reports go back to waiting, and the
+ * attempt is not counted against them.
+ */
+export async function releaseReports(store: FactoryStore, keys: readonly string[]): Promise<number> {
+  const marks: { path: string; content: string }[] = [];
+  for (const key of keys) {
+    const path = `${REPORTS}${key}.json`;
+    const d = await store.data.readJson<StoredReport>(path);
+    if (d?.dispatched_at === undefined || d.landed_at !== undefined) continue;
+    const { dispatched_at: _d, ...rest } = d;
+    void _d;
+    marks.push({ path, content: json({ ...rest, attempts: Math.max(0, (d.attempts ?? 1) - 1) }) });
+  }
+  if (marks.length > 0) await store.put(marks, `sandbox reports: ${marks.length} back to waiting, their amendment never ran`);
   return marks.length;
 }

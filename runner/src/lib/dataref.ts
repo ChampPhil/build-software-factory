@@ -272,7 +272,16 @@ export class DataRefStore implements Loader {
       const { next, result } = step(text === null ? null : (JSON.parse(text) as T));
       if (next === null) return result;
       try {
-        await this.commit([{ path, content: `${JSON.stringify(next, null, 2)}\n` }], message, head);
+        const sha = await this.commit([{ path, content: `${JSON.stringify(next, null, 2)}\n` }], message, head);
+        // GitHub let a non-fast-forward update through on trinsports: a
+        // settle landed, and a writer that had read the head before it
+        // replaced it four seconds later. So the write is checked after it
+        // lands, and made again from a fresh read if it was lost. `step` is
+        // idempotent for every caller (a key already settled or held is not
+        // applied twice), so making it again is safe.
+        if (this.verifyDelaysMs.length > 0 && (await this.lost(sha))) {
+          throw new RefMoved(this.ref);
+        }
         this.lastRead.set(path, `${JSON.stringify(next, null, 2)}\n`);
         return result;
       } catch (err) {
@@ -282,6 +291,30 @@ export class DataRefStore implements Loader {
       }
     }
     throw lastError;
+  }
+
+  /** When a write is checked after it lands; none under the test runner unless a test sets them. */
+  verifyDelaysMs: readonly number[] = process.env["VITEST"] === undefined ? [5_000, 15_000] : [];
+
+  /**
+   * Whether a commit this store wrote has since been dropped from the ref:
+   * the head no longer contains it. A head that only looks older than the
+   * commit is a stale read, not a loss.
+   */
+  private async lost(sha: string): Promise<boolean> {
+    let waited = 0;
+    for (const at of this.verifyDelaysMs) {
+      await new Promise((r) => setTimeout(r, Math.max(0, at - waited)));
+      waited = at;
+      const head = await this.head();
+      if (head === null) return true;
+      if (head === sha) continue;
+      const cmp = await this.gh
+        .get<{ status: string }>(`${this.base}/compare/${sha}...${head}`)
+        .catch(() => null);
+      if (cmp?.status === "diverged") return true;
+    }
+    return false;
   }
 
   /**

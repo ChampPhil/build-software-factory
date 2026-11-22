@@ -257,10 +257,53 @@ function fakeRef(): { gh: GitHub; moveHead: () => void } {
     throw new Error(`unexpected GET ${url}`);
   };
   const gh = { repo: "o/r", send, get } as unknown as GitHub;
-  return { gh, moveHead: () => { pendingMove = true; } };
+  return {
+    gh,
+    moveHead: () => { pendingMove = true; },
+    // What GitHub did on trinsports: a writer that read the head before ours
+    // replaced it anyway, so our commit is no longer on the ref.
+    clobber: () => {
+      const c = commits.get(head!)!;
+      const before = commits.get(c.parents[0]!)!;
+      const lostTo = id("c");
+      commits.set(lostTo, { tree: before.tree, parents: c.parents });
+      head = lostTo;
+    },
+    compareStatus: (sha: string): string => (head === sha || commits.get(head!)?.parents[0] === sha ? "ahead" : "diverged"),
+  };
 }
 
 describe("updateJson", () => {
+  it("makes the write again when a later writer drops it from the ref", async () => {
+    const ref = fakeRef();
+    const realGet = (ref.gh as unknown as { get: (u: string) => Promise<unknown> }).get;
+    (ref.gh as unknown as { get: (u: string) => Promise<unknown> }).get = async (url: string) => {
+      const cmp = /\/compare\/(\w+)\.\.\./.exec(url);
+      return cmp !== null ? { status: ref.compareStatus(cmp[1]!) } : realGet(url);
+    };
+    const store = new DataRefStore(ref.gh, "refs/factory/data");
+    await store.updateJson<{ keys: string[] }, void>("b.json", () => ({ next: { keys: [] }, result: undefined }), "init");
+    store.verifyDelaysMs = [1];
+    let clobbered = false;
+    let calls = 0;
+    const realSend = (ref.gh as unknown as { send: (m: string, u: string, b?: unknown) => Promise<unknown> }).send;
+    (ref.gh as unknown as { send: (m: string, u: string, b?: unknown) => Promise<unknown> }).send = async (m, u, b) => {
+      const r = await realSend(m, u, b);
+      if (m === "PATCH" && !clobbered) { clobbered = true; ref.clobber(); }
+      return r;
+    };
+    await store.updateJson<{ keys: string[] }, void>(
+      "b.json",
+      (cur) => {
+        calls++;
+        return { next: cur?.keys.includes("settle-1") === true ? null : { keys: [...(cur?.keys ?? []), "settle-1"] }, result: undefined };
+      },
+      "settle",
+    );
+    expect(calls).toBe(2);
+    expect(JSON.parse((await store.read("b.json"))!)).toEqual({ keys: ["settle-1"] });
+  });
+
   it("re-reads and recomputes when another writer lands first, instead of writing a stale value", async () => {
     const { gh, moveHead } = fakeRef();
     const store = new DataRefStore(gh, "refs/factory/data");
