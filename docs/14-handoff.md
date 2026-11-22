@@ -150,8 +150,9 @@ Be straight with Philip about these.
    on its head; a push with no merged PR and no merge commit is still a
    `direct_push`. Five tests in `runner/test/audit.test.ts`. A repo gets the
    fix through the factory's normal upgrade PR (`install-factory.mjs --into`),
-   which Philip merges; until that merge, that repo's audit still fails the old
-   way.
+   which Philip merges. Trinsports' upgrade PR #43 carrying both fixes was
+   merged by Philip, so trinsports has them; neither has yet run live there
+   (the first push to main and the first held PR after #43 are the live test).
 4. **Criterion 8** (schema-major upgrade arrives as a Dependabot PR, then
    migrates): deferred, Dependabot cannot watch a private repo's releases. Set
    up when the repo goes public. Machinery is built (`schema/SURFACE.json`,
