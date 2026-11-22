@@ -99,6 +99,18 @@ export async function landAmendment(opts: {
   const prs = [...new Set(opts.ledger.open.filter((o) => items.has(o.work_item) && typeof o.pr === "number").map((o) => o.pr as number))];
   const reverified: number[] = [];
   for (const pr of prs) {
+    // Bring the branch up to date with main, which now holds the amended
+    // sandbox. That is a push by the factory's App, the one event gh-aw lets
+    // an App's checkout through for a verifier (a label event is refused), and
+    // the new head is a commit nothing has judged, so it is verified in full.
+    const updated = await opts.gh.send("PUT", `repos/${opts.gh.repo}/pulls/${pr}/update-branch`, {}).then(() => true, () => false);
+    if (updated) {
+      reverified.push(pr);
+      opts.log(`#${pr}: brought up to date with main; it is verified again against the amended sandbox`);
+      continue;
+    }
+    // Already level with main: nothing to push, so ask by label, which a
+    // person's account honours.
     const label = encodeURIComponent(opts.verifyLabel);
     await opts.gh.send("DELETE", `repos/${opts.gh.repo}/issues/${pr}/labels/${label}`).catch(() => undefined);
     const ok = await opts.gh

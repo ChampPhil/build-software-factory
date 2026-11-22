@@ -49,7 +49,7 @@ describe("landing", () => {
       { work_item: "wi_C", pipeline: "gardening", status: "in_review", pr: 30 },
     ],
   };
-  function gh(files: string[], mergeFails = false) {
+  function gh(files: string[], mergeFails = false, updateFails = false) {
     const calls: [string, string, unknown][] = [];
     return {
       repo: "o/r",
@@ -58,6 +58,7 @@ describe("landing", () => {
       send: vi.fn(async (method: string, path: string, body?: unknown) => {
         calls.push([method, path, body]);
         if (mergeFails && path.endsWith("/merge")) throw new Error("405 Protected branch");
+        if (updateFails && path.endsWith("/update-branch")) throw new Error("422 already up to date");
         return {};
       }),
     };
@@ -74,8 +75,22 @@ describe("landing", () => {
     expect(r.merged).toBe(true);
     expect(r.reverified).toEqual([22, 24]);
     expect(g.calls.some(([m, p]) => m === "PUT" && p.endsWith("/pulls/40/merge"))).toBe(true);
-    expect(g.calls.filter(([m, p]) => m === "POST" && p.endsWith("/labels")).map(([, p]) => p)).toEqual(["repos/o/r/issues/22/labels", "repos/o/r/issues/24/labels"]);
+    // The branch is brought up to date by the App (a push, which gh-aw trusts
+    // for a verifier's checkout); a label by the App would be refused there.
+    expect(g.calls.filter(([m, p]) => m === "PUT" && p.endsWith("/update-branch")).map(([, p]) => p)).toEqual(["repos/o/r/pulls/22/update-branch", "repos/o/r/pulls/24/update-branch"]);
+    expect(g.calls.some(([m, p]) => m === "POST" && p.endsWith("/labels"))).toBe(false);
     expect(store.put).toHaveBeenCalled();
+  });
+
+  it("asks by label only for a change already level with main, which has nothing to update", async () => {
+    const g = gh(files, false, true);
+    const r = await landAmendment({
+      gh: g as never, store: store as never, ledger, pr: 40, now: "2026-11-22T00:00:00Z", log: () => {},
+      input: { mode: "automatic", main, candidate: better }, verifyLabel: "factory:verify",
+      amend: { reports: [{ key: "k1", work_item: "wi_A" }] },
+    });
+    expect(r.reverified).toEqual([22]);
+    expect(g.calls.filter(([m, p]) => m === "POST" && p.endsWith("/labels")).map(([, p]) => p)).toEqual(["repos/o/r/issues/22/labels"]);
   });
 
   it("leaves it for a person, saying why, when it may not merge itself or GitHub refuses", async () => {
