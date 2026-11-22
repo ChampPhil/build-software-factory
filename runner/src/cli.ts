@@ -1069,7 +1069,7 @@ async function budgetState(cfg: FactoryConfig, gh: GitHub): Promise<BudgetState>
   // A pipeline is paused when its largest step no longer fits: its queued
   // work then waits rather than starting runs the budget would refuse.
   const models = (cfg.models ?? {});
-  const paused = (["product_work", "gardening", "hardening", "conflict"] as const).filter(
+  const paused = (["product_work", "gardening", "hardening", "conflict", "definition"] as const).filter(
     (p) => !canStart(doc, limits, p, models, nowIso()).ok,
   );
   return {

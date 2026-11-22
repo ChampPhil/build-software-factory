@@ -386,6 +386,8 @@ const PIPELINE_ROLES: Readonly<Record<string, readonly string[]>> = {
   gardening: ["builder", "verifier"],
   hardening: ["hardener", "spec", "builder", "verifier"],
   conflict: ["builder", "verifier"],
+  // A definition change is drafted by the builder alone (run-plan.ts).
+  definition: ["builder"],
 };
 
 /** The largest hold any one step of a pipeline's run takes, at the configured models. */
@@ -418,6 +420,7 @@ export function canStart(
   const doc = rollMonth(current ?? emptyBudget(now), now);
   const need = largestHoldUsd(pipeline, models, roles);
   if (need === null) return { ok: false, reason: `a ${pipeline} step uses a model with no list price` };
+  if (need === 0) return { ok: false, reason: `the budget knows no steps for the ${pipeline} pipeline` };
   const share = shareOf(pipeline);
   const u = used(doc, share);
   if (u.total + need > limits.monthlyUsd) {

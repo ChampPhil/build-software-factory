@@ -323,3 +323,13 @@ describe("a report written a little too long", () => {
     expect(r.trimmed.join("; ")).toMatch(/summary line 1 was shortened/);
   });
 });
+
+describe("every pipeline dispatch can start is one the budget knows", () => {
+  it("covers every pipeline the run plan has, so none is dispatched again and again while it waits", async () => {
+    const { largestHoldUsd } = await import("../src/commands/budget.js");
+    const MODELS = { triage: "claude-haiku-5-5", spec: "claude-opus-5-5", builder: "claude-sonnet-5-5", verifier: "claude-haiku-5-5", gardener: "claude-sonnet-5-5", hardener: "claude-sonnet-5-5", scorer: "claude-haiku-5-5" };
+    for (const p of ["product_work", "gardening", "hardening", "conflict", "definition"]) {
+      expect(largestHoldUsd(p, MODELS), p).toBeGreaterThan(0);
+    }
+  });
+});
