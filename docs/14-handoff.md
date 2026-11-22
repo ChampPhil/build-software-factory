@@ -50,13 +50,13 @@ that have not run.
 
 | Repo | What it is |
 | --- | --- |
-| `ChampPhil/build-software-factory` | The skill, runner, templates, schemas, docs. HEAD at handoff: `4d9585a` on `main`. |
+| `ChampPhil/build-software-factory` | The skill, runner, templates, schemas, docs. HEAD at handoff: the latest commit on `main` (code state `d03cd55` plus this doc). |
 | `ChampPhil/trinsports` | The real test app with the factory installed. |
 | `bsf-fixtures/{ts-webapp,py-api,js-legacy,java-service,csharp-api,go-cli,rust-lib,ruby-app,polyglot-monorepo}` | Nine fixture repos for setup tests. |
 
 Inside `build-software-factory`:
 
-- `runner/` TypeScript runner (`bsf` CLI). `runner/src/cli.ts`, `runner/src/commands/*`. Tests in `runner/test` (1,229 pass).
+- `runner/` TypeScript runner (`bsf` CLI). `runner/src/cli.ts`, `runner/src/commands/*`. Tests in `runner/test` (1,238 pass).
 - `skill/` the installable skill. `skill/runner` is the **vendored bundle** and must match source (CI checks). After changing runner source: `cd runner && npm run bundle && node scripts/host-variants.mjs`, then commit the result.
 - `skill/scripts/install-factory.mjs` copies the factory into a repo (`--into PATH`). This is how an **upgrade PR** to a target repo is made: branch from its main, run the installer, commit, push, open a PR, Philip merges.
 - `skill/references/phase-2-sandbox.md` the sandbox reference (up to date).
