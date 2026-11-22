@@ -194,7 +194,7 @@ describe("a run through the budget", () => {
 });
 
 /** A data ref in memory whose head can be moved under a writer. */
-function fakeRef(): { gh: GitHub; moveHead: () => void } {
+function fakeRef(): { gh: GitHub; moveHead: () => void; clobber: () => void; compareStatus: (sha: string) => string } {
   const commits = new Map<string, { tree: string; parents: string[] }>();
   const trees = new Map<string, Map<string, string>>();
   const blobs = new Map<string, string>();
