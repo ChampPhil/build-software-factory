@@ -143,7 +143,7 @@ Five kinds of triggers start factory work; the first three make it reactive, the
 2. **Development-event triggers** → something changes in the development process: a review comment on a factory PR, CI broken on main, a merge conflict.
 3. **Signal triggers** → the outside world reports a problem: production errors and user reports, arriving as GitHub issues.
 4. **Scheduled triggers** → time-based upkeep that keeps the garden pristine without anyone asking.
-5. **Self triggers** → the factory's own data creates work: human corrections, repeated failures, failures found in the scheduled review, new models to benchmark.
+5. **Self triggers** → the factory's own data creates work: human corrections, repeated failures, failures found in the scheduled review.
 
 - Every trigger becomes **one standard work item** before routing → routing only sees what the work is, not where it came from.
 - **The factory is also a trigger source** → anything it sets off goes back through routing, never straight into a workflow.
@@ -226,9 +226,7 @@ Self-improvement has two parts: instrumentation traces everything continuously, 
   2. They find failures and group them into problems.
   3. Each problem is routed by where its fix belongs:
      - **Fix belongs in the codebase, static rules or verification** → sent to **hardening**.
-     - **Fix belongs in the factory definition** → a change to **context** (feature map, runbook, fundamentals, history) or **the model for a step**, tested against the benchmarks (several runs per side, so noise can't pass for improvement), then a PR a human approves.
-- **A context line from a human correction skips the benchmark** → the human already said what they want, so it goes straight to a definition PR.
+     - In v1.0 every failure goes to hardening. A failure found in a hardening run is recorded and shown to a person, never hardened again, so hardening cannot feed itself.
+- **Changing the factory definition is manual in v1.0** → `/practice` declares a practice, and a definition PR a human approves adds it. Automatic, measured definition changes (benchmarks) are planned for v1.1.
 - **Hardening comes first** → if a fix can be a code check, it goes to hardening and stays out of the context.
-- **Benchmarks** → a fixed set of real past tasks, each paired with a known-good result, re-runnable against any factory configuration. The tasks never change, so any difference in score comes from the configuration. The set includes work the factory got wrong (graded against the human's fix), so a change can show it fixes a failure.
-  - "This is a representative task in my factory" → "show me a cost vs. quality graph across models for it."
-- **Order after setup** → instrumentation starts at switch-on → benchmarks build up from completed work → the scheduled review turns on, with benchmarks checking every factory-definition change.
+- **Order after setup** → instrumentation starts at switch-on → the scheduled review turns on. The first review runs three days after the first graded run, then every 3 days.

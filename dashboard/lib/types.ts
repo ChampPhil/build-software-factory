@@ -201,36 +201,18 @@ export interface ReviewFile {
   readonly problems: readonly {
     readonly title: string;
     readonly runs: readonly string[];
-    readonly route: "hardening" | "definition";
+    readonly route: "hardening";
     readonly work_item?: string;
     readonly change?: string;
     readonly pr?: number;
-    readonly benchmark?: string;
   }[];
-}
-
-/** One benchmark comparison: the points the cost-vs-quality chart plots. */
-export interface BenchmarkResultFile {
-  readonly schema: "benchmark-result/1";
-  readonly id: string;
-  readonly at: string;
-  readonly repeats: number;
-  readonly task_count: number;
-  readonly pipeline?: string;
-  readonly pr?: number;
-  readonly sides: readonly {
-    readonly label: string;
-    readonly models?: Readonly<Record<string, string>>;
-    readonly score_mean: number;
-    readonly score_spread: number;
-    readonly cost_usd: number;
-    readonly cost_per_task: number;
-    readonly must_pass_rate: number;
-    readonly current?: boolean;
+  /** Failures the review saw but did not file work for: found in a hardening run. */
+  readonly unrouted?: readonly {
+    readonly run: string;
+    readonly tag: string;
+    readonly reason: string;
+    readonly detail?: string;
   }[];
-  readonly admitted: boolean;
-  readonly reasons: readonly string[];
-  readonly regressed?: readonly string[];
 }
 
 /** A role's report as the runner stores it: which files it kept, and where. */

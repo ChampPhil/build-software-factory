@@ -397,9 +397,10 @@ describe("definition templates", () => {
     }
   });
 
-  it("there is a rubric per pipeline plus the shared one, and each validates", () => {
+  it("there is a rubric for each pipeline the review grades plus the shared one, and each validates", () => {
     const files = readdirSync(join(DEF, "rubrics")).filter((f) => f.endsWith(".yaml")).sort();
-    expect(files).toEqual(["definition.yaml", "gardening.yaml", "hardening.yaml", "product_work.yaml", "shared.yaml"]);
+    // No definition rubric: /practice runs are a person's own change and are not graded.
+    expect(files).toEqual(["gardening.yaml", "hardening.yaml", "product_work.yaml", "shared.yaml"]);
     for (const f of files) {
       const doc = parseYaml(readFileSync(join(DEF, "rubrics", f), "utf8")) as unknown;
       const res = validate("rubric", doc);
@@ -407,10 +408,8 @@ describe("definition templates", () => {
     }
   });
 
-  it("every rubric's failure tags are the vocabulary the review routes on", () => {
-    // review.ts routes a problem by its tag, so a tag no rubric emits is a
-    // route nothing can reach, and a tag the router has never heard of
-    // silently defaults to hardening.
+  it("every rubric's failure tags are the vocabulary the review groups on", () => {
+    // review.ts groups problems by tag, so a tag must be a plain identifier.
     const tags = new Set<string>();
     for (const f of readdirSync(join(DEF, "rubrics")).filter((x) => x.endsWith(".yaml"))) {
       const doc = parseYaml(readFileSync(join(DEF, "rubrics", f), "utf8")) as { failure_tags?: string[] };

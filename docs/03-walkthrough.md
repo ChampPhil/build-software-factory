@@ -226,23 +226,20 @@ The skill reuses whatever the repo already has (Dockerfile, devcontainer, setup 
 - **Builder and verifier are separate** so no agent grades its own work.
 - **Hooks capture local work** → a hook committed to the repo saves each local agent session's transcript (with secrets redacted) to the factory's data. It asks each developer once, on their own machine, before capturing anything, and it only stores transcripts where the public can't read them: on a public repo, that means the private data repo.
 
-## 13. LLM-as-a-judge, scorers and benchmarks
+## 13. LLM-as-a-judge and scorers
 
 **What it is.**
 
 - **LLM-as-a-judge** → using a model to grade work against a rubric ("Does this PR follow the spec? Is the change minimal?"). It handles judgments that code checks can't.
 - **Scorers** (also called *online evals*) → judge agents that grade the factory's real work. They run in a scheduled review every few days, over everything done since the last one.
-- **Benchmarks** → a fixed set of real past tasks, each paired with a known-good result, that can be re-run against any factory configuration. The tasks never change, so a difference in score must come from the configuration (a model, a prompt, the context).
 
-**Analogy.** Scorers are a teacher grading this week's homework. A benchmark is the same standardized exam given to every class, so classes can be compared fairly.
+**Analogy.** Scorers are a teacher grading this week's homework and writing up what to practise.
 
 **How the factory uses it.** This is the factory loop:
 
 1. Instrumentation records every run continuously; every few days a scheduled review has the scorers grade all recent work and find failures.
-2. Completed tasks become benchmark tasks, including ones a human had to fix, graded against the human's fix.
-3. Failures are grouped and routed: a fix in the codebase, static rules or verification goes to hardening; a fix in the factory definition (context, a step's model) is tested on the benchmarks, several runs per side so noise can't pass for improvement, then opened as a PR for a human to approve. A context line that comes straight from a human correction skips the benchmark.
-
-Benchmarks also answer "is the new model worth it?" with a cost vs. quality graph for each kind of task. Benchmarks come **after** setup, once the factory has done real work to build them from.
+2. Failures are grouped by tag and area and filed as hardening work. A failure found in a hardening run is shown to a person instead, so hardening cannot feed itself.
+3. Changing the factory's own definition stays manual in v1.0 (`/practice`). Measured, automatic definition changes with benchmarks are planned for v1.1.
 
 ## 14. Static web apps and the dashboard
 

@@ -7,6 +7,13 @@ established and how. A verdict is **met** only where it was seen happen on a
 real repository; **logic proven** means the deciding code is tested but the
 live event has not occurred; **partly** says which half is which.
 
+> **Update (Nov 22, 2026).** Criteria 2–5 below describe benchmark and
+> definition-change machinery that was pruned from v1.0 and moved to v1.1. The
+> build plan now asks for a review that files hardening work and records
+> failures found in hardening runs as unrouted, so those four rows are
+> withdrawn, not failed. The text is kept as the record of what was built and
+> tested at the time.
+
 ## Where this stands
 
 | # | Criterion | Verdict |

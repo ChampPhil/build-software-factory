@@ -3,10 +3,11 @@
 Turns a repository into a governed, automated loop: work comes in as an issue,
 agents triage, specify, build and verify it, deterministic gates decide whether
 it is allowed to merge, and a human approves what lands. It runs entirely on
-GitHub Actions with no server to host, and it improves itself — the corrections
-people have already made to agents become static rules, and changes to the
-factory's own definition have to beat a frozen benchmark before they are
-adopted.
+GitHub Actions with no server to host, and it hardens itself — the corrections
+people have already made to agents become static rules, and a scheduled review
+grades recent work and turns what it finds into hardening work. Changes to the
+factory's own definition stay with you (`/practice`); automatic definition
+changes are planned for v1.1.
 
 > **Status: beta.** It has run end to end on nine fixture repositories and on
 > one real app; what is proven, and how, is in
@@ -77,7 +78,7 @@ factory stopped on.
 | **Gates** | Static rules, tests and coverage run on every PR and decide the merge, with a per-file ratchet so a change cannot trade one new violation for one fix. |
 | **Guardrails** | Eight language rule packs, each rule carrying the bad and good example that proves it discriminates — a rule is installed only once it has failed on the bad one and passed on the good one. |
 | **Merge queue** | GitHub's native queue where the repo qualifies, a one-at-a-time fallback everywhere else, so a human PR and a factory PR cannot each pass alone and break main together. |
-| **Self-improvement** | A scheduled review grades recent work, routes what it finds to hardening or to a definition change, and a definition change must beat the current one on frozen benchmark tasks by more than the run-to-run spread. |
+| **Self-hardening** | A scheduled review grades recent work and files what it finds as hardening work: static rules, tests and checks. Failures found in hardening runs are shown to you, never hardened again. Changing the factory's own definition is manual (`/practice`); automatic, measured definition changes are v1.1. |
 | **Dashboard** | A static page that talks to GitHub from your browser. No backend, no data anywhere but your repository. |
 
 ## Enforcement depends on your GitHub plan
@@ -99,7 +100,7 @@ factory watches main instead of pretending otherwise.
 
 Two meters, both yours: your Anthropic API key, and your GitHub Actions
 minutes. The factory has a monthly budget in dollars (default **$35**) split
-into shares (product work 60%, gardening 25%, review and benchmarks 15%). Both are set and changed from the
+into shares (product work 60%, gardening 25%, reviews and practices 15%). Both are set and changed from the
 dashboard's Factory page.
 
 **The factory stops before it can spend past the budget, even if that means
@@ -158,7 +159,7 @@ upgrades. The full table, with what the factory adds to each, is in
 [the architecture doc](docs/07-architecture.md).
 
 Built custom because nothing fits: mining corrections into guardrail
-candidates, the hardening pipeline, benchmark-gated definition changes, the
+candidates, the hardening pipeline, the scheduled review, the
 cross-tool weakening check, the path-policy check, the merge-queue fallback,
 the git-ref data store and the static dashboard.
 
@@ -177,10 +178,10 @@ this exists:
    into guardrail candidates, and the accepted ones become static rules, tests
    or context. A correction you have made once should not be a correction you
    make again.
-2. **Self-improvement that has to prove itself.** A change to the factory's own
-   definition runs against frozen benchmark tasks built from its own completed
-   work, three repeats a side, and is adopted only if the gain is larger than
-   the run-to-run spread. "The number went up" is not evidence.
+2. **A review that feeds hardening.** A scheduled review grades recent work with
+   scorers, groups the failures, and files each group as hardening work. The
+   first review runs three days after the first graded run, so you see it early.
+   Changing the factory's own definition is your call, through `/practice`.
 3. **It works on a free plan.** No hosted service, no Enterprise features
    required: a fallback merge queue, audit-after-the-fact where branch
    protection is unavailable, and a dashboard with no backend.

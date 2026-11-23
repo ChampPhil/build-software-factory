@@ -10,9 +10,9 @@ Build Software Factory ships in three releases; each ships only when its accepta
 | --- | --- | --- |
 | **v0.1: the working loop** | Issues become verified, merged PRs; Claude Code; TypeScript, JavaScript, Python; revert rate tracked | v0.1 acceptance criteria pass |
 | **v0.2: the garden keeps itself** | Gardening, hardening, conflict resolution, four more harnesses, Go and Java, private data repo | v0.2 acceptance criteria pass on fixtures and Philip's old repo |
-| **v1.0: the factory improves itself** | Scheduled review, benchmarks, all eight languages, frozen schema 1.0 | v1.0 acceptance criteria pass |
+| **v1.0: the factory hardens itself** | Scheduled review that files hardening work, all eight languages, frozen schema 1.0 (benchmarks and automatic definition changes move to v1.1) | v1.0 acceptance criteria pass |
 
-Each release is usable on its own: v0.1 already turns issues into verified, merged PRs; v0.2 keeps the codebase clean without help; v1.0 makes the factory better over time.
+Each release is usable on its own: v0.1 already turns issues into verified, merged PRs; v0.2 keeps the codebase clean without help; v1.0 makes the factory find and harden its own failures.
 
 ## v0.1: the working loop
 
@@ -80,7 +80,7 @@ Adds the two codebase pipelines, conflict handling, the free-private fallback an
 **Scope**
 
 - **Pipelines:** gardening (nightly, up to 5 PRs) and hardening (from recurring or flagged corrections, repeated failures and gardening hand-offs), plus conflict resolution.
-- **Definition flow, minimal:** a context line from a human correction opens a definition PR directly (no benchmark).
+- **Definition flow, minimal:** a context line from a human correction opens a definition PR directly.
 - **Tests:** mutation testing on changed lines with each language's existing tool (StrykerJS, Stryker.NET, cargo-mutants, Infection and the equivalents for the rest).
 - **Rule packs:** call graph, control flow and clone detection added.
 - **Harnesses:** Cursor CLI, Kilo Code, pi and Hermes Agent adapters (each a gh-aw engine, built-in or custom, plus a memex source), with local session hooks and correction mining for all five. Hooks ask each developer once before capturing anything.
@@ -101,32 +101,30 @@ Adds the two codebase pipelines, conflict handling, the free-private fallback an
 - [ ] When gardening's budget share is used, gardening pauses while product work continues, up to the total budget and never past it.
 - [ ] On a private Free-plan fixture, gardening pauses before the month's included Actions minutes run out.
 - [ ] A request posted in Slack with `/github open` produces a draft PR; an issue created by Linear's bot produces one after a one-click accept on Home.
-- [ ] A correction whose fix is a context line arrives as a definition PR without a benchmark run.
+- [ ] A correction whose fix is a context line arrives as a definition PR.
 - [ ] Mutation testing fails a PR whose new tests make no meaningful assertions.
 - [ ] The `factory-media` ref stays under its size budget after a monthly squash.
 - [ ] Each of the five adapters passes the conformance suite, including cost reporting.
 - [ ] On a public repo with its data in the same repo, no session transcript is ever pushed; with the private data repo, sessions from a developer who hasn't opted in are never captured, and a teammate who has opted in can push to it without manual setup.
 
-## v1.0: the factory improves itself
+## v1.0: the factory hardens itself
 
-The full vision: self-improvement, benchmarks, every supported language, and a stable, documented schema.
+The scheduled review, every supported language, and a stable, documented schema. Benchmarks and automatic definition changes were pruned from v1.0 and are planned for v1.1.
 
 **Scope**
 
-- **Self-improvement:** instrumentation complete; the scheduled review with scorers and rubrics, both run on promptfoo; routing to hardening or definition changes; benchmark tasks built from completed work, including corrected and escalated runs; the benchmark-gated definition PR with repeated runs and noise checks.
+- **Self-hardening:** instrumentation complete; the scheduled review with scorers and rubrics; every problem routed to hardening, with failures found in hardening runs shown to a person instead of hardened again; the first review three days after the first graded run.
 - **Languages:** Rust, C# and Ruby rule packs (all eight supported).
 - **Rule packs:** data flow and cross-artifact consistency added.
 - **Data:** `bsf migrate`; schema 1.0 frozen and published.
-- **Dashboard:** Improvement page (reviews, scorer cards, cost vs. quality chart, comparisons), human interactions per PR, mobile layouts for Home, Live and PR review, self-host command.
+- **Dashboard:** Improvement page (reviews, scorer cards), human interactions per PR, mobile layouts for Home, Live and PR review, self-host command.
 - **Skill:** update mode (re-mine, repair) and `bsf contribute-corrections` for teammates.
 
 **Acceptance criteria**
 
-- [ ] A scheduled review on a factory with 50+ runs produces a report where every problem is routed to hardening or a definition change.
-- [ ] A deliberately degraded context file (a wrong runbook step) is caught by the review, fixed by a definition PR, and that PR shows the failure tasks improving and an overall gain larger than the run-to-run spread over 3 repeats.
-- [ ] A definition change that lowers the benchmark score or raises cost by more than 20% is not proposed.
-- [ ] The benchmark set includes tasks from corrected and escalated runs, graded against the human's fix.
-- [ ] The cost vs. quality chart shows at least three model configurations for product work, with the current one marked.
+- [ ] A scheduled review on a factory with 50+ runs produces a report where every problem is routed to hardening or recorded as unrouted.
+- [ ] The first review runs three days after the first graded run even with fewer than 5 runs; later reviews are skipped under 5 runs.
+- [ ] A failure found in a hardening run files no new hardening work and shows on the Improvement page.
 - [ ] Setup completes on every fixture repo, covering all eight languages and the monorepo.
 - [ ] Re-running the skill on an installed factory changes nothing unless the user picks re-mine or repair.
 - [ ] A runner upgrade that bumps a schema major arrives as a Dependabot PR, is followed after merge by a definition PR migrating the config, and the dashboard reads both old and new files.

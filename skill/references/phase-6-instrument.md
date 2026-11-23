@@ -78,7 +78,7 @@ it overrun, and says so. Show the user that number. It is the one most likely
 to surprise them.
 
 The user confirms or changes the budget, the minutes limit and the shares
-(default: $35 a month; product 60%, gardening 25%, review and benchmarks 15%).
+(default: $35 a month; product 60%, gardening 25%, reviews and practices 15%).
 
 Say what the budget guarantees, in these words or close to them: **the
 factory will stop before it spends more than this, even if that means

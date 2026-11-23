@@ -19,14 +19,6 @@
       "type": "string",
       "pattern": "^rev_[0-9]{8}$"
     },
-    "benchmarkTaskId": {
-      "type": "string",
-      "pattern": "^bt_[0-9A-HJKMNP-TV-Z]{26}$"
-    },
-    "benchmarkResultId": {
-      "type": "string",
-      "pattern": "^bench_[0-9A-HJKMNP-TV-Z]{26}$"
-    },
     "candidateId": {
       "type": "string",
       "pattern": "^cand_[0-9A-HJKMNP-TV-Z]{26}$"

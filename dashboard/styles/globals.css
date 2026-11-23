@@ -437,28 +437,9 @@ textarea { min-height: 96px; resize: vertical; }
 
   /* Desktop-first pages stay readable rather than pretending to be designed
      for this width. */
-  .scatter { max-width: 100%; }
   .timeline { overflow-x: auto; }
 }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
 }
-
-/* The cost-against-quality chart on the Improvement page. A dozen points
-   drawn as inline SVG: a chart library would be most of the bundle, and the
-   dashboard ships as static files. */
-.scatter { width: 100%; max-width: 560px; height: auto; margin: 16px 0 20px; display: block; }
-.scatter .axis { stroke: var(--line-bright); stroke-width: 1; }
-.scatter .gridline { stroke: var(--line); stroke-width: 1; stroke-dasharray: 2 4; }
-.scatter .tick { fill: var(--ink-faint); font-size: 11px; font-variant-numeric: tabular-nums; }
-.scatter .frontier { fill: none; stroke: var(--pass); stroke-width: 1.5; stroke-dasharray: 4 3; opacity: 0.7; }
-/* The spread drawn through each point, so a number that moves a lot between
-   repeats cannot be read as a precise measurement. */
-.scatter .spread { stroke: var(--ink-faint); stroke-width: 1; opacity: 0.5; }
-.scatter .point { fill: var(--surface); stroke: var(--ink-dim); stroke-width: 1.5; }
-.scatter .point.current { fill: var(--define); stroke: var(--define); }
-/* The number inside each dot matches its row in the list below, so a point on
-   the chart can be identified without crowding the plot with model names. */
-.scatter .point-rank { fill: var(--ink-dim); font-size: 9px; font-weight: 600; pointer-events: none; }
-.scatter .point.current + .point-rank { fill: var(--base); }

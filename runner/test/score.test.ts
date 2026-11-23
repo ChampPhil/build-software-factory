@@ -47,9 +47,9 @@ describe("the 1-5 scale", () => {
 describe("loadRubrics", () => {
   it("loads the shipped rubrics", () => {
     const rubrics = loadRubrics(RUBRIC_DIR);
-    expect(rubrics.length).toBe(5);
+    expect(rubrics.length).toBe(4);
     expect(rubrics.filter((r) => r.shared === true)).toHaveLength(1);
-    expect(rubrics.reduce((a, r) => a + r.criteria.length, 0)).toBeGreaterThan(20);
+    expect(rubrics.reduce((a, r) => a + r.criteria.length, 0)).toBeGreaterThan(15);
   });
 
   it("returns nothing for a directory that is not there", () => {

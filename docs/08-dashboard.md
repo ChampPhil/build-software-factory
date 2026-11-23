@@ -15,8 +15,8 @@ The dashboard is the one place to see everything the factory is doing, act on wh
 
 - a metrics landing page over a chosen date range, built around autonomy (merged PRs that needed no human code push), PR cycle time with a median per stage, and cost per PR;
 - a personal page that defaults to work waiting on you: questions, spec approvals, PR reviews;
-- run pages showing timeline and cost, with actions to stop a run, score it, or turn it into a benchmark task;
-- separate areas for scorers, self-improvement PRs and benchmarks.
+- run pages showing timeline and cost, with actions to stop a run or give it guidance;
+- a separate Improvement area for the scheduled reviews and scorer cards.
 
 What Build Software Factory adds: guardrail health (rules, baselines, coverage), the merge queue, and "human interactions per PR", which Warp's team tracks as a proxy for how much steering the agents need.
 
@@ -87,7 +87,7 @@ A board of everything in flight, refreshed every 5 seconds while the page is ope
 5. **Transcript:** the normalized transcript of each step, collapsible tool calls, searchable.
 6. **Cost breakdown:** tokens in/out/cached and cost per step and model.
 7. **Scores:** the scheduled review's scores for this run, once reviewed.
-8. **Actions:** cancel (while running), re-run, mark as representative (turns it into a benchmark task), give guidance (restarts with a comment).
+8. **Actions:** cancel (while running), re-run, give guidance (restarts with a comment).
 
 ## Home: waiting on you
 
@@ -97,7 +97,7 @@ Home is the review queue: everything that needs this user, oldest first, grouped
 | --- | --- | --- |
 | **PRs to approve** | Draft PRs in pipelines with auto-merge off, any PR the weakening check flagged, and runner upgrade PRs (with the release notes) | Open review · Approve · Request changes |
 | **Hardened from corrections / Guardrail candidates** | Guardrails lists each hardening change with the correction that created it; Home shows pending candidates with Accept/Reject (sent through the intake workflow, since the browser can't write the data ref) | Accept · Reject |
-| **Definition changes** | Context or model changes from the scheduled review, with benchmark before/after (mean and spread, failure tasks, regressions); context lines from human corrections, with the corrections they came from | Approve · Reject |
+| **Practices to approve** | Definition PRs from `/practice` comments: the practice a person declared, and the comment it came from | Approve · Reject |
 | **Escalations** | Work the factory couldn't finish, with its best guess at the blocker | Give guidance · Take over · Close |
 | **Questions** | The one question triage asked before starting, quoted from the issue, with how long it has waited. Questions never time out | Answer box (posts the comment as the signed-in person, which restarts the item) |
 | **Guardrail candidates** | New candidates from local sessions or `bsf contribute-corrections` | Accept · Reject |
@@ -122,23 +122,16 @@ One page showing how strict the codebase is and how cleanup is going.
 - **Candidates:** pending candidates with occurrences, sources, an example quote and the proposed fix; accept or reject in place.
 - **Hardening history:** every hardening PR, newest first, with the problem class it eliminated.
 
-## Improvement: scheduled reviews and benchmarks
+## Improvement: scheduled reviews
 
-Where the factory engineer sees what the scheduled review found and which configuration works best.
+Where the factory engineer sees what the scheduled review found.
 
-**Reviews**
-
-- List of scheduled reviews: date, runs reviewed, pass rate per rubric, problems found, where each went (hardening or definition).
-- **Review page:** scores per criterion across runs; failure tags ranked by count; each problem with its example runs, its route, and the resulting work item or PR.
+- List of scheduled reviews: date, runs reviewed, pass rate per rubric, problems found and where each went (hardening).
+- **Review page:** scores per criterion across runs; failure tags ranked by count; each problem with its example runs and the work item it filed.
+- **Hardening runs that scored badly:** failures found in hardening runs are shown here for a person to look at. They never become new hardening work, so hardening cannot feed itself.
 - **Scorer cards:** pass rate per rubric over time, so a drop is visible at a glance.
 
-**Benchmarks**
-
-- The task set: each task's source run, pipeline, origin (succeeded, corrected, escalated, representative) and tags; tasks marked representative are highlighted.
-- **Cost vs. quality chart per pipeline:** each configuration tried (model per step) is a point, cost per task on one axis and benchmark score on the other, with the current configuration marked. The frontier of best score for the cost is drawn as a line.
-- **Run a comparison:** pick configurations and a task set; this dispatches a benchmark run (3 repeats per side by default) and the results appear here when done, with each side's spread, so a difference inside the noise is shown as "no clear winner".
-
-**Improvement PRs:** every definition change the review proposed, with its benchmark result and status.
+Benchmarks, the cost vs. quality chart and automatic definition changes are planned for v1.1.
 
 ## Factory settings and toggles
 
@@ -153,7 +146,7 @@ The settings a person may change are a fixed list (`bsf` keeps it in `lib/settin
 | **Who can start work** | Everyone with write access, and their role; outside requests wait for an accept on Home | Add or remove a person on GitHub's own access page (linked) |
 | **Standing goals** | What the factory leans toward for a while | Add (with an optional lane) or remove |
 | **Ask the factory** | A box for a change no control covers, in the person's own words | Files an issue labelled `factory:ask` |
-| **Models** | The model for each role, with cost per run and score from the last benchmark | Not user-facing in v1.0 (the factory's own choice) |
+| **Models** | The model for each role, with cost per run | Not user-facing in v1.0 (the factory's own choice) |
 | **Roles and context** | Each role's prompt and the four context files, rendered, with the source id on each factory-added line | View only |
 | **Enforcement** | Plan detected, branch protection on/off, audit mode, private data storage, session capture on/off and why | Turn on audit revert PRs |
 | **Health** | Pinned runner version and latest release, any open upgrade PR, Dependabot entry present, both App installations (factory and recompiler), secrets present, schedules active, private data repo collaborators in sync, **lock files current** | Open the upgrade PR for review; start a recompile |
@@ -200,8 +193,7 @@ Every change the dashboard makes is a normal GitHub action taken as the signed-i
 | Change a setting (budget, shares, merge by itself, cleanup PRs and time) | Opens a pull request labelled `factory:settings` with the change (and, for the cleanup time, the one cron line of the cleanup workflow), waits for the `factory/policy` check, merges it as the user, and deletes the branch |
 | Ask the factory | Creates an issue labelled `factory:ask` |
 | Add or remove a standing goal, change a request's pipeline | Dispatches the intake workflow with a `kind` |
-| Mark a run representative | Commits a benchmark task file to `factory-data` |
-| Run gardening now, run a review, run a benchmark comparison | Dispatches the workflow (`workflow_dispatch`) |
+| Run gardening now, run a review | Dispatches the workflow (`workflow_dispatch`) |
 | Cancel a run | Cancels the workflow run |
 
 **Settings PRs from the dashboard:** GitHub does not let a person approve their own pull request, and the dashboard opens and merges the change as the signed-in person, so for this narrow case the author is the approver. The path policy counts a PR as the author's approval only when all of these hold: it is labelled `factory:settings`; it comes from this repository, from no pipeline; its author is a person (never a bot or an App) who actually holds write access; it changes nothing but the settings file and, at most, the one cron line of the cleanup workflow; and every key it moved is on the list above, set to a value the list accepts (shares adding to 100, a daily hour). Anything else a person changes in the definition, a second trusted person still approves. Agents cannot open such a PR: they never hold a person's token, and their pipelines may not change the definition.

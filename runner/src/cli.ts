@@ -18,8 +18,6 @@ import { runSyncCommand } from "./commands/sync-settings.js";
 import { runAuditCommand } from "./commands/audit.js";
 import { byFileOf } from "./commands/gates.js";
 import { parseYaml } from "./lib/yaml.js";
-import { benchmarkResultId } from "./lib/ids.js";
-import { benchmarkResultPath, FactoryStore, json } from "./lib/store.js";
 import type { CandidatesFile } from "./lib/types.js";
 import { runDoctor, formatReport } from "./commands/doctor.js";
 import { findDashboard, serveDashboard } from "./commands/serve.js";
@@ -59,11 +57,6 @@ import { runTestsGate } from "./commands/tests-gate.js";
 import { mineCorrections, listSessions, clusterCorrections, candidatesFrom } from "./commands/mine.js";
 import { mineRepo } from "./commands/mine-repo.js";
 import { runScorers, loadRubrics } from "./commands/score.js";
-import {
-  buildTasks, buildBenchmarkConfig, runBenchmark, readBenchmark, admit, sideSummary,
-  type BenchmarkTask,
-} from "./commands/benchmark.js";
-import { runBenchmarkTask, type BenchmarkTaskInput } from "./commands/benchmark-run.js";
 import { readFileSync, appendFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, statSync } from "node:fs";
 import { specProblems, type SpecGateInput, type SpecLike } from "./commands/spec-gate.js";
 import { dirname, join } from "node:path";
@@ -314,25 +307,6 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
       promptfoo's LLM-rubric graders. Reports a criterion whose repeats
       disagree instead of routing it.
 
-  bsf benchmark run --before PATH --after PATH [--tasks DIR] [--repeats N]
-                    [--pr N] [--repo OWNER/REPO] [--result-out PATH]
-      Run the frozen tasks against two definitions and say whether the change
-      is admissible. Writes the comparison — each side's score, spread and
-      cost — so the Improvement page can plot cost against quality; with
-      --repo it also stores it in the factory's data ref.
-
-  bsf benchmark build --runs PATH [--out DIR]
-      Turn merged runs into frozen benchmark tasks, including the ones a human
-      had to correct — those are what a definition change must show it fixes.
-
-  bsf benchmark run --tasks DIR --before PATH --after PATH [--repeats N]
-      Run both definitions over the same tasks and say whether the change is
-      admissible. A must-pass check that regressed is a veto.
-
-  bsf benchmark-run --task JSON --definition PATH [--json]
-      One task, one definition, in this checkout. Called by the promptfoo
-      provider; reports unavailable rather than a pass when it cannot run.
-
   bsf validate SCHEMA FILE
       Validate a file against one of the shared schemas.
 
@@ -527,12 +501,6 @@ async function main(argv: readonly string[]): Promise<number> {
 
     case "score":
       return scoreCommand(args);
-
-    case "benchmark":
-      return benchmarkCommand(second, args);
-
-    case "benchmark-run":
-      return benchmarkRunCommand(args);
 
     case "fetch-work-item":
       return fetchWorkItemCommand(command[1], args);
@@ -1868,8 +1836,9 @@ async function reviewCommand(second: string | undefined, args: Args): Promise<nu
       ...(args["plan"] === true ? { plan: true } : {}),
     });
     for (const p of r.problems) {
-      process.stdout.write(`${p.tag} (${p.occurrences}x) -> ${p.destination}: ${p.why}\n`);
+      process.stdout.write(`${p.tag} (${p.occurrences}x) -> hardening: ${p.why}\n`);
     }
+    for (const u of r.unrouted) process.stdout.write(`${u.tag} in ${u.run}: not routed, ${u.reason}\n`);
     process.stdout.write(`filed ${r.filed.length}, dispatched ${r.dispatched.length}\n`);
     return 0;
   }
@@ -3090,164 +3059,6 @@ async function scoreCommand(args: Args): Promise<number> {
     `${report.rows.length} grade(s), ${report.failures.length} failure(s) -> ${out}\n`,
   );
   return 0;
-}
-
-async function benchmarkCommand(second: string | undefined, args: Args): Promise<number> {
-  if (second === "build") {
-    const runsPath = args["runs"];
-    if (typeof runsPath !== "string") die("usage: bsf benchmark build --runs PATH [--out DIR]");
-    const dir = typeof args["out"] === "string" ? args["out"] : ".factory/benchmarks";
-    const runs = JSON.parse(readFileSync(runsPath, "utf8")) as Parameters<typeof buildTasks>[0]["runs"];
-    const existing = readTasks(dir);
-    const { tasks, skipped } = buildTasks({ runs, now: nowIso(), existing });
-
-    mkdirSync(dir, { recursive: true });
-    for (const t of tasks) {
-      assertValid("benchmark-task", t);
-      writeFileSync(join(dir, `${t.id}.json`), `${JSON.stringify(t, null, 2)}\n`);
-    }
-    const byOrigin = new Map<string, number>();
-    for (const t of [...existing, ...tasks]) byOrigin.set(t.origin, (byOrigin.get(t.origin) ?? 0) + 1);
-    process.stdout.write(
-      `${tasks.length} new task(s), ${existing.length + tasks.length} in all: ` +
-        `${[...byOrigin].map(([o, n]) => `${n} ${o}`).join(", ")}\n`,
-    );
-    for (const s of skipped) process.stdout.write(`  skipped ${s.run}: ${s.why}\n`);
-    return 0;
-  }
-
-  if (second === "run") {
-    const dir = typeof args["tasks"] === "string" ? args["tasks"] : ".factory/benchmarks";
-    const before = args["before"];
-    const after = args["after"];
-    if (typeof before !== "string" || typeof after !== "string") {
-      die("usage: bsf benchmark run --before PATH --after PATH [--tasks DIR] [--repeats N]");
-    }
-    const tasks = readTasks(dir);
-    if (tasks.length === 0) die(`no benchmark tasks in ${dir}`);
-
-    const repeats = typeof args["repeats"] === "string" ? Number(args["repeats"]) : 3;
-    const config = buildBenchmarkConfig({
-      tasks,
-      provider: `file://${join(process.cwd(), "provider/pipeline.cjs")}`,
-      definitions: [
-        { label: "before", path: before },
-        { label: "after", path: after },
-      ],
-      graderProvider: process.env["FACTORY_GRADER_PROVIDER"] ?? "anthropic:messages:claude-haiku-5-5",
-      repeats: Number.isInteger(repeats) && repeats > 0 ? repeats : 3,
-    });
-
-    const result = await runBenchmark({ config, workDir: ".factory/work/benchmark" });
-    if (!result.ran) {
-      process.stderr.write(`${result.note}\n`);
-      return 1;
-    }
-    const sides = readBenchmark(JSON.parse(readFileSync(result.outputPath, "utf8")), tasks);
-    const beforeRuns = sides.get("before") ?? [];
-    const afterRuns = sides.get("after") ?? [];
-    const verdict = admit(beforeRuns, afterRuns, repeats);
-
-    process.stdout.write(`${verdict.admit ? "admissible" : "not admissible"}\n`);
-    for (const r of verdict.reasons) process.stdout.write(`  ${r}\n`);
-
-    // Persisted so the Improvement page can plot cost against quality without
-    // re-running anything. Each side is one configuration tried.
-    const doc = {
-      schema: "benchmark-result/1" as const,
-      id: benchmarkResultId(),
-      at: nowIso(),
-      repeats,
-      task_count: tasks.length,
-      sides: [
-        sideSummary("before", beforeRuns, repeats, {
-          ...(modelsOf(before) === null ? {} : { models: modelsOf(before) as Record<string, string> }),
-          current: true,
-        }),
-        sideSummary("after", afterRuns, repeats, {
-          ...(modelsOf(after) === null ? {} : { models: modelsOf(after) as Record<string, string> }),
-        }),
-      ],
-      admitted: verdict.admit,
-      reasons: [...verdict.reasons],
-      regressed: [...verdict.regressed],
-      ...(typeof args["pr"] === "string" && Number.isInteger(Number(args["pr"]))
-        ? { pr: Number(args["pr"]) }
-        : {}),
-    };
-    assertValid("benchmark-result", doc);
-
-    const resultOut =
-      typeof args["result-out"] === "string"
-        ? args["result-out"]
-        : join(".factory/work/benchmark", `${doc.id}.json`);
-    mkdirSync(dirname(resultOut), { recursive: true });
-    writeFileSync(resultOut, `${JSON.stringify(doc, null, 2)}\n`);
-    process.stdout.write(`result -> ${resultOut}\n`);
-
-    if (typeof args["repo"] === "string") {
-      // On a real run the comparison happens in CI, so the result has to
-      // reach the data ref for the dashboard to ever see it.
-      const store = new FactoryStore(new GitHub({ repo: args["repo"] }));
-      await store.put(
-        [{ path: benchmarkResultPath(doc.id), content: json(doc) }],
-        `benchmark: ${doc.admitted ? "admissible" : "not admissible"} over ${tasks.length} task(s)`,
-      );
-      process.stdout.write(`stored at ${benchmarkResultPath(doc.id)}\n`);
-    }
-
-    setOutput("admit", String(verdict.admit));
-    setOutput("benchmark_result", doc.id);
-    return verdict.admit ? 0 : 1;
-  }
-
-  die("usage: bsf benchmark build|run");
-}
-
-/**
- * The model per role a definition file names, for labelling a point on the
- * cost-vs-quality chart. Null when the file cannot be read: a point with no
- * models is still a point, and guessing them would mislabel the chart.
- */
-function modelsOf(definitionPath: string): Readonly<Record<string, string>> | null {
-  try {
-    const doc = parseYaml(readFileSync(definitionPath, "utf8")) as { models?: unknown };
-    const models = doc.models;
-    if (typeof models !== "object" || models === null) return null;
-    const out: Record<string, string> = {};
-    for (const [role, model] of Object.entries(models)) {
-      if (typeof model === "string") out[role] = model;
-    }
-    return Object.keys(out).length === 0 ? null : out;
-  } catch {
-    return null;
-  }
-}
-
-async function benchmarkRunCommand(args: Args): Promise<number> {
-  const taskJson = args["task"];
-  const definition = args["definition"];
-  if (typeof taskJson !== "string" || typeof definition !== "string") {
-    die("usage: bsf benchmark-run --task JSON --definition PATH");
-  }
-  const report = await runBenchmarkTask({
-    task: JSON.parse(taskJson) as BenchmarkTaskInput,
-    definitionPath: definition,
-    worktree: process.cwd(),
-    testCommand: sandboxCommandText("test"),
-  });
-  // One line of JSON on stdout: the provider reads the last JSON object, so
-  // progress may be printed to stderr without confusing it.
-  process.stdout.write(`${JSON.stringify(report)}\n`);
-  return 0;
-}
-
-function readTasks(dir: string): readonly BenchmarkTask[] {
-  if (!existsSync(dir)) return [];
-  return readdirSync(dir)
-    .filter((f) => f.endsWith(".json"))
-    .map((f) => JSON.parse(readFileSync(join(dir, f), "utf8")) as BenchmarkTask)
-    .filter((t) => t.schema === "benchmark-task/1");
 }
 
 main(process.argv.slice(2))

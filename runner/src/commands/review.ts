@@ -8,7 +8,8 @@ import type { Pipeline } from "../lib/types.js";
 
 /**
  * `bsf review due` and `bsf review route` — the deterministic halves of the
- * scheduled self-improvement review (doc 06).
+ * scheduled review (doc 06): it scores recent runs and routes what it finds to
+ * hardening. It never changes the factory's own prompts, context or models.
  *
  * The scoring itself is the scorer role's job. What is decided here is when a
  * review is worth running at all, and where each problem the scoring found
@@ -20,6 +21,8 @@ export interface DueInput {
   readonly now: string;
   readonly lastReviewAt: string | null;
   readonly runsSinceLastReview: number;
+  /** When the factory's first reviewable run started; only read before any review has run. */
+  readonly firstRunAt?: string | null;
   readonly everyDays?: number;
   readonly earlyAtRuns?: number;
   readonly minRuns?: number;
@@ -30,25 +33,51 @@ export interface DueResult {
   readonly reason: string;
 }
 
-/** Every 3 days, early at 50 runs, skipped under 10 (doc 06). */
+/** Runs the review grades: `/practice` runs are a person's own change and are not scored. */
+export const isReviewable = (pipeline: string): boolean => pipeline !== "definition";
+
+const DAY_MS = 86_400_000;
+
+/**
+ * Every 3 days, early at 50 runs, and later reviews skipped under 5 runs.
+ *
+ * The first review is different: it is never skipped for having few runs. Once
+ * 3 days have passed since the factory's first run, one run is enough, so a
+ * new factory shows scoring and hardening soon instead of waiting for volume.
+ */
 export function reviewDue(input: DueInput): DueResult {
   const everyDays = input.everyDays ?? 3;
   const earlyAt = input.earlyAtRuns ?? 50;
-  const minRuns = input.minRuns ?? 10;
+  const minRuns = input.minRuns ?? 5;
+  const runs = input.runsSinceLastReview;
 
-  if (input.runsSinceLastReview < minRuns) {
+  if (runs >= earlyAt) {
+    return { due: true, reason: `${runs} runs have piled up, which is early-trigger territory` };
+  }
+
+  if (input.lastReviewAt === null) {
+    if (runs < 1) return { due: false, reason: "no runs yet, so there is nothing to grade" };
+    const first = input.firstRunAt === undefined || input.firstRunAt === null ? Number.NaN : Date.parse(input.firstRunAt);
+    if (Number.isNaN(first)) {
+      return { due: true, reason: `first review, with ${runs} run(s) to grade (the first run's date is unreadable)` };
+    }
+    const days = (Date.parse(input.now) - first) / DAY_MS;
+    if (Number.isNaN(days) || days >= everyDays) {
+      return { due: true, reason: `first review: ${everyDays} days since the first run, with ${runs} run(s) to grade` };
+    }
     return {
       due: false,
-      reason: `only ${input.runsSinceLastReview} run(s) since the last review; ${minRuns} are needed for the scores to mean anything`,
+      reason: `first review waits for day ${everyDays}: ${days.toFixed(1)} days since the first run, ${runs} run(s) so far`,
     };
   }
-  if (input.runsSinceLastReview >= earlyAt) {
-    return { due: true, reason: `${input.runsSinceLastReview} runs have piled up, which is early-trigger territory` };
+
+  if (runs < minRuns) {
+    return {
+      due: false,
+      reason: `only ${runs} run(s) since the last review; ${minRuns} are needed for the scores to mean anything`,
+    };
   }
-  if (input.lastReviewAt === null) {
-    return { due: true, reason: `first review, with ${input.runsSinceLastReview} runs to grade` };
-  }
-  const elapsedDays = (Date.parse(input.now) - Date.parse(input.lastReviewAt)) / 86_400_000;
+  const elapsedDays = (Date.parse(input.now) - Date.parse(input.lastReviewAt)) / DAY_MS;
   if (Number.isNaN(elapsedDays)) {
     return { due: true, reason: "the last review's date is unreadable, so treat a review as due" };
   }
@@ -57,7 +86,7 @@ export function reviewDue(input: DueInput): DueResult {
   }
   return {
     due: false,
-    reason: `${elapsedDays.toFixed(1)} of ${everyDays} days since the last review, and ${input.runsSinceLastReview} runs is under the early trigger`,
+    reason: `${elapsedDays.toFixed(1)} of ${everyDays} days since the last review, and ${runs} runs is under the early trigger`,
   };
 }
 
@@ -81,44 +110,55 @@ export interface Problem {
   readonly role: string;
   readonly occurrences: number;
   readonly runs: readonly string[];
-  readonly destination: "hardening" | "definition";
   readonly why: string;
 }
 
+/** A failure the review saw and did not turn into work. */
+export interface Unrouted {
+  readonly run: string;
+  readonly tag: string;
+  readonly reason: string;
+  readonly detail?: string;
+}
+
+export interface Routing {
+  readonly problems: readonly Problem[];
+  readonly unrouted: readonly Unrouted[];
+}
+
+export const HARDENING_RUN_REASON =
+  "found in a hardening run: shown to a person, never hardened again, so hardening cannot feed itself";
+
 /**
- * Where a fix belongs decides where the problem goes (doc 06): the codebase,
- * a static rule or a verification scenario is hardening; context or a step's
- * model is a definition change.
+ * Every problem the review finds goes to hardening: the codebase, a static
+ * rule or a verification scenario. A check outlives a paragraph of context,
+ * and a wrong route costs one rejected PR. The review never changes the
+ * factory's own prompts, context or models.
  *
- * The tags that mean "the agent did not know something" route to definition;
- * everything else is a thing code can be made to catch, so it routes to
- * hardening. Defaulting to hardening is deliberate: a check outlives a
- * paragraph of context, and a wrong hardening route costs one rejected PR
- * while a wrong definition route costs a benchmark cycle.
+ * One exception: a failure found in a hardening run is set aside. Otherwise a
+ * bad hardening run would file another hardening item, whose own bad run
+ * would file another. Those failures are recorded as `unrouted`, so a person
+ * sees them on the dashboard.
  */
-const DEFINITION_TAGS = new Set([
-  "context_gap",
-  "wrong_model_fit",
-  "missing_evidence",
-  "vague_spec",
-  "unverifiable_checks",
-]);
-
-/**
- * v1.0 does not change the factory's own definition (its prompts, context or
- * model choices); the review scores runs and routes what it finds to
- * hardening, which changes the codebase. The definition route below is kept
- * for v1.1 and stays off until then.
- */
-export const DEFINITION_ROUTE_ENABLED = false;
-
 export function groupAndRoute(
   failures: readonly ScoredFailure[],
-  opts: { readonly definitionRoute?: boolean } = {},
-): readonly Problem[] {
-  const definitionRoute = opts.definitionRoute ?? DEFINITION_ROUTE_ENABLED;
-  const groups = new Map<string, ScoredFailure[]>();
+  opts: { readonly pipelineOf?: (run: string) => string | undefined } = {},
+): Routing {
+  const unrouted: Unrouted[] = [];
+  const routable: ScoredFailure[] = [];
   for (const f of failures) {
+    if (f.run !== "" && opts.pipelineOf?.(f.run) === "hardening") {
+      unrouted.push({
+        run: f.run,
+        tag: f.tag,
+        reason: HARDENING_RUN_REASON,
+        ...(f.detail === undefined ? {} : { detail: f.detail }),
+      });
+    } else routable.push(f);
+  }
+
+  const groups = new Map<string, ScoredFailure[]>();
+  for (const f of routable) {
     // Same tag plus same area, or same tag plus same role: one problem.
     const key = `${f.tag}::${f.area !== "" ? f.area : `role:${f.role}`}`;
     const list = groups.get(key);
@@ -126,11 +166,10 @@ export function groupAndRoute(
     else list.push(f);
   }
 
-  return [...groups.entries()]
+  const problems = [...groups.entries()]
     .sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]))
     .map(([key, list]) => {
       const first = list[0]!;
-      const toDefinition = definitionRoute && DEFINITION_TAGS.has(first.tag);
       return {
         id: `p-${fingerprint({ title: key, body: first.tag }).slice(0, 12)}`,
         tag: first.tag,
@@ -138,72 +177,10 @@ export function groupAndRoute(
         role: first.role,
         occurrences: list.length,
         runs: [...new Set(list.map((f) => f.run))],
-        destination: toDefinition ? ("definition" as const) : ("hardening" as const),
-        why: toDefinition
-          ? `${first.tag} is something the agent did not know, which a context or model change addresses`
-          : DEFINITION_TAGS.has(first.tag)
-            ? `${first.tag} is something the agent did not know. Changing the factory's own prompts waits for v1.1, so it goes to hardening: make the codebase state it, with a test, a type or a rule`
-            : `${first.tag} is something a check can catch, which is cheaper and permanent`,
+        why: `${first.tag} is something a check can catch, which is cheaper and permanent`,
       };
     });
-}
-
-/* ------------------------------------------------------- benchmark admission */
-
-export interface BenchmarkComparison {
-  readonly failureTaskScores: { readonly before: readonly number[]; readonly after: readonly number[] };
-  readonly otherTaskScores: { readonly before: readonly number[]; readonly after: readonly number[] };
-  readonly costBefore: number;
-  readonly costAfter: number;
-  readonly taskCount: number;
-  readonly repeats: number;
-}
-
-export interface AdmissionResult {
-  readonly admit: boolean;
-  readonly reasons: readonly string[];
-}
-
-const mean = (xs: readonly number[]): number => (xs.length === 0 ? 0 : xs.reduce((a, b) => a + b, 0) / xs.length);
-const spread = (xs: readonly number[]): number => (xs.length < 2 ? 0 : Math.max(...xs) - Math.min(...xs));
-
-/**
- * A definition change is admitted only if the failure tasks improve, nothing
- * else regresses, the gain is larger than the run-to-run spread, and cost
- * rises by at most 20% (doc 06).
- *
- * The spread test is the one that matters: without it, every change looks
- * like an improvement about half the time.
- */
-export function admitDefinitionChange(c: BenchmarkComparison): AdmissionResult {
-  const reasons: string[] = [];
-  if (c.taskCount < 10) reasons.push(`benchmarked on ${c.taskCount} task(s); at least 10 are needed`);
-  if (c.repeats < 3) reasons.push(`${c.repeats} repeat(s) per side; at least 3 are needed to see the spread`);
-
-  const failBefore = mean(c.failureTaskScores.before);
-  const failAfter = mean(c.failureTaskScores.after);
-  const gain = failAfter - failBefore;
-  if (gain <= 0) reasons.push(`the failure tasks did not improve (${failBefore.toFixed(2)} → ${failAfter.toFixed(2)})`);
-
-  const noise = Math.max(spread(c.failureTaskScores.before), spread(c.failureTaskScores.after));
-  if (gain <= noise) {
-    reasons.push(
-      `the gain of ${gain.toFixed(2)} is inside the run-to-run spread of ${noise.toFixed(2)}, so it could be chance`,
-    );
-  }
-
-  const otherBefore = mean(c.otherTaskScores.before);
-  const otherAfter = mean(c.otherTaskScores.after);
-  if (otherAfter < otherBefore) {
-    reasons.push(`other tasks regressed (${otherBefore.toFixed(2)} → ${otherAfter.toFixed(2)})`);
-  }
-
-  if (c.costBefore > 0 && c.costAfter > c.costBefore * 1.2) {
-    const pct = ((c.costAfter / c.costBefore - 1) * 100).toFixed(0);
-    reasons.push(`cost rises ${pct}%, over the 20% ceiling`);
-  }
-
-  return { admit: reasons.length === 0, reasons };
+  return { problems, unrouted };
 }
 
 /* ------------------------------------------------------------------- command */
@@ -234,15 +211,19 @@ export async function runReviewDue(opts: ReviewOptions): Promise<ReviewDueReport
     .pop();
   const lastReviewAt = last === undefined ? null : await lastReviewTimestamp(store, last);
 
-  const { runs } = await readAll(store);
+  // `/practice` runs are not scored, so they neither count toward a review nor
+  // start the first review's clock.
+  const runs = (await readAll(store)).runs.filter((r) => isReviewable(r.pipeline));
   const since = lastReviewAt === null
     ? runs.length
     : runs.filter((r) => Date.parse(r.ended_at) > Date.parse(lastReviewAt)).length;
+  const firstRunAt = runs.map((r) => r.started_at).sort()[0] ?? null;
 
   const result = reviewDue({
     now: opts.now,
     lastReviewAt,
     runsSinceLastReview: since,
+    firstRunAt,
     ...(opts.everyDays === undefined ? {} : { everyDays: opts.everyDays }),
     ...(opts.earlyAtRuns === undefined ? {} : { earlyAtRuns: opts.earlyAtRuns }),
     ...(opts.minRuns === undefined ? {} : { minRuns: opts.minRuns }),
@@ -257,6 +238,7 @@ async function lastReviewTimestamp(store: FactoryStore, path: string): Promise<s
 
 export interface RouteReport {
   readonly problems: readonly Problem[];
+  readonly unrouted: readonly Unrouted[];
   readonly filed: readonly { readonly work_item: string; readonly destination: string }[];
   readonly dispatched: readonly string[];
 }
@@ -271,14 +253,21 @@ export async function runReviewRoute(
 ): Promise<RouteReport> {
   const store = new FactoryStore(opts.gh);
   const ledger = await store.ledger(opts.now);
-  const problems = groupAndRoute(opts.failures);
+  // Which pipeline each failing run belonged to, so a failure found in a
+  // hardening run is set aside instead of hardened again.
+  const pipelines = new Map<string, string>();
+  for (const id of new Set(opts.failures.map((f) => f.run).filter((r) => r !== ""))) {
+    const doc = await store.data.readJson<{ pipeline?: string }>(`runs/${id}.json`).catch(() => null);
+    if (doc?.pipeline !== undefined) pipelines.set(id, doc.pipeline);
+  }
+  const { problems, unrouted } = groupAndRoute(opts.failures, { pipelineOf: (run) => pipelines.get(run) });
 
   const changes: Change[] = [];
   const filed: { work_item: string; destination: string }[] = [];
   const open = [...ledger.open];
 
   for (const p of problems) {
-    const pipeline: Pipeline = p.destination === "hardening" ? "hardening" : "definition";
+    const pipeline: Pipeline = "hardening";
     const id = workItemId(Date.parse(opts.now) || Date.now());
     const item = {
       schema: "work-item/1" as const,
@@ -308,7 +297,7 @@ export async function runReviewRoute(
       created_at: opts.now,
       fixes: [p.tag],
     });
-    filed.push({ work_item: id, destination: p.destination });
+    filed.push({ work_item: id, destination: "hardening" });
   }
 
   const recorded = opts.allScores ?? opts.failures;
@@ -339,10 +328,11 @@ export async function runReviewRoute(
             tags: [f.tag],
             ...(f.detail === undefined ? {} : { note: f.detail }),
           })),
+        ...(unrouted.length === 0 ? {} : { unrouted }),
         problems: problems.map((pr, i) => ({
           title: `${pr.tag} in ${pr.area !== "" ? pr.area : pr.role} (${pr.occurrences}×)`,
           runs: [...pr.runs],
-          route: pr.destination,
+          route: "hardening",
           work_item: filed[i]?.work_item ?? null,
           change: pr.why,
         })),
@@ -354,13 +344,10 @@ export async function runReviewRoute(
   const dispatched: string[] = [];
   if (opts.plan !== true) {
     for (const f of filed) {
-      // Definition changes are benchmark-gated and a human approves them, so
-      // they are queued rather than started here.
-      if (f.destination === "definition") continue;
       await opts.gh.dispatchWorkflow("factory-run.yml", opts.ref, { work_item: f.work_item });
       dispatched.push(f.work_item);
     }
   }
 
-  return { problems, filed, dispatched };
+  return { problems, unrouted, filed, dispatched };
 }

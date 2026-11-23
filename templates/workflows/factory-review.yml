@@ -1,8 +1,10 @@
-# factory-review — the scheduled review that makes the factory improve itself.
+# factory-review — the scheduled review.
 #
-# Scores recent runs against the rubrics, groups the failures, and routes each
-# one. In v1.0 every problem goes to hardening; the definition route
-# (benchmark-gated, needs a human) is off until v1.1.
+# Scores recent runs against the rubrics, groups the failures, and files each
+# problem as hardening work, which changes the codebase. It never changes the
+# factory's own prompts, context or models, and it does not grade /practice
+# runs (a person's own change) or file new work for failures found in hardening
+# runs.
 name: factory-review
 
 on:
@@ -106,7 +108,7 @@ jobs:
       budget_key: ${{ github.run_id }}-${{ github.run_attempt }}-score
       model: ${{ needs.due.outputs.model_scorer }}
       work_item: review
-      pipeline: definition
+      pipeline: review
     secrets: inherit
 
   # Charge score's budget hold with what gh-aw measured, before the next

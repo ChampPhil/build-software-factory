@@ -15,6 +15,15 @@ Schemas: reads `*/1`, writes `*/1`.
 - A token with a missing permission is named at sign-in, and a refused action says which permission it needed.
 - `npm run e2e` in the dashboard runs the built site in a real browser against a mocked GitHub API.
 
+### Removed
+
+- **The half-built self-improvement machinery.** `bsf benchmark`, the benchmark task and result schemas, the benchmark provider, the review's route to a definition change and its benchmark gate, the cost-vs-quality chart and the benchmark parts of the dashboard are gone, and `rubrics/definition.yaml` with them: `/practice` runs are no longer scored, and the review skips them. Automatic, measured changes to the factory's own definition are planned for v1.1 and will be redesigned. Kept: `/practice` (manual improvement through the `definition` pipeline), the scorers, the review and its record, and the `review_and_benchmarks` budget key (now labelled "Reviews and practices"). No installed factory exists yet, so nothing needs migrating.
+
+### Changed
+
+- **The review's timing.** The first review is never skipped for too few runs: it is due 3 days after the factory's first graded run, if at least one run exists. Later reviews are skipped under 5 runs (was 10). The 50-run early trigger applies to both.
+- **Hardening cannot feed itself.** Every review problem routes to hardening, except failures found in hardening runs: those are recorded as `unrouted` in the review record (additive, optional), shown on the Improvement page, and file no new work.
+
 ### Fixed
 
 - The dashboard's GitHub client called the browser's `fetch` as a method of itself, which browsers reject with "Illegal invocation", so a real sign-in could not have worked. The unit tests used a stand-in fetch and never saw it.

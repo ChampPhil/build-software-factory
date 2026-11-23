@@ -164,7 +164,7 @@ const valid: Record<SchemaName, unknown> = {
       gardening: { auto_merge: false, schedule: "0 6 * * *", max_prs_per_run: 5 },
       hardening: { auto_merge: false },
     },
-    review: { every_days: 3, run_early_at_runs: 50, skip_below_runs: 10 },
+    review: { every_days: 3, run_early_at_runs: 50, skip_below_runs: 5 },
     limits: { retry_cap: 3, step_time_budget_sec: 2700, concurrency: { max_runs: 5 } },
     budget: { monthly_usd: 200, monthly_actions_minutes: 2000, shares: { product_work: 60, gardening: 25, review_and_benchmarks: 15 }, product_work_hard_stop_pct: 110 },
     triggers: { issues: true, comments: true, ci_failure_on_main: true, dashboard_dispatch: true },
@@ -214,9 +214,9 @@ const valid: Record<SchemaName, unknown> = {
     window: { from: "2026-11-18T00:00:00Z", to: "2026-11-21T00:00:00Z", runs: 63 },
     scores: [{ run: "run_01JD9A000000000000000000AB", criterion: "meaningful_tests", score: 2, tags: ["weak_tests"], note: "asserts on mocks" }],
     problems: [{
-      title: "Builder ignores the Seed data runbook step", route: "definition", change: "context/runbook.md", pr: 330,
-      benchmark: { tasks: 12, repeats: 3, failure_tasks: 4, before: { mean: 0.71, spread: 0.04 }, after: { mean: 0.83, spread: 0.03 }, failure_tasks_before: 0.4, failure_tasks_after: 0.78, regressions: 0 },
+      title: "weak_tests in src/checkout (3x)", route: "hardening", work_item: "wi_01JD9A000000000000000000AB", change: "a check can catch it",
     }],
+    unrouted: [{ run: "run_01JD9A000000000000000000AC", tag: "fixed_the_instance", reason: "found in a hardening run" }],
   },
   rulepack: {
     schema: "rulepack/1",
@@ -240,34 +240,6 @@ const valid: Record<SchemaName, unknown> = {
       severity: "error",
       critical_logic: false,
     }],
-  },
-  "benchmark-task": {
-    schema: "benchmark-task/1", id: "bt_01JD000000000000000000000A",
-    source_run: "run_01JD9A000000000000000000AB", origin: "succeeded", pipeline: "product_work",
-    base_commit: "9f8e7d6",
-    request: { title: "Export empty file", body: "…" },
-    reference: { merged_commit: "1a2b3c4", tests: ["src/export/download.test.ts"] },
-    grading: { must_pass: ["src/export/download.test.ts"], rubric: "product_work" },
-    tags: ["representative", "export"],
-  },
-  "benchmark-result": {
-    schema: "benchmark-result/1", id: "bench_01JD000000000000000000000A",
-    at: "2026-11-20T10:00:00Z", repeats: 3, task_count: 12,
-    pipeline: "product_work", pr: 41,
-    sides: [
-      {
-        label: "current", models: { builder: "claude-opus-5", spec: "claude-opus-5" },
-        score_mean: 3.9, score_spread: 0.3, cost_usd: 8.4, cost_per_task: 0.7, must_pass_rate: 0.92,
-        current: true,
-      },
-      {
-        label: "cheaper builder", models: { builder: "claude-sonnet-5-5", spec: "claude-opus-5" },
-        score_mean: 4.2, score_spread: 0.25, cost_usd: 5.1, cost_per_task: 0.43, must_pass_rate: 0.92,
-      },
-    ],
-    admitted: true,
-    reasons: ["the failing tasks improved by more than the run-to-run spread", "cost fell"],
-    regressed: [],
   },
 };
 
@@ -386,16 +358,19 @@ describe("invalid documents are rejected", () => {
     expect(validate("rulepack", { ...(valid.rulepack as object), language: "cobol" }).ok).toBe(false);
   });
 
-  it("a benchmark comparison under 10 tasks or 3 repeats is rejected", () => {
-    const r = valid.review as { problems: { benchmark: Record<string, unknown> }[] };
-    const bench = r.problems[0]?.benchmark;
-    expect(bench).toBeDefined();
-    const withFew = JSON.parse(JSON.stringify(valid.review)) as typeof r;
-    withFew.problems[0]!.benchmark = { ...bench!, tasks: 9 };
-    expect(validate("review", withFew).ok).toBe(false);
-    const withFewRepeats = JSON.parse(JSON.stringify(valid.review)) as typeof r;
-    withFewRepeats.problems[0]!.benchmark = { ...bench!, repeats: 2 };
-    expect(validate("review", withFewRepeats).ok).toBe(false);
+  it("a review problem can only be routed to hardening, and carries no benchmark", () => {
+    const r = JSON.parse(JSON.stringify(valid.review)) as { problems: Record<string, unknown>[] };
+    r.problems[0]!["route"] = "definition";
+    expect(validate("review", r).ok).toBe(false);
+    const withBench = JSON.parse(JSON.stringify(valid.review)) as typeof r;
+    withBench.problems[0]!["benchmark"] = { tasks: 12, repeats: 3, before: { mean: 0.7, spread: 0.1 }, after: { mean: 0.8, spread: 0.1 } };
+    expect(validate("review", withBench).ok).toBe(false);
+  });
+
+  it("an unrouted failure needs its run, tag and reason", () => {
+    const r = JSON.parse(JSON.stringify(valid.review)) as { unrouted: Record<string, unknown>[] };
+    delete r.unrouted[0]!["reason"];
+    expect(validate("review", r).ok).toBe(false);
   });
 
   it("factory config with data.location=repo must name the repo", () => {
