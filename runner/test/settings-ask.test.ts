@@ -53,6 +53,11 @@ describe("asking the factory for a change to its setup", () => {
     expect(d.outcome).toBe("settings_request");
   });
 
+  it("does not count the label when it was applied under the author's own name", () => {
+    const d = runIntake([ev({ kind: "issue_labeled", labels: ["factory:ask"], label_added: "factory:ask", labeled_by: "stranger", actor: "stranger", actor_association: "NONE" })], ctx()).decisions[0]!;
+    expect(d.outcome).not.toBe("settings_request");
+  });
+
   it("an ordinary issue is unaffected", () => {
     const d = runIntake([ev({ labels: [], title: "Export is empty" })], ctx()).decisions[0]!;
     expect(d.outcome).toBe("queued");

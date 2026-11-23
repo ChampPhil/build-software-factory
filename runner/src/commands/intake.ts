@@ -262,6 +262,18 @@ function triggerEnabled(ctx: IntakeContext, kind: EventKind): boolean {
   }
 }
 
+/**
+ * How much to trust whoever added a label. Only people with triage access can
+ * label someone else's issue, so a different labeler counts as a maintainer.
+ * But an issue form applies its own labels (the "Harden this" form adds
+ * factory:harden) and GitHub reports the issue's author as the one who added
+ * them, so an outsider using the form would look like a maintainer. When the
+ * labeler is the author, the author's own association decides.
+ */
+function labelerAssociation(e: IncomingEvent): IncomingEvent["actor_association"] {
+  return e.labeled_by !== undefined && e.labeled_by === e.actor ? e.actor_association : "MEMBER";
+}
+
 function decide(incoming: IncomingEvent, ctx: IntakeContext): IntakeDecision {
   // The harden label asks for hardening at once (doc 06): the issue it is put
   // on describes a mistake to turn into a rule. Only people with triage access
@@ -269,7 +281,7 @@ function decide(incoming: IncomingEvent, ctx: IntakeContext): IntakeDecision {
   const hardenLabel = ctx.policy.trust.harden_label ?? "factory:harden";
   const event: IncomingEvent =
     incoming.kind === "issue_labeled" && incoming.label_added === hardenLabel
-      ? { ...incoming, kind: "correction", actor: incoming.labeled_by ?? incoming.actor, actor_association: "MEMBER", actor_is_bot: false }
+      ? { ...incoming, kind: "correction", actor: incoming.labeled_by ?? incoming.actor, actor_association: labelerAssociation(incoming), actor_is_bot: false }
       : // Opened with the label already on it: hardening only, not product
         // work as well. The author could label it, so they have triage access.
         incoming.kind === "issue_opened" && (incoming.labels ?? []).includes(hardenLabel)
@@ -334,7 +346,7 @@ function decide(incoming: IncomingEvent, ctx: IntakeContext): IntakeDecision {
     (incoming.kind === "issue_labeled" && incoming.label_added === ASK_LABEL);
   if (asks) {
     const by = incoming.kind === "issue_labeled" ? (incoming.labeled_by ?? incoming.actor) : incoming.actor;
-    const asker = incoming.kind === "issue_labeled" ? "MEMBER" : incoming.actor_association;
+    const asker = incoming.kind === "issue_labeled" ? labelerAssociation(incoming) : incoming.actor_association;
     return isTrustedActor(ctx.policy, by, asker, { isBot: incoming.actor_is_bot === true })
       ? { event, workItem: null, outcome: "settings_request", reason: `${by} asked for a change to the factory's setup`, duplicateShortlist: [] }
       : { event, workItem: null, outcome: "ignored_untrusted_ask", reason: `${by} is not trusted to change the factory's setup`, duplicateShortlist: [] };
