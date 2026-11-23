@@ -225,4 +225,4 @@ adding once a live test shows gh-aw's credit cap stops it (see
 
 ## Licence
 
-MIT. See [`LICENSE`](LICENSE).
+Apache License 2.0. See [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE).

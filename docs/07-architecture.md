@@ -52,7 +52,7 @@ The factory reuses mature tools wherever one fits its constraints (free, nothing
 
 ## Monorepo layout
 
-Everything lives in one public repo, `build-software-factory`, MIT licensed. Each top-level folder ships something different:
+Everything lives in one public repo, `build-software-factory`, Apache 2.0 licensed. Each top-level folder ships something different:
 
 | Folder | What it is | Ships as |
 | --- | --- | --- |
