@@ -87,7 +87,7 @@ jobs:
           rm -rf .factory-trusted
           echo "$RUNNER_TEMP/bsf" >> "$GITHUB_PATH"
           "$RUNNER_TEMP/bsf/bsf" --version
-      - name: Mint a read-only token
+      - name: Mint a repo-scoped token for intake
         id: token
         uses: actions/create-github-app-token@v1
         with:

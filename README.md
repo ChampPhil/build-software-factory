@@ -19,11 +19,13 @@ changes are planned for v1.1.
 
 You need: a GitHub repository you are an admin of, the
 [`gh` CLI](https://cli.github.com) signed in (`gh auth login`), Node 20 or
-later, [Claude Code](https://code.claude.com), and an Anthropic API key.
+later, a coding agent that can load a skill folder and run shell commands
+([Claude Code](https://code.claude.com), Cursor, Codex or similar) to run the
+setup, and an Anthropic API key for the factory itself.
 Nothing else runs on your machine: the sandbox the agents verify in is built
 and proved in your repository's GitHub Actions.
 
-**1. Get the factory and give Claude Code its setup skill.**
+**1. Get the factory and give your coding agent its setup skill.**
 
 PowerShell (Windows):
 
@@ -44,15 +46,21 @@ ln -s ~/build-software-factory/skill ~/.claude/skills/build-software-factory
 The skill is linked rather than copied because its scripts install the
 factory's templates from the clone beside it.
 
-**2. In your repository, ask Claude Code to set it up.**
+The commands above link it for Claude Code. For another agent, link the same
+`skill` folder into that agent's own skills folder instead (Cursor:
+`~/.cursor/skills/build-software-factory`, Codex:
+`~/.codex/skills/build-software-factory`). The setup does not depend on which
+agent runs it.
+
+**2. In your repository, ask your coding agent to set it up.**
 
 ```
 cd path/to/your-repo
-claude
+claude        # or open the repo in Cursor, Codex, or your agent of choice
 > Set up the software factory on this repo.
 ```
 
-**3. Do the five things only you can do.** Claude Code does everything else
+**3. Do the five things only you can do.** Your agent does everything else
 and tells you at each step what it found and what it needs.
 
 | You | When |
@@ -128,7 +136,10 @@ As a second line of defence, make the key in its own
 spend limit a little above the factory's budget: then Anthropic stops the
 spending too, whatever happens in the factory.
 
-**The factory runs its agents on Claude Code only.** gh-aw's per-step credit
+**Setup runs from any coding agent, but the factory's own agents run on Claude
+Code only.** The agent on your laptop that sets the factory up is your choice.
+The agents that do the factory's work in GitHub Actions are a different thing,
+and for now they are Claude Code only. gh-aw's per-step credit
 cap, which the budget is built on, was tested live with a 2-credit cap: it
 stopped Claude Code after one request, and did not stop Cursor CLI at all
 (49 tool calls, about 29 times the cap), because Cursor's requests never
@@ -221,7 +232,7 @@ npm run typecheck
 npm run schema-check   # the schemas against their frozen shape
 ```
 
-`CONTRIBUTING.md` covers adding a rule pack. A new harness is only worth
+`CONTRIBUTING.md` covers adding a rule pack. A new harness for the factory's own agents is only worth
 adding once a live test shows gh-aw's credit cap stops it (see
 `tests/live`).
 
