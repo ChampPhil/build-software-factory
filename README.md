@@ -1,5 +1,7 @@
 # Build Software Factory
 
+_Built by Philip Valcin._
+
 Turns a repository into a governed, automated loop: work comes in as an issue,
 agents triage, specify, build and verify it, deterministic gates decide whether
 it is allowed to merge, and a human approves what lands. It runs entirely on

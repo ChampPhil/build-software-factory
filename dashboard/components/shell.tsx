@@ -13,6 +13,7 @@ import { GitHubClient } from "@/lib/github";
 import { useClient, useLedger } from "@/lib/data";
 import { SignIn } from "@/components/sign-in";
 import { NewRequest } from "@/components/request";
+import { BrandCredit } from "@/components/brand-credit";
 
 const PAGES = [
   { href: "/", label: "Waiting on you" },
@@ -170,6 +171,9 @@ export function Shell({ children }: { children: ReactNode }) {
           resume={resume}
           notice={notice}
         />
+        <div style={{ marginTop: 32, color: "var(--ink-faint)", fontSize: 12 }}>
+          <BrandCredit />
+        </div>
       </div>
     );
   }
@@ -209,6 +213,7 @@ export function Shell({ children }: { children: ReactNode }) {
         </nav>
         <div className="rail-foot">
           <div className="mono">{session.repo}</div>
+          <BrandCredit />
           <button
             className="btn"
             style={{ marginTop: 10, padding: "4px 9px", fontSize: 13 }}

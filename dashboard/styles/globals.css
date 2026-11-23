@@ -133,6 +133,8 @@ button {
 }
 .rail nav .count.attention { color: var(--run); border-color: color-mix(in oklab, var(--run) 40%, var(--line)); }
 
+.brand-credit { margin-top: 10px; line-height: 1.5; }
+.brand-credit a { color: inherit; text-decoration: underline; }
 .rail-foot { padding: 20px; margin-top: auto; color: var(--ink-faint); font-size: 12px; }
 
 .main { padding: 0 var(--gutter) 64px; max-width: 1400px; }
