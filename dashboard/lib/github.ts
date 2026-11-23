@@ -153,7 +153,7 @@ export class GitHubClient {
   /**
    * The JSON files in one directory of the data ref, newest name first.
    *
-   * Reviews and benchmark results have no index: their ids are time-ordered,
+   * Reviews have no index: their ids are time-ordered,
    * so listing the directory and sorting by name gives newest first without a
    * second file to keep in step.
    */

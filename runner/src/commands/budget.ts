@@ -74,7 +74,6 @@ export function shareOf(pipeline: string): Share | null {
       return "gardening";
     case "review":
     case "definition":
-    case "benchmark":
       return "review_and_benchmarks";
     default:
       return null;

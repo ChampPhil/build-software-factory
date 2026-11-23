@@ -8,7 +8,7 @@ Every file the skill, the runner and the dashboard share is defined here; each h
 
 - **Formats:** human-edited files are YAML (`factory.yaml`, `policy.yaml`, roles, rubrics); machine-written files are JSON or JSONL.
 - **Every file carries `schema: <name>/<major>`**, for example `schema: run/1`. Readers reject a major version they don't know.
-- **IDs:** work items `wi_<ulid>`, runs `run_<ulid>`, reviews `rev_<yyyymmdd>`, benchmark tasks `bt_<ulid>`, candidates `cand_<ulid>`. ULIDs sort by time.
+- **IDs:** work items `wi_<ulid>`, runs `run_<ulid>`, reviews `rev_<yyyymmdd>`, candidates `cand_<ulid>`. ULIDs sort by time.
 - **Times:** ISO 8601 in UTC. **Money:** USD as a decimal number. **Durations:** seconds.
 - **Locations:** definition files in `.factory/definition/`, guardrail files in `.factory/guardrails/`, data files on `factory-data` (`refs/factory/data`), media on `factory-media` (`refs/factory/media`), live status on `refs/factory/live/<run-id>` refs (see the Architecture doc for the full tree).
 
@@ -34,7 +34,7 @@ pipelines:
 review:
   every_days: 3
   run_early_at_runs: 50
-  skip_below_runs: 10
+  skip_below_runs: 5
 limits:
   retry_cap: 3                    # attempts per gate per work item
   step_time_budget_sec: 2700
@@ -45,7 +45,7 @@ budget:
   shares:                         # % of each limit each pipeline may use
     product_work: 60
     gardening: 25
-    review_and_benchmarks: 15     # scheduled review, scorers, benchmark runs
+    review_and_benchmarks: 15     # scheduled reviews, scorers and /practice runs (key kept for schema 1.0)
   product_work_hard_stop_pct: 110 # kept for compatibility; no longer read: product work may use what the other shares leave, never past the total
 triggers:
   issues: true
@@ -365,40 +365,14 @@ failure_tags: [wrong_scope, pattern_drift, weak_tests, missing_evidence, context
   "window": { "from": "…", "to": "…", "runs": 63 },
   "scores": [ { "run": "run_…", "criterion": "meaningful_tests", "score": 2, "tags": ["weak_tests"], "note": "…" } ],
   "problems": [
-    { "title": "Tests assert on mocks only in billing", "runs": ["run_…"], "route": "hardening", "work_item": "wi_…" },
-    { "title": "Builder ignores the Seed data runbook step", "route": "definition", "change": "context/runbook.md",
-      "benchmark": { "tasks": 12, "repeats": 3, "failure_tasks": 4,
-                     "before": { "mean": 0.71, "spread": 0.04 }, "after": { "mean": 0.83, "spread": 0.03 },
-                     "failure_tasks_before": 0.40, "failure_tasks_after": 0.78, "regressions": 0 },
-      "pr": 330 }
+    { "title": "Tests assert on mocks only in billing", "runs": ["run_…"], "route": "hardening", "work_item": "wi_…" }
   ]
 }
 ```
 
-## Benchmark tasks (`benchmarks/tasks/<id>.json`)
+## Benchmark tasks
 
-A benchmark task is a frozen copy of real past work: the repo state before, the request, and the known-good result to grade against.
-
-```json
-{
-  "schema": "benchmark-task/1",
-  "id": "bt_01JD…",
-  "source_run": "run_…",
-  "origin": "succeeded",
-  "pipeline": "product_work",
-  "base_commit": "9f8e7d6",
-  "request": { "title": "…", "body": "…" },
-  "reference": { "merged_commit": "1a2b3c4", "tests": ["src/export/download.test.ts"] },
-  "grading": { "must_pass": ["src/export/download.test.ts"], "rubric": "product_work" },
-  "tags": ["representative", "export"]
-}
-```
-
-- `origin`: `succeeded` (merged with no human code changes) | `corrected` (a human pushed or requested changes before merge) | `escalated` (a human finished it) | `representative` (marked by a user). For `corrected` and `escalated` tasks, `reference.merged_commit` is the human-fixed result, so the set includes the work the factory got wrong.
-- Tasks are created automatically from every merged factory run, plus any run a user marks representative.
-- A benchmark run checks out `base_commit`, runs the pipeline with a given configuration, then grades with the reference tests and the rubric. Results record cost and quality, which feed the cost vs. quality graph.
-- **Which context a task runs with:** model comparisons use the context files as they were at `base_commit`; context changes are tested only on tasks from the last 60 days, with the proposed context applied.
-- **Noise:** a comparison runs each configuration 3 times on at least 10 tasks. A change counts as better only if its mean beats the other's by more than the larger of the two run-to-run spreads.
+Removed from v1.0 with the rest of the self-improvement machinery; planned for v1.1 with a fresh design.
 
 ## Adapter step report
 

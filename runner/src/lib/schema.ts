@@ -44,13 +44,12 @@ export const SCHEMA_DIR = findSchemaDir(here);
 export type SchemaName =
   | "factory" | "policy" | "role" | "work-item" | "ledger" | "run" | "index"
   | "live" | "baselines" | "coverage" | "candidates" | "rubric" | "review"
-  | "benchmark-task"
-  | "benchmark-result" | "step-report" | "rulepack" | "sandbox" | "pr-report";
+  | "step-report" | "rulepack" | "sandbox" | "pr-report";
 
 export const SCHEMA_NAMES: readonly SchemaName[] = [
   "factory", "policy", "role", "work-item", "ledger", "run", "index", "live",
-  "baselines", "coverage", "candidates", "rubric", "review", "benchmark-task",
-  "step-report", "rulepack", "benchmark-result", "sandbox", "pr-report",
+  "baselines", "coverage", "candidates", "rubric", "review",
+  "step-report", "rulepack", "sandbox", "pr-report",
 ] as const;
 
 /** `schema: <name>/<major>` declared by each file. */

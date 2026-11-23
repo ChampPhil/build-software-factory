@@ -591,7 +591,7 @@ const STATUS_OUTCOME: Record<string, string> = {
 /**
  * The record of one factory-run: what each role cost and did, how the gates
  * judged it, and how it ended. Everything that measures the factory — the
- * review, the benchmarks, the dashboard's cost and quality — reads these, and
+ * review, the dashboard's cost and quality — reads these, and
  * before this nothing wrote them, so all of it measured an empty set.
  */
 export function runRecord(input: {

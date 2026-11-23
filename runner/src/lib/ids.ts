@@ -46,8 +46,6 @@ export function ulid(now: number = Date.now(), random: Uint8Array = randomBytes(
 export const workItemId = (now?: number): string => `wi_${ulid(now)}`;
 export const runId = (now?: number): string => `run_${ulid(now)}`;
 export const candidateId = (now?: number): string => `cand_${ulid(now)}`;
-export const benchmarkTaskId = (now?: number): string => `bt_${ulid(now)}`;
-export const benchmarkResultId = (now?: number): string => `bench_${ulid(now)}`;
 
 /** `rev_YYYYMMDD`, from an ISO timestamp. */
 export function reviewId(iso: string): string {

@@ -5,7 +5,7 @@ import type { GitHub } from "../lib/github.js";
 import { FactoryStore, json, runPath, workItemPath } from "../lib/store.js";
 import { baselinedDrift, untestedRecent, runGardenCommand, type DriftItem } from "./garden.js";
 import { readAll } from "./rollup-run.js";
-import { runReviewRoute, type ScoredFailure } from "./review.js";
+import { runReviewRoute, isReviewable, type ScoredFailure } from "./review.js";
 import type { Baselines } from "../lib/types.js";
 
 /**
@@ -260,6 +260,8 @@ export async function reviewCollect(opts: {
 
   const { runs } = await readAll(store);
   const picked = runs
+    // A `/practice` run is a person's own change; the review does not grade it.
+    .filter((r) => isReviewable(r.pipeline))
     .filter((r) => since === null || Date.parse(r.ended_at) > Date.parse(since))
     .sort((a, b) => a.ended_at.localeCompare(b.ended_at))
     .slice(-MAX_RUNS_TO_SCORE);

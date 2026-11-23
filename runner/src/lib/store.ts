@@ -6,7 +6,7 @@ import type { GitHub } from "./github.js";
  * The layout of `refs/factory/data` (doc 07), and typed access to it.
  *
  * Everything the factory writes about itself is here: work items, run files,
- * the ledger, the rollup index, review reports and benchmark tasks. Each file
+ * the ledger, the rollup index, review reports. Each file
  * is validated on read and on write, so a reader never acts on a file whose
  * shape it does not know and a writer cannot persist one (doc 09).
  */
@@ -22,7 +22,6 @@ export const runPath = (id: string): string => `runs/${id}.json`;
 export const stepReportPath = (runId: string, role: string): string =>
   `runs/${runId}/steps/${role}.json`;
 export const reviewPath = (at: string): string => `reviews/${at}.json`;
-export const benchmarkResultPath = (id: string): string => `benchmark-results/${id}.json`;
 export const livePath = (runId: string): string => `live/${runId}.json`;
 
 export interface Ledger {
@@ -124,8 +123,6 @@ export function schemaFor(path: string): Parameters<typeof assertValid>[0] | nul
   if (path.startsWith("runs/")) return "run";
   if (path.startsWith("live/")) return "live";
   if (path.startsWith("reviews/")) return "review";
-  if (path.startsWith("benchmark-results/")) return "benchmark-result";
-  if (path.startsWith("benchmarks/")) return "benchmark-task";
   // Files the layout does not name — the event cursor, the budget note — have
   // no shared schema. Guessing one would reject legitimate writes.
   return null;

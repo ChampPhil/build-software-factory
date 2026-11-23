@@ -22,8 +22,8 @@ const SEQUENCE: Readonly<Record<Pipeline, readonly Role[]>> = {
   hardening: ["hardener", "spec", "builder", "verifier"],
   // A conflict is a rebase and a re-clear: no new intent to triage or spec.
   conflict: ["builder", "verifier"],
-  // A definition change is drafted by the review and benchmarked; the builder
-  // writes the change itself, and a trusted human approves the PR.
+  // A definition change comes from a /practice comment; the builder writes the
+  // change itself, and a trusted human approves the PR.
   definition: ["builder"],
 };
 

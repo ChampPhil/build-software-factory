@@ -185,7 +185,7 @@ function shareName(share: string): string {
   switch (share) {
     case "product_work": return "Product work";
     case "gardening": return "Gardening and hardening";
-    case "review_and_benchmarks": return "Reviews and benchmarks";
+    case "review_and_benchmarks": return "Reviews and practices";
     default: return share;
   }
 }

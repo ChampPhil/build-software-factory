@@ -11,7 +11,7 @@ import { demoFetch, isDemo } from "./demo";
 import { overlayDecisions, correctionCandidates, correctionsOf } from "./corrections";
 import type {
   IndexFile, LedgerFile, LiveFile, RunFile, BaselinesFile, CoverageFile, CandidatesFile,
-  ReviewFile, BenchmarkResultFile, StoredRoleReport, DecisionsFile, WorkItemDoc, StandingGoalsFile, LedgerOpenItem,
+  ReviewFile, StoredRoleReport, DecisionsFile, WorkItemDoc, StandingGoalsFile, LedgerOpenItem,
 } from "./types";
 
 /**
@@ -164,38 +164,24 @@ export function useCorrections(client: GitHubClient | null, ledger: LedgerFile |
 }
 
 /**
- * What the Improvement page needs: the recent reviews, the benchmark task set
- * and every comparison that has been run.
+ * What the Improvement page needs: the recent reviews.
  *
- * Polled slowly — a review happens every few days, not every minute — and the
- * most recent few of each are read in full rather than all of them, because a
- * factory a year old would otherwise fetch hundreds of files to draw one chart.
+ * Polled slowly, because a review happens every few days, not every minute,
+ * and only the most recent few are read in full: a factory a year old would
+ * otherwise fetch hundreds of files to draw one page.
  */
 export function useImprovement(client: GitHubClient | null): Loaded<{
   readonly reviews: readonly ReviewFile[];
-  readonly results: readonly BenchmarkResultFile[];
-  readonly taskCount: number;
 }> {
   const load =
     client === null
       ? null
       : async () => {
-          const [reviewNames, resultNames, taskNames] = await Promise.all([
-            client.listFromRef("reviews"),
-            client.listFromRef("benchmark-results"),
-            client.listFromRef("benchmarks"),
-          ]);
-          const [reviews, results] = await Promise.all([
-            Promise.all(reviewNames.slice(0, 10).map((n) => client.fileFromRef<ReviewFile>(`reviews/${n}`))),
-            Promise.all(
-              resultNames.slice(0, 20).map((n) => client.fileFromRef<BenchmarkResultFile>(`benchmark-results/${n}`)),
-            ),
-          ]);
-          return {
-            reviews: reviews.filter((r): r is ReviewFile => r !== null),
-            results: results.filter((r): r is BenchmarkResultFile => r !== null),
-            taskCount: taskNames.length,
-          };
+          const reviewNames = await client.listFromRef("reviews");
+          const reviews = await Promise.all(
+            reviewNames.slice(0, 10).map((n) => client.fileFromRef<ReviewFile>(`reviews/${n}`)),
+          );
+          return { reviews: reviews.filter((r): r is ReviewFile => r !== null) };
         };
   return usePolled(load, 300_000, [client?.repo]);
 }

@@ -157,8 +157,8 @@ export default function Home() {
 
       {definitionPrs.length > 0 && (
         <Section
-          title={`Definition changes · ${definitionPrs.length}`}
-          lede="Changes to how the factory itself works. Each carries its benchmark result."
+          title={`Practices to approve · ${definitionPrs.length}`}
+          lede="Standing instructions someone declared with /practice. Every agent will follow one once a trusted person approves it."
         >
           <div className="rows">
             {definitionPrs.map((pr) => (

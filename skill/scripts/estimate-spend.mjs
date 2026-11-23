@@ -4,8 +4,7 @@
  * own last 90 days rather than from a generic guess.
  *
  * Three things go into it: product work driven by the repo's real issue and PR
- * rate, nightly gardening while baselines remain, and the scheduled reviews
- * and their benchmarks. Model spend and Actions minutes are estimated
+ * rate, nightly gardening while baselines remain, and the scheduled reviews. Model spend and Actions minutes are estimated
  * separately, because on a private Free-plan repo the minutes run out first
  * and that is the limit that actually bites.
  *
@@ -28,11 +27,9 @@ const COST = {
   // Gardening is one cleanup PR: gardener picks, builder changes, gates run.
   gardening_run_usd: 0.55,
   gardening_run_minutes: 11,
-  // A review scores recent runs; benchmarks re-run frozen tasks several times.
+  // A review scores recent runs and files hardening work for what failed.
   review_usd: 2.4,
   review_minutes: 18,
-  benchmark_task_usd: 0.3,
-  benchmark_minutes_per_task: 4,
   // What an idle day still costs: the daily review check and the rollup sweep.
   idle_day_minutes: 2,
 };
@@ -133,22 +130,18 @@ function estimate({ activity, days, gardeningPrs, isPrivate, planName }) {
   // Gardening runs nightly while baselines remain, up to the per-night cap.
   const gardeningRuns = gardeningPrs * 30;
 
-  // A review every 3 days, each with a benchmark comparison of 12 tasks × 3
-  // repeats when it proposes a change.
+  // A review every 3 days.
   const reviews = 10;
-  const benchmarkTasks = 12 * 3 * 4; // four of the ten reviews propose a change
 
   const modelUsd =
     productRuns * COST.product_run_usd +
     gardeningRuns * COST.gardening_run_usd +
-    reviews * COST.review_usd +
-    benchmarkTasks * COST.benchmark_task_usd;
+    reviews * COST.review_usd;
 
   const minutes =
     productRuns * COST.product_run_minutes +
     gardeningRuns * COST.gardening_run_minutes +
     reviews * COST.review_minutes +
-    benchmarkTasks * COST.benchmark_minutes_per_task +
     30 * COST.idle_day_minutes;
 
   const minutesLimit = isPrivate && (planName === null || planName === "free") ? FREE_PRIVATE_MINUTES : null;
@@ -181,7 +174,7 @@ function estimate({ activity, days, gardeningPrs, isPrivate, planName }) {
   return {
     window_days: days,
     activity,
-    runs_per_month: { product: productRuns, gardening: gardeningRuns, reviews, benchmark_tasks: benchmarkTasks },
+    runs_per_month: { product: productRuns, gardening: gardeningRuns, reviews },
     model_usd_per_month: Math.round(modelUsd * 100) / 100,
     actions_minutes_per_month: Math.round(minutes),
     actions_minutes_limit: minutesLimit,
@@ -282,7 +275,6 @@ Estimated monthly cost for ${repo}
     product work              ${r.runs_per_month.product}
     gardening                 ${r.runs_per_month.gardening}  (${args.gardeningPrs} a night)
     reviews                   ${r.runs_per_month.reviews}
-    benchmark tasks           ${r.runs_per_month.benchmark_tasks}
 
   Model spend                 $${r.model_usd_per_month.toFixed(2)} a month
   Actions minutes             ${r.actions_minutes_per_month}${

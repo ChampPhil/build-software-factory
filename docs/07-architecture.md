@@ -41,12 +41,12 @@ The factory reuses mature tools wherever one fits its constraints (free, nothing
 | Runtime verification evidence | **Playwright** (screenshots, video, traces) and **Playwright MCP** for the verifier agent's browser | Nothing |
 | Sandbox definition | The **devcontainer** spec (`devcontainer.json`) | Generating one when the repo has none |
 | Language and stack detection | **go-enry** (GitHub Linguist's data) | Detecting existing tool configs and dominant patterns |
-| Scorers and benchmark comparisons | **promptfoo** (MIT): LLM-rubric graders, repeated runs, side-by-side configurations | A custom provider that runs a pipeline on a frozen task |
+| Scorers | **promptfoo** (MIT): LLM-rubric graders | Role steps that grade a run against a rubric |
 | Runner upgrades | **Dependabot** | Nothing |
 | Settings as code (org-wide) | **github/safe-settings** is the recommendation for organizations that want org-wide settings | A thin single-repo sync (safe-settings needs its own App and a central admin repo) |
 | Path-policy vocabulary | **Palantir policy-bot**'s YAML vocabulary (`changed_files`, approval rules) | A thin `pull_request_target` check, since policy-bot needs a hosted server |
 
-**Built custom because nothing fits:** correction mining into guardrail candidates; the hardening pipeline; benchmark-gated definition changes; the cross-tool weakening check; the path-policy check and single-repo settings sync; the merge-queue fallback; the git-ref data store, live status and static dashboard; budget shares; and the setup skill.
+**Built custom because nothing fits:** correction mining into guardrail candidates; the hardening pipeline; the cross-tool weakening check; the path-policy check and single-repo settings sync; the merge-queue fallback; the git-ref data store, live status and static dashboard; budget shares; and the setup skill.
 
 **Prior art.** Other "software factories" exist (for example addyosmani/factory, claude-software-factory, agent-factory, Elastic's AI software factory). None examined combines five harnesses, turning human corrections into static rules, benchmark-gated self-improvement, a merge queue on free plans and a zero-backend dashboard; that combination is this project's reason to exist, and the README names this prior art.
 
@@ -98,7 +98,7 @@ Setup adds four things to the user's repo: a `.factory/` folder, factory workflo
 
 - **Existing tool configs stay where they are.** The repo's own linter, type-checker and test configs are guardrails too; `policy.yaml` lists their paths so the gates treat them the same way.
 - **Data lives in refs, not branches.** `factory-data` is stored at `refs/factory/data`, `factory-media` at `refs/factory/media`, and live status at `refs/factory/live/<run-id>`. They work like orphan branches (git history, pushes, rebases) but sit outside `refs/heads/`, so they don't show in the branch list and pushing to them doesn't fire `push` workflows. Without this, a team CI that runs `on: push` would run on every factory write and burn its minutes. Readers resolve the ref to a commit, then read files at that commit. In a separate private data repo, the same refs are used.
-- **`factory-data` ref** (orphan, never merged): work items, run files, the rollup index, the ledger, review reports, benchmark tasks and session transcripts.
+- **`factory-data` ref** (orphan, never merged): work items, run files, the rollup index, the ledger, review reports and session transcripts.
 - **`factory-media` ref** (orphan, never merged): screenshots and short clips, kept for `data.media_retention_months` (default 12). Once a month rollup rewrites it as a single commit without expired media, so repo size stays bounded. If the user chose private data storage, the same layout lives in a separate private repo instead. Session transcripts are stored only when the data store is private; on a public repo with its data in the same repo, `sessions/` stays empty.
 - **Repo secrets:** the factory GitHub App's ID and private key, plus one model API key per harness the user enabled.
 
@@ -117,7 +117,7 @@ Fifteen deterministic workflows run the factory, each a thin trigger file that c
 | `factory-drop` | `workflow_dispatch` by an owner | `bsf run drop` | Takes work back: each named work item becomes `rejected`, its live run is cancelled and its PR closed with the reason |
 | `factory-conflicts` | Push to main; the "Rebuild on main" button on a `factory/conflicts` check | `bsf conflicts scan`, `bsf conflicts button` | Finds open factory PRs that became conflicting, starts a rebuild for each (`factory-run`, reason `conflict`) and puts a grey `factory/conflicts` check with a "Rebuild on main" button on the PR |
 | `factory-garden` | Nightly schedule | `bsf budget check`, the gardener role | Runs the gardener agent once: it reads the drift (`bsf garden-scan`) and its picks become gardening work items (`bsf garden-file`), at most `max_prs_per_run`, none overlapping another pick's or an open gardening item's files. Each item then runs builder and verifier in `factory-run`; the gardener does not run again per item |
-| `factory-review` | Daily schedule; runs only when its thresholds say so | `bsf review` | The scheduled self-improvement review (every 3 days, early at 50 runs, skipped under 10) |
+| `factory-review` | Daily schedule; runs only when its thresholds say so | `bsf review` | The scheduled self-improvement review (every 3 days, early at 50 runs, skipped under 5; the first review waits only for day 3) |
 | `factory-rollup` | Called as the last step of every factory workflow; a daily sweep as backstop | `bsf rollup` | Updates `index.json` and `ledger.json` on `factory-data`; dispatches queued work items when concurrency slots are free (so a crashed run can't stall the queue); monthly, squashes `factory-media` |
 | `factory-budget-settle` | Called right after every agent step, before the next one starts | `bsf budget settle` | Replaces the step's budget hold with what it measured: the agent's cost and its threat detection's, each the larger of the session's figure and the tokens at list price; anything unmeasured is charged at the ceiling (§Budget) |
 | `factory-audit` | Push to main | `bsf audit` | Re-runs gates on the pushed commit; flags anything that bypassed them |
@@ -263,7 +263,7 @@ run's plan checks the same before claiming its item. Queued work then stays
 queued until the month turns or the budget is raised, instead of starting runs
 that would be refused halfway.
 
-**Shares.** Gardening (25% by default) and review and benchmarks (15%) stay
+**Shares.** Gardening (25% by default) and reviews and practices (15%) stay
 within their share. Product work may use whatever they leave, up to the whole
 budget. Setup is charged against the total only.
 
@@ -290,7 +290,6 @@ factory-data/
   work-items/<id>.json        ← one file per work item, including its spec
   runs/2026/11/<run-id>.json  ← one file per run, written once at run end
   reviews/<date>.json         ← scheduled review reports
-  benchmarks/tasks/<id>.json  ← benchmark tasks built from completed work
   sessions/<session-id>.jsonl ← redacted local agent transcripts (from hooks; private stores only)
 
 factory-media/

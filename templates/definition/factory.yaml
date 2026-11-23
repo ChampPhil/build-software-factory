@@ -4,7 +4,7 @@ schema: factory/1
 
 harness: claude-code
 
-# Model per step. The scheduled review may change these, benchmark-gated.
+# Model per step. A person chooses these; the review never changes them.
 # Reasoning goes where the decisions are made — the spec says what to build
 # and how to check it — and cheaper models do the work the spec lays out.
 models:
@@ -29,10 +29,13 @@ pipelines:
   hardening:
     auto_merge: false
 
+# The review grades recent runs and files what it finds as hardening work. The
+# first one runs once 3 days have passed since the first run, however few runs
+# there are; later ones are skipped under skip_below_runs.
 review:
   every_days: 3
   run_early_at_runs: 50
-  skip_below_runs: 10
+  skip_below_runs: 5
 
 limits:
   retry_cap: 3

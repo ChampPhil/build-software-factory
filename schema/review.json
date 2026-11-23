@@ -43,39 +43,26 @@
         "properties": {
           "title": { "type": "string", "minLength": 1 },
           "runs": { "type": "array", "items": { "$ref": "_common.json#/$defs/runId" } },
-          "route": { "type": "string", "enum": ["hardening", "definition"] },
+          "route": { "type": "string", "enum": ["hardening"] },
           "work_item": { "oneOf": [{ "$ref": "_common.json#/$defs/workItemId" }, { "type": "null" }] },
           "change": { "type": "string" },
-          "pr": { "type": ["integer", "null"] },
-          "benchmark": {
-            "type": "object",
-            "required": ["tasks", "repeats", "before", "after"],
-            "additionalProperties": false,
-            "properties": {
-              "tasks": { "type": "integer", "minimum": 10 },
-              "repeats": { "type": "integer", "minimum": 3 },
-              "failure_tasks": { "type": "integer", "minimum": 0 },
-              "before": { "$ref": "#/$defs/benchSide" },
-              "after": { "$ref": "#/$defs/benchSide" },
-              "failure_tasks_before": { "$ref": "_common.json#/$defs/ratio" },
-              "failure_tasks_after": { "$ref": "_common.json#/$defs/ratio" },
-              "regressions": { "type": "integer", "minimum": 0 },
-              "cost_change_pct": { "type": "number" }
-            }
-          }
+          "pr": { "type": ["integer", "null"] }
         }
       }
-    }
-  },
-  "$defs": {
-    "benchSide": {
-      "type": "object",
-      "required": ["mean", "spread"],
-      "additionalProperties": false,
-      "properties": {
-        "mean": { "$ref": "_common.json#/$defs/ratio" },
-        "spread": { "type": "number", "minimum": 0 },
-        "cost_usd": { "$ref": "_common.json#/$defs/usd" }
+    },
+    "unrouted": {
+      "type": "array",
+      "description": "Failures the review saw but did not turn into work: found in a hardening run, so a person sees them and no new hardening item is filed for them.",
+      "items": {
+        "type": "object",
+        "required": ["run", "tag", "reason"],
+        "additionalProperties": false,
+        "properties": {
+          "run": { "$ref": "_common.json#/$defs/runId" },
+          "tag": { "type": "string" },
+          "reason": { "type": "string" },
+          "detail": { "type": "string" }
+        }
       }
     }
   }

@@ -1,5 +1,5 @@
 {
-  "frozen_at": "2026-11-22",
+  "frozen_at": "2026-11-23",
   "schema_major": 1,
   "note": "The shape of every schema at the frozen major. `bsf schema-surface --check` compares the live schemas against this and fails on a breaking change. Regenerate with `bsf schema-surface --freeze` only alongside an additive change, or alongside a major bump that ships a migration in `bsf migrate`.",
   "surface": {
@@ -19,14 +19,6 @@
       "/$defs/reviewId": {
         "type": "string",
         "pattern": "^rev_[0-9]{8}$"
-      },
-      "/$defs/benchmarkTaskId": {
-        "type": "string",
-        "pattern": "^bt_[0-9A-HJKMNP-TV-Z]{26}$"
-      },
-      "/$defs/benchmarkResultId": {
-        "type": "string",
-        "pattern": "^bench_[0-9A-HJKMNP-TV-Z]{26}$"
       },
       "/$defs/candidateId": {
         "type": "string",
@@ -160,254 +152,6 @@
       "/properties/rules/additionalProperties/properties/by_file/additionalProperties": {
         "type": "integer",
         "minimum": 0
-      }
-    },
-    "benchmark-result.json": {
-      "/": {
-        "type": "object",
-        "properties": [
-          "admitted",
-          "at",
-          "id",
-          "pipeline",
-          "pr",
-          "reasons",
-          "regressed",
-          "repeats",
-          "schema",
-          "sides",
-          "task_count"
-        ],
-        "required": [
-          "admitted",
-          "at",
-          "id",
-          "reasons",
-          "repeats",
-          "schema",
-          "sides",
-          "task_count"
-        ],
-        "additionalProperties": false
-      },
-      "/properties/schema": {
-        "const": "\"benchmark-result/1\""
-      },
-      "/properties/id": {
-        "ref": "_common.json#/$defs/benchmarkResultId"
-      },
-      "/properties/at": {
-        "ref": "_common.json#/$defs/timestamp"
-      },
-      "/properties/repeats": {
-        "type": "integer",
-        "minimum": 1
-      },
-      "/properties/task_count": {
-        "type": "integer",
-        "minimum": 1
-      },
-      "/properties/pipeline": {
-        "ref": "_common.json#/$defs/pipeline"
-      },
-      "/properties/pr": {
-        "type": "integer"
-      },
-      "/properties/sides": {
-        "type": "array",
-        "minItems": 1
-      },
-      "/properties/sides/items": {
-        "type": "object",
-        "properties": [
-          "cost_per_task",
-          "cost_usd",
-          "current",
-          "label",
-          "models",
-          "must_pass_rate",
-          "score_mean",
-          "score_spread"
-        ],
-        "required": [
-          "cost_per_task",
-          "cost_usd",
-          "label",
-          "must_pass_rate",
-          "score_mean",
-          "score_spread"
-        ],
-        "additionalProperties": false
-      },
-      "/properties/sides/items/properties/label": {
-        "type": "string",
-        "minLength": 1
-      },
-      "/properties/sides/items/properties/models": {
-        "type": "object"
-      },
-      "/properties/sides/items/properties/models/additionalProperties": {
-        "type": "string"
-      },
-      "/properties/sides/items/properties/score_mean": {
-        "type": "number",
-        "minimum": 0
-      },
-      "/properties/sides/items/properties/score_spread": {
-        "type": "number",
-        "minimum": 0
-      },
-      "/properties/sides/items/properties/cost_usd": {
-        "type": "number",
-        "minimum": 0
-      },
-      "/properties/sides/items/properties/cost_per_task": {
-        "type": "number",
-        "minimum": 0
-      },
-      "/properties/sides/items/properties/must_pass_rate": {
-        "type": "number",
-        "minimum": 0,
-        "maximum": 1
-      },
-      "/properties/sides/items/properties/current": {
-        "type": "boolean"
-      },
-      "/properties/admitted": {
-        "type": "boolean"
-      },
-      "/properties/reasons": {
-        "type": "array"
-      },
-      "/properties/reasons/items": {
-        "type": "string"
-      },
-      "/properties/regressed": {
-        "type": "array"
-      },
-      "/properties/regressed/items": {
-        "type": "string"
-      }
-    },
-    "benchmark-task.json": {
-      "/": {
-        "type": "object",
-        "properties": [
-          "base_commit",
-          "created_at",
-          "grading",
-          "id",
-          "origin",
-          "pipeline",
-          "reference",
-          "request",
-          "schema",
-          "source_run",
-          "tags"
-        ],
-        "required": [
-          "base_commit",
-          "grading",
-          "id",
-          "origin",
-          "pipeline",
-          "reference",
-          "request",
-          "schema",
-          "source_run"
-        ],
-        "additionalProperties": false
-      },
-      "/properties/schema": {
-        "const": "\"benchmark-task/1\""
-      },
-      "/properties/id": {
-        "ref": "_common.json#/$defs/benchmarkTaskId"
-      },
-      "/properties/source_run": {
-        "ref": "_common.json#/$defs/runId"
-      },
-      "/properties/origin": {
-        "type": "string",
-        "enum": [
-          "\"corrected\"",
-          "\"escalated\"",
-          "\"representative\"",
-          "\"succeeded\""
-        ]
-      },
-      "/properties/pipeline": {
-        "ref": "_common.json#/$defs/pipeline"
-      },
-      "/properties/base_commit": {
-        "ref": "_common.json#/$defs/gitSha"
-      },
-      "/properties/created_at": {
-        "ref": "_common.json#/$defs/timestamp"
-      },
-      "/properties/request": {
-        "type": "object",
-        "properties": [
-          "body",
-          "title"
-        ],
-        "required": [
-          "title"
-        ],
-        "additionalProperties": false
-      },
-      "/properties/request/properties/title": {
-        "type": "string"
-      },
-      "/properties/request/properties/body": {
-        "type": "null|string"
-      },
-      "/properties/reference": {
-        "type": "object",
-        "properties": [
-          "merged_commit",
-          "tests"
-        ],
-        "required": [
-          "merged_commit"
-        ],
-        "additionalProperties": false
-      },
-      "/properties/reference/properties/merged_commit": {
-        "ref": "_common.json#/$defs/gitSha"
-      },
-      "/properties/reference/properties/tests": {
-        "type": "array"
-      },
-      "/properties/reference/properties/tests/items": {
-        "type": "string"
-      },
-      "/properties/grading": {
-        "type": "object",
-        "properties": [
-          "must_pass",
-          "rubric"
-        ],
-        "required": [
-          "must_pass",
-          "rubric"
-        ],
-        "additionalProperties": false
-      },
-      "/properties/grading/properties/must_pass": {
-        "type": "array"
-      },
-      "/properties/grading/properties/must_pass/items": {
-        "type": "string"
-      },
-      "/properties/grading/properties/rubric": {
-        "type": "string"
-      },
-      "/properties/tags": {
-        "type": "array"
-      },
-      "/properties/tags/items": {
-        "type": "string"
       }
     },
     "candidates.json": {
@@ -1997,6 +1741,7 @@
           "problems",
           "schema",
           "scores",
+          "unrouted",
           "window"
         ],
         "required": [
@@ -2083,7 +1828,6 @@
       "/properties/problems/items": {
         "type": "object",
         "properties": [
-          "benchmark",
           "change",
           "pr",
           "route",
@@ -2110,7 +1854,6 @@
       "/properties/problems/items/properties/route": {
         "type": "string",
         "enum": [
-          "\"definition\"",
           "\"hardening\""
         ]
       },
@@ -2126,80 +1869,35 @@
       "/properties/problems/items/properties/pr": {
         "type": "integer|null"
       },
-      "/properties/problems/items/properties/benchmark": {
+      "/properties/unrouted": {
+        "type": "array"
+      },
+      "/properties/unrouted/items": {
         "type": "object",
         "properties": [
-          "after",
-          "before",
-          "cost_change_pct",
-          "failure_tasks",
-          "failure_tasks_after",
-          "failure_tasks_before",
-          "regressions",
-          "repeats",
-          "tasks"
+          "detail",
+          "reason",
+          "run",
+          "tag"
         ],
         "required": [
-          "after",
-          "before",
-          "repeats",
-          "tasks"
+          "reason",
+          "run",
+          "tag"
         ],
         "additionalProperties": false
       },
-      "/properties/problems/items/properties/benchmark/properties/tasks": {
-        "type": "integer",
-        "minimum": 10
+      "/properties/unrouted/items/properties/run": {
+        "ref": "_common.json#/$defs/runId"
       },
-      "/properties/problems/items/properties/benchmark/properties/repeats": {
-        "type": "integer",
-        "minimum": 3
+      "/properties/unrouted/items/properties/tag": {
+        "type": "string"
       },
-      "/properties/problems/items/properties/benchmark/properties/failure_tasks": {
-        "type": "integer",
-        "minimum": 0
+      "/properties/unrouted/items/properties/reason": {
+        "type": "string"
       },
-      "/properties/problems/items/properties/benchmark/properties/before": {
-        "ref": "#/$defs/benchSide"
-      },
-      "/properties/problems/items/properties/benchmark/properties/after": {
-        "ref": "#/$defs/benchSide"
-      },
-      "/properties/problems/items/properties/benchmark/properties/failure_tasks_before": {
-        "ref": "_common.json#/$defs/ratio"
-      },
-      "/properties/problems/items/properties/benchmark/properties/failure_tasks_after": {
-        "ref": "_common.json#/$defs/ratio"
-      },
-      "/properties/problems/items/properties/benchmark/properties/regressions": {
-        "type": "integer",
-        "minimum": 0
-      },
-      "/properties/problems/items/properties/benchmark/properties/cost_change_pct": {
-        "type": "number"
-      },
-      "/$defs/benchSide": {
-        "type": "object",
-        "properties": [
-          "cost_usd",
-          "mean",
-          "spread"
-        ],
-        "required": [
-          "mean",
-          "spread"
-        ],
-        "additionalProperties": false
-      },
-      "/$defs/benchSide/properties/mean": {
-        "ref": "_common.json#/$defs/ratio"
-      },
-      "/$defs/benchSide/properties/spread": {
-        "type": "number",
-        "minimum": 0
-      },
-      "/$defs/benchSide/properties/cost_usd": {
-        "ref": "_common.json#/$defs/usd"
+      "/properties/unrouted/items/properties/detail": {
+        "type": "string"
       }
     },
     "role.json": {

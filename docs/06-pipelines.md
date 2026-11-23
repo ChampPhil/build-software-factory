@@ -43,13 +43,13 @@ The factory runs three fixed pipelines (product work, gardening, hardening) plus
 | Correction from a trusted person on a factory PR (review comment, change request, or a push to its branch) or in a local Claude Code session | A hardening item at once, linked to the correction and the run it corrects; the same correction said twice folds into the open item. Comments on a hardening or definition PR are revisions of that PR, never new corrections |
 | Nightly schedule | Gardening |
 | Problem routed by the scheduled review | Hardening |
-| Review result needing context or model change | Definition change (benchmark-gated) |
+| `/practice` comment declaring a practice | Definition change (human-approved) |
 | Conflict on an open factory PR | Conflict resolution |
 
 4a. **Chief of staff.** For each accepted request, intake makes one tool-less call to the model named at `models.chief_of_staff` (default `claude-haiku-5-5`) with the request, the feature map and the tail of `history.md`. It answers with the pipeline (product work, gardening or hardening), a specific goal, a success check the verifier can test, a priority and a one-line reason. A feature goes to product work, a mistake that keeps recurring to hardening, and a vague cleanup to gardening. The request text is data: nothing in it can change the answer's shape, and the answer is validated strictly. Trust stays deterministic: only requests intake has already accepted are routed, and nothing the model says can admit an untrusted author. If something is genuinely unclear it asks **one** question as an issue comment; the item waits in `needs_info` and an answer routes it, never with a second question. A person's own `factory:harden` or `factory:tidy` choice is kept (tidy stays gardening); a person's own goal is kept; priority is only ever raised. If the call fails, there is no `ANTHROPIC_API_KEY`, or the product-work budget is paused, the table's route stands and the work proceeds. The call is charged to the budget. The decision, its reason, who made it and the success check are on the work item and in the acknowledgement comment; nothing in it rewrites a role prompt.
 4b. **Overrides and standing goals.** Any pipeline choice can be changed in one step from the dashboard's Work items page (a request that has not started; the move is recorded with who and when, and the dashboard shows how often people move what the chief of staff chose). Standing goals ("tighten auth this month") are set by asking: the dashboard's Factory page, or `/focus [lane:] text` in a comment by a trusted person. They are kept on the data ref (`standing-goals.json`, at most 20) and handed to the chief of staff, the spec, the gardener and the hardener as tie-breakers; they never override a request.
 5. **Dispatch** `factory-run` if a concurrency slot is free (default 5); otherwise the item stays `queued`, high priority first, then oldest first. Every `factory-run` ends by dispatching the next queued item, and every rollup (including the daily sweep) dispatches queued items when slots are free, so the queue drains without a timer even if a run crashes.
-6. **Budget shares:** gardening (25% by default) and review and benchmarks (15%) each stay within their share of the monthly budget; product work may use what they leave, never past the total. A pipeline whose largest step no longer fits what is left keeps its items queued until it does (doc 07, §Budget).
+6. **Budget shares:** gardening (25% by default) and reviews and practices (15%) each stay within their share of the monthly budget; product work may use what they leave, never past the total. A pipeline whose largest step no longer fits what is left keeps its items queued until it does (doc 07, §Budget).
 
 ## The factory-clear loop
 
@@ -142,7 +142,7 @@ Every factory PR has the same layout, so a reviewer can judge it from the top wi
 | Product work | The requested behavior now works | Before/after screenshots and one screen recording of the acceptance checks. A change the spec marks `ui_change: true` cannot pass the PR report check without a video |
 | Gardening | Behavior is unchanged and the code is cleaner | Before/after evidence on affected flows; rule counts before → after; list of what was cleaned |
 | Hardening | This is a rule we want | The rule in plain language; why it exists (linked corrections); proof it catches the bad example and passes the good one; violations fixed or baselined |
-| Definition | The context or model change is an improvement | The change in plain words; the review problems it addresses; benchmark scores before and after |
+| Definition | The context or model change is an improvement | The change in plain words; the practice it adds and where it came from |
 | Conflict resolution | Both intents are preserved | Both specs side by side; how each conflict was resolved; fresh verification evidence |
 
 ## Approval, merge queue and conflicts
@@ -190,23 +190,18 @@ Self-improvement has two parts: instrumentation that records everything continuo
 
 **Part 1 — Instrumentation (always on).** Every run file, step report, gate attempt, artifact, human correction, escalation and local session transcript is stored on `factory-data` (Trace capture, below).
 
-**Part 2 — The scheduled review** (`factory-review`): every 3 days, early once 50 runs pile up, skipped when fewer than 10 runs happened since the last one.
+**Part 2 — The scheduled review** (`factory-review`): every 3 days, early once 50 runs pile up, skipped when fewer than 5 runs happened since the last one. The first review is never skipped for too few runs: it is due 3 days after the first graded run.
 
 1. **Grade:** scorers, run on promptfoo's LLM-rubric graders, evaluate every run since the last review against its pipeline's rubric plus the shared rubric (1–5 per criterion, with failure tags).
 2. **Collect failures:** scores of 1–2, escalations, reverts of factory PRs, and human corrections.
 3. **Group** failures into problems (same tag + same area or same role).
 4. **Route each problem by where its fix belongs:**
-   - codebase, static rules or verification → a **hardening** work item;
-   - context or a step's model → a **definition change**.
-5. **Definition changes:** the review drafts the change (a context edit, or a different model for a step) and benchmarks it against the current definition:
-   - each side runs **3 times on at least 10 tasks**, including the failure tasks tied to this problem;
-   - a context change is tested on tasks from the last 60 days with the new context applied; a model change uses each task's own context at its base commit;
-   - it opens a definition PR only if the failure tasks improve, no other task regresses, the overall gain is larger than the run-to-run spread, and cost rises by no more than 20%. A trusted human approves it.
-6. **Report:** `reviews/<date>.json` and a review page on the dashboard: scores, problems, where each went, and benchmark results.
+   - every problem goes to **hardening** (a work item). A problem found in a hardening run is the exception: it is recorded as `unrouted` and shown on the Improvement page, and no new work item is filed, so hardening cannot feed itself.
+5. **Report:** `reviews/<date>.json` and the Improvement page on the dashboard: scores, problems, where each went, and any `unrouted` ones.
 
-**Benchmarks** run on promptfoo, which handles repeated runs and side-by-side configurations; the factory adds a custom promptfoo provider that runs a pipeline on a frozen task. They build up automatically from every merged factory run: runs that needed no human changes, and runs a human corrected or finished, with the human-fixed merge as the known-good result. Users can also mark any run "representative." Including corrected and escalated work means the set contains the factory's failures, so a definition change can show it fixes them. The review also re-benchmarks when a new model is added to the price table, producing the cost vs. quality graph per pipeline.
+`/practice` runs (the `definition` pipeline) are not scored: the review skips them.
 
-**One definition path in v1.0:** changes to the factory definition come only from `/practice` comments (a person declaring a practice to enforce), which go to the definition pipeline for human approval. The scheduled review's own definition route is off until v1.1 (`DEFINITION_ROUTE_ENABLED`), so it routes every problem to hardening.
+**One definition path in v1.0:** changes to the factory definition come only from `/practice` comments (a person declaring a practice to enforce), which go to the definition pipeline for human approval. The review has no definition route; automatic, benchmark-tested definition changes are planned for v1.1.
 
 ## Trace capture
 
