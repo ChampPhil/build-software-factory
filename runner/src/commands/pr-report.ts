@@ -5,6 +5,7 @@ import { MEDIA_REF } from "../lib/dataref.js";
 import { FactoryStore, json, workItemPath } from "../lib/store.js";
 import { assertValid } from "../lib/schema.js";
 import { clock, mb, processRecordings, VIDEO_EXT as RECORDING_EXT, type RecordedVideo } from "../lib/recordings.js";
+import { attributionMarkdown } from "../lib/brand.js";
 
 /**
  * PR reports: what a person sees on every factory PR, setup PR and escalation.
@@ -332,6 +333,8 @@ export function renderReport(input: RenderInput): Rendered {
   }
   if (more.length > 0) tail.push("### Read more", "", more.join(" · "), "");
   if (input.footer !== undefined) tail.push(`<sub>${input.footer}</sub>`);
+  // The setup PR is a person's first sight of the factory, so it carries the byline.
+  if (input.kind === "setup") tail.push("", `<sub>${attributionMarkdown()}</sub>`);
 
   const headText = head.join("\n");
   const tailText = tail.join("\n");
