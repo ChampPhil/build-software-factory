@@ -14,6 +14,7 @@
 // already exists — the definition, the context, the guardrails — is the
 // user's, and is kept unless --force.
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, chmodSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -130,10 +131,44 @@ for (const [src, dest] of PLAN) {
     cpSync(file, target);
   }
 }
+// The launcher has to be executable on GitHub's Linux runners, where every
+// pipeline step calls it. `chmod` alone is not enough: on Windows the
+// filesystem carries no execute bit for git to read, so git stages the file
+// 100644 and the runner fails with exit 126 ("Permission denied") on a step
+// that has nothing to do with the user's change. `git update-index --chmod=+x`
+// sets the bit in the index itself, which is what gets committed, and is
+// harmless where chmod already worked. Then it is verified, because a silent
+// 100644 here is a setup failure three steps later.
 if (!dryRun) {
   for (const f of ["bsf"]) {
     const p = join(into, ".factory/bin", f);
-    if (existsSync(p)) chmodSync(p, 0o755);
+    if (!existsSync(p)) continue;
+    chmodSync(p, 0o755);
+    const tracked = `.factory/bin/${f}`;
+    try {
+      // Retried once: on Windows an antivirus scanner or the search indexer can
+      // hold a file under .git/objects for a moment, and the first add fails
+      // with "Permission denied" or "failed to insert into database".
+      try {
+        execFileSync("git", ["-C", into, "add", "--", tracked], { stdio: "pipe" });
+      } catch {
+        execFileSync("git", ["-C", into, "add", "--", tracked], { stdio: "pipe" });
+      }
+      execFileSync("git", ["-C", into, "update-index", "--chmod=+x", "--", tracked], { stdio: "pipe" });
+    } catch (e) {
+      console.error(`could not mark ${tracked} executable in the git index: ${e instanceof Error ? e.message : String(e)}`);
+      process.exit(1);
+    }
+    const mode = execFileSync("git", ["-C", into, "ls-files", "-s", "--", tracked], { encoding: "utf8" }).trim().split(/\s+/)[0];
+    if (mode !== "100755") {
+      console.error(
+        `${tracked} is staged as ${mode === undefined || mode === "" ? "untracked" : mode}, not 100755. ` +
+          `The Linux runner would fail with exit 126 on it. Fix with:\n` +
+          `  git -C ${into} update-index --chmod=+x -- ${tracked}`,
+      );
+      process.exit(1);
+    }
+    console.log(`${tracked} is executable in the index (100755)`);
   }
 }
 

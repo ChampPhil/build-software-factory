@@ -1,0 +1,9 @@
+# The Windows launcher is run by `cmd`, which mis-parses a batch file whose
+# lines end with LF alone — a line can end mid-token and the file silently does
+# the wrong thing. `-text` keeps the CRLF the bundler writes, on checkout and
+# on commit, whatever the user's core.autocrlf says.
+*.cmd -text
+*.bat -text
+
+# The packed runner is binary; never let a line-ending filter near it.
+*.tgz binary

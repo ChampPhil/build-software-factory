@@ -16,6 +16,12 @@
 //
 //   bsf          a POSIX shell launcher (no extension, no language tooling
 //                claims it) that unpacks once, beside itself or in a temp dir
+//   bsf.cmd      the same launcher for Windows. Setup runs from the user's own
+//                machine, which is as often Windows as not, and a `sh` script
+//                there runs as nothing at all and exits 0 — so every local
+//                `bsf` command looked like it had succeeded and printed
+//                nothing. Both launchers ship, always, on every platform:
+//                which one a repo needs is not known when the bundle is built.
 //   runner.tgz   bsf.mjs + schema/ + vendor/gh-aw/, packed deterministically
 //   VERSION      package version and a hash of runner.tgz
 //
@@ -73,6 +79,7 @@ const version = JSON.parse(readFileSync(join(runner, "package.json"), "utf8")).v
 if (unpacked) {
   writeFileSync(join(out, "bsf"), '#!/usr/bin/env sh\nexec node "$(dirname "$0")/bsf.mjs" "$@"\n');
   chmodSync(join(out, "bsf"), 0o755);
+  writeFileSync(join(out, "bsf.cmd"), ["@echo off", 'node "%~dp0bsf.mjs" %*', "exit /b %errorlevel%", ""].join("\r\n"));
   const digest = createHash("sha256").update(readFileSync(join(out, "bsf.mjs"))).digest("hex").slice(0, 12);
   writeFileSync(join(out, "VERSION"), `${version} ${digest}\n`);
   console.log(`bundled (unpacked) into ${out}`);
@@ -129,4 +136,44 @@ writeFileSync(
   ].join("\n"),
 );
 chmodSync(join(out, "bsf"), 0o755);
+
+// The same launcher for `cmd`, which is what PowerShell runs a .cmd through.
+// Batch has no `mktemp` and no reliable `&&` inside a parenthesised block, so
+// the same win-or-lose-the-race logic is written with labels: `mkdir` is
+// atomic on Windows too, so exactly one caller wins the shared directory and
+// moves bsf.mjs in last. CRLF endings, because `cmd` mis-parses LF-only files
+// whose lines end mid-token. `tar` is Windows 10 1803+ and is checked for,
+// because the failure without it is otherwise a silent empty directory.
+writeFileSync(
+  join(out, "bsf.cmd"),
+  [
+    "@echo off",
+    "setlocal enableextensions",
+    'set "HERE=%~dp0"',
+    'if not defined TMPDIR set "TMPDIR=%TEMP%"',
+    `set "CACHE=%TMPDIR%\\bsf-${digest}"`,
+    'if exist "%CACHE%\\bsf.mjs" goto run',
+    'set "STAGE=%TMPDIR%\\bsf-unpack.%RANDOM%%RANDOM%"',
+    'mkdir "%STAGE%" >nul 2>&1',
+    'tar -xzf "%HERE%runner.tgz" -C "%STAGE%"',
+    "if errorlevel 1 goto tarfail",
+    'mkdir "%CACHE%" >nul 2>&1',
+    "if errorlevel 1 goto loser",
+    'move /y "%STAGE%\\schema" "%CACHE%\\" >nul',
+    'move /y "%STAGE%\\vendor" "%CACHE%\\" >nul',
+    'move /y "%STAGE%\\bsf.mjs" "%CACHE%\\bsf.mjs" >nul',
+    'rmdir "%STAGE%" >nul 2>&1',
+    "goto run",
+    ":loser",
+    'node "%STAGE%\\bsf.mjs" %*',
+    "exit /b %errorlevel%",
+    ":tarfail",
+    "echo bsf: could not unpack runner.tgz. It needs tar, which Windows has shipped since 10 1803. 1>&2",
+    "exit /b 1",
+    ":run",
+    'node "%CACHE%\\bsf.mjs" %*',
+    "exit /b %errorlevel%",
+    "",
+  ].join("\r\n"),
+);
 console.log(`bundled into ${out}`);
