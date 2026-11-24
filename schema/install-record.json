@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://build-software-factory.dev/schema/install-record.json",
+  "title": "Install record",
+  "description": "What the install changed about the repository that is not a file, so uninstall can put it back. Written once at setup and when sync-settings first applies protection. Doc 09.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "branch_protection_existed",
+    "added_checks",
+    "created_labels",
+    "recorded_at"
+  ],
+  "properties": {
+    "schema": {
+      "const": "install-record/1"
+    },
+    "branch_protection_existed": {
+      "type": "boolean",
+      "description": "Whether the default branch already had protection before the factory arrived. If it did not, uninstall may remove protection entirely; if it did, it only removes the checks the factory added."
+    },
+    "added_checks": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Required checks the factory added, so uninstall removes exactly those and leaves anything a person added alone."
+    },
+    "created_labels": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "recorded_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

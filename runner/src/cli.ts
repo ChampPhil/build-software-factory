@@ -17,6 +17,7 @@ import { runConflictsCommand } from "./commands/conflicts.js";
 import { runSyncCommand } from "./commands/sync-settings.js";
 import { runAuditCommand, blockingFindings } from "./commands/audit.js";
 import { scanAssetHosts } from "./commands/asset-hosts.js";
+import { planUninstall, applyUninstall, formatPlan } from "./commands/uninstall.js";
 import { byFileOf } from "./commands/gates.js";
 import { parseYaml } from "./lib/yaml.js";
 import type { CandidatesFile } from "./lib/types.js";
@@ -58,7 +59,7 @@ import { runTestsGate } from "./commands/tests-gate.js";
 import { mineCorrections, listSessions, clusterCorrections, candidatesFrom } from "./commands/mine.js";
 import { mineRepo } from "./commands/mine-repo.js";
 import { runScorers, loadRubrics } from "./commands/score.js";
-import { readFileSync, appendFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, statSync } from "node:fs";
+import { readFileSync, appendFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, statSync, rmSync } from "node:fs";
 import { specProblems, type SpecGateInput, type SpecLike } from "./commands/spec-gate.js";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -168,6 +169,8 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
   bsf audit [--commit SHA]
   bsf scan-asset-hosts [--root DIR] [--why]
       The external hosts this repo's own pages load. Each needs a sandbox stub.
+  bsf uninstall [--apply] [--purge-data] [--root DIR]
+      Take the factory out of operation. Keeps everything it built.
       After a push to main: did anything reach main without passing the gates,
       and is every compiled role workflow current with its source?
 
@@ -474,6 +477,8 @@ async function main(argv: readonly string[]): Promise<number> {
       return auditCommand(args);
     case "scan-asset-hosts":
       return scanAssetHostsCommand(args);
+    case "uninstall":
+      return uninstallCommand(args);
 
     case "consistency":
       return consistencyCommand(args);
@@ -1906,6 +1911,49 @@ function scanAssetHostsCommand(args: Args): number {
     for (const h of scan.hosts) process.stdout.write(`${h}\n`);
   }
   process.stderr.write(`${scan.hosts.length} host(s) across ${scan.filesRead} file(s)\n`);
+  return 0;
+}
+
+/**
+ * `bsf uninstall` — stop the factory running, keep everything it made.
+ *
+ * Prints the plan by default and changes nothing. `--apply` removes the files
+ * from the checkout and does the API work; the caller commits the deletions on
+ * a branch and opens a pull request, because the workflows sit under protected
+ * paths and taking them out is a change a person should see.
+ */
+async function uninstallCommand(args: Args): Promise<number> {
+  const root = typeof args["root"] === "string" ? args["root"] : process.cwd();
+  const gh = new GitHub({ repo: requireRepo() });
+  const branch = typeof args["branch"] === "string" ? args["branch"] : await gh.defaultBranch();
+
+  const { execFileSync } = await import("node:child_process");
+  const tracked = execFileSync("git", ["-C", root, "ls-files"], { encoding: "utf8" })
+    .split("\n")
+    .filter((l: string) => l !== "");
+  const plan = await planUninstall({
+    gh,
+    branch,
+    root,
+    files: tracked,
+    ...(args["purge-data"] === true ? { purgeData: true } : {}),
+  });
+
+  const apply = args["apply"] === true;
+  if (apply) {
+    for (const f of plan.files) rmSync(join(root, f), { force: true, recursive: true });
+    const done = await applyUninstall(gh, branch, plan);
+    for (const d of done) process.stdout.write(`${d}\n`);
+  }
+  process.stdout.write(`${formatPlan(plan, apply)}\n`);
+  if (!apply) {
+    process.stdout.write("\nNothing was changed. Run again with --apply to do it.\n");
+  } else {
+    process.stdout.write(
+      "\nThe files are deleted in your checkout but not committed. Commit them on a branch and open a " +
+        "pull request: they are under protected paths, so removing them is a change someone should see.\n",
+    );
+  }
   return 0;
 }
 

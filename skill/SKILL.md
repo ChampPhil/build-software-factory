@@ -67,6 +67,12 @@ command argument. A key pasted into a chat stays in that chat.
 If one does reach you, stop and say so: tell them to revoke it and issue a new
 one. That is cheap. A leaked key that nobody mentioned is not.
 
+## If they want it removed
+
+"Uninstall the software factory", "remove this", "get rid of it" — read
+`references/uninstalling.md` and do it. Do not try to talk them out of it and
+do not ask why first. The factory stops running; everything it built stays.
+
 ## Running commands on their machine
 
 **Find out which platform you are on before you run anything.** Setup runs on
