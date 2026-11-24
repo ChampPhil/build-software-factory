@@ -4,7 +4,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { staleLockFiles, runAuditCommand } from "../src/commands/audit.js";
+import { staleLockFiles, runAuditCommand, blockingFindings } from "../src/commands/audit.js";
 import type { GitHub as GitHubLike } from "../src/lib/github.js";
 
 /**
@@ -170,7 +170,7 @@ describe("a commit that arrived through a merged pull request", () => {
   // commit that no check ever reports on, so the audit has to read the head.
   const MERGE = "m".repeat(40);
   const HEAD = "h".repeat(40);
-  const gh = (headRuns: { name: string; conclusion: string }[], opts: { parents?: number; prs?: unknown } = {}): GitHubLike =>
+  const gh = (headRuns: { name: string; conclusion: string | null; status?: string }[], opts: { parents?: number; prs?: unknown } = {}): GitHubLike =>
     ({
       repo: "owner/repo",
       get: async (path: string) => {
@@ -186,7 +186,14 @@ describe("a commit that arrived through a merged pull request", () => {
       },
     }) as unknown as GitHubLike;
   const audit = (g: GitHubLike) =>
-    runAuditCommand({ gh: g, commit: MERGE, root: "/nonexistent", configuredAppLogins: ["factory-bsf[bot]"] });
+    runAuditCommand({
+      gh: g,
+      commit: MERGE,
+      root: "/nonexistent",
+      configuredAppLogins: ["factory-bsf[bot]"],
+      // The retry must not really sleep in a unit test.
+      waitMs: async () => {},
+    });
   const green = [
     { name: "factory/gates", conclusion: "success" },
     { name: "factory/policy", conclusion: "success" },
@@ -210,6 +217,63 @@ describe("a commit that arrived through a merged pull request", () => {
   it("still reports a gate that never ran on the PR at all", async () => {
     const r = await audit(gh([{ name: "factory/policy", conclusion: "success" }]));
     expect(r.findings.some((f) => f.kind === "gate_not_run" && f.detail.startsWith("factory/gates"))).toBe(true);
+  });
+
+  it("does not call a check that has not concluded a failure", async () => {
+    // The live install's factory-audit failed on every push, six for six,
+    // because factory/policy sits at in_progress forever on a private
+    // repository on GitHub Free — a check can be reported there but never
+    // required. Reading "has not concluded" as "concluded badly" meant the
+    // one signal worth having, a commit that really bypassed the gates, was
+    // buried under a red run on every merge.
+    const r = await audit(
+      gh([
+        { name: "factory/gates", conclusion: "success", status: "completed" },
+        { name: "factory/policy", conclusion: null, status: "in_progress" },
+      ]),
+    );
+    expect(r.findings.map((f) => f.kind)).not.toContain("gate_failed_but_merged");
+    expect(r.findings.some((f) => f.kind === "gate_pending" && f.detail.startsWith("factory/policy"))).toBe(true);
+    expect(blockingFindings(r.findings)).toEqual([]);
+  });
+
+  it("says it could not confirm, rather than accusing, when GitHub has not linked the PR yet", async () => {
+    // This audit is triggered by the very merge it is auditing, and GitHub
+    // links a commit to its pull request a moment later. Asking once and
+    // believing the first empty answer reported that the gates had never run
+    // on a commit whose gates had passed seconds earlier.
+    const r = await audit(gh(green, { prs: [] }));
+    expect(blockingFindings(r.findings)).toEqual([]);
+    expect(r.findings.some((f) => f.kind === "unconfirmed")).toBe(true);
+  });
+
+  it("asks again before giving up on the association", async () => {
+    let calls = 0;
+    const flaky = {
+      repo: "owner/repo",
+      get: async (path: string) => {
+        if (path === "app") throw new Error("not the App");
+        if (path.includes(`/commits/${MERGE}/check-runs`)) return { check_runs: [] };
+        if (path.includes(`/commits/${HEAD}/check-runs`)) return { check_runs: green };
+        if (path.includes(`/commits/${MERGE}/pulls`)) {
+          calls += 1;
+          // Empty the first time, as GitHub really answers just after a merge.
+          return calls === 1 ? [] : [{ number: 31, merged_at: "2026-11-22T00:00:00Z", merge_commit_sha: MERGE, head: { sha: HEAD } }];
+        }
+        if (path.includes(`/commits/${MERGE}`)) return { parents: [{ sha: "p0" }], commit: { message: "Squash" } };
+        if (path.startsWith("search/issues")) return { total_count: 0, items: [] };
+        throw new Error(`unexpected ${path}`);
+      },
+    } as unknown as GitHubLike;
+    const r = await audit(flaky);
+    expect(calls).toBeGreaterThan(1);
+    expect(blockingFindings(r.findings)).toEqual([]);
+    expect(r.findings.map((f) => f.kind)).not.toContain("gate_not_run");
+  });
+
+  it("a real bypass still fails the audit", async () => {
+    const r = await audit(gh([{ name: "factory/gates", conclusion: "failure", status: "completed" }, { name: "factory/policy", conclusion: "success", status: "completed" }]));
+    expect(blockingFindings(r.findings).map((f) => f.kind)).toContain("gate_failed_but_merged");
   });
 
   it("still reports a one-parent commit that no merged PR brought in", async () => {

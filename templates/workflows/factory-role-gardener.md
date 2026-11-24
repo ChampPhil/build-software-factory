@@ -84,6 +84,18 @@ network:
     - java
     - dotnet
     - playwright
+    # Asset CDNs. A hand-written page usually front-loads its library from
+    # one of these, and a page whose library is refused renders blank: in the
+    # first live install a p5.js game lost p5 to the proxy, the canvas never
+    # appeared, and every screenshot the factory attached was a picture of
+    # nothing. Read-only asset hosts, and narrower than the package registries
+    # already allowed above. Hosts particular to a repo are added at setup from
+    # `bsf scan-asset-hosts`.
+    - cdnjs.cloudflare.com
+    - cdn.jsdelivr.net
+    - unpkg.com
+    - fonts.googleapis.com
+    - fonts.gstatic.com
 
 sandbox:
   agent:

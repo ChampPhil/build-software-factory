@@ -15,7 +15,8 @@ import { runMergeCommand } from "./commands/merge-run.js";
 import { runGardenCommand } from "./commands/garden.js";
 import { runConflictsCommand } from "./commands/conflicts.js";
 import { runSyncCommand } from "./commands/sync-settings.js";
-import { runAuditCommand } from "./commands/audit.js";
+import { runAuditCommand, blockingFindings } from "./commands/audit.js";
+import { scanAssetHosts } from "./commands/asset-hosts.js";
 import { byFileOf } from "./commands/gates.js";
 import { parseYaml } from "./lib/yaml.js";
 import type { CandidatesFile } from "./lib/types.js";
@@ -163,6 +164,8 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
       Apply branch protection from factory.yaml. Adds checks, never removes.
 
   bsf audit [--commit SHA]
+  bsf scan-asset-hosts [--root DIR]
+      The external hosts this repo's own pages load, for the sandbox allowlist.
       After a push to main: did anything reach main without passing the gates,
       and is every compiled role workflow current with its source?
 
@@ -203,6 +206,8 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
   bsf write-triage WORK_ITEM --from PATH
   bsf guardrails record [--out PATH]
   bsf run status WORK_ITEM
+  bsf run announce WORK_ITEM
+      Make sure a run that produced no PR still told the author why.
   bsf run closed --pr N --merged true|false
   bsf run drop --items ID[,ID...] --why TEXT
   bsf spec check --file PATH [--pipeline P]
@@ -459,6 +464,8 @@ async function main(argv: readonly string[]): Promise<number> {
 
     case "audit":
       return auditCommand(args);
+    case "scan-asset-hosts":
+      return scanAssetHostsCommand(args);
 
     case "consistency":
       return consistencyCommand(args);
@@ -1333,6 +1340,15 @@ async function runCommand(second: string | undefined, args: Args, third?: string
     return 0;
   }
 
+  if (second === "announce") {
+    // `bsf run announce WORK_ITEM`: the safety net that makes sure a run which
+    // ended without a PR still said something to whoever asked for it.
+    if (third === undefined) die("usage: bsf run announce WORK_ITEM");
+    const { announceTerminalState } = await import("./commands/run-lifecycle.js");
+    process.stdout.write(`${await announceTerminalState(new GitHub({ repo: requireRepo() }), third)}\n`);
+    return 0;
+  }
+
   if (second === "start") {
     // `bsf run start WORK_ITEM --attempt N [--escalate true] [--first-step ROLE]`
     if (third === undefined) die("usage: bsf run start WORK_ITEM [--attempt N] [--escalate true]");
@@ -1865,6 +1881,26 @@ async function syncCommand(args: Args): Promise<number> {
   return 0;
 }
 
+/**
+ * `bsf scan-asset-hosts` — the hosts the repo's front end loads at runtime.
+ *
+ * These go in `.factory/sandbox/research-domains.txt`, which setup folds into
+ * every role's `network.allowed`. Without them the sandbox proxy refuses the
+ * CDN an app front-loads, the page renders blank, and every screenshot the
+ * factory attaches is a picture of nothing.
+ */
+function scanAssetHostsCommand(args: Args): number {
+  const root = typeof args["root"] === "string" ? args["root"] : process.cwd();
+  const scan = scanAssetHosts(root);
+  if (args["why"] === true || args["why"] === "true") {
+    for (const h of scan.hosts) process.stdout.write(`${h}\t${scan.where[h] ?? ""}\n`);
+  } else {
+    for (const h of scan.hosts) process.stdout.write(`${h}\n`);
+  }
+  process.stderr.write(`${scan.hosts.length} host(s) across ${scan.filesRead} file(s)\n`);
+  return 0;
+}
+
 async function auditCommand(args: Args): Promise<number> {
   const gh = new GitHub({ repo: requireRepo() });
   const commit = typeof args["commit"] === "string" ? args["commit"] : headSha();
@@ -1875,12 +1911,19 @@ async function auditCommand(args: Args): Promise<number> {
     configuredAppLogins: appLogins(),
   });
   for (const c of report.checked) process.stdout.write(`checked: ${c}\n`);
-  if (report.findings.length === 0) {
+  const blocking = blockingFindings(report.findings);
+  // Everything is reported; only a finding that means something really got
+  // past the gates fails the run. A check that has not concluded, and a
+  // lookup GitHub had not caught up with, are both normal.
+  for (const f of report.findings) {
+    const out = blocking.includes(f) ? process.stderr : process.stdout;
+    out.write(`${f.kind}: ${f.detail}\n`);
+  }
+  setOutput("findings", String(blocking.length));
+  if (blocking.length === 0) {
     process.stdout.write(`${commit.slice(0, 8)} passed every gate it should have\n`);
     return 0;
   }
-  for (const f of report.findings) process.stderr.write(`${f.kind}: ${f.detail}\n`);
-  setOutput("findings", String(report.findings.length));
   return 1;
 }
 
