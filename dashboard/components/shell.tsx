@@ -12,6 +12,7 @@ import { completeGithubLogin, needsRefresh, refreshSession, REFRESH_MARGIN_MS } 
 import { GitHubClient } from "@/lib/github";
 import { useClient, useLedger } from "@/lib/data";
 import { SignIn } from "@/components/sign-in";
+import { Landing } from "@/components/landing";
 import { NewRequest } from "@/components/request";
 import { BrandCredit } from "@/components/brand-credit";
 
@@ -141,6 +142,7 @@ export function Shell({ children }: { children: ReactNode }) {
   const client = useClient(auth);
   const ledger = useLedger(client);
   const [composing, setComposing] = useState(false);
+  const [wantsSignIn, setWantsSignIn] = useState(false);
 
   const openCount = ledger.state === "ready" ? (ledger.data?.open.length ?? 0) : null;
   const queueCount = ledger.state === "ready" ? (ledger.data?.merge_queue.length ?? 0) : null;
@@ -160,6 +162,29 @@ export function Shell({ children }: { children: ReactNode }) {
   }
 
   if (session === null) {
+    // Two audiences, told apart by the link rather than by a guess about
+    // where somebody came from. A link that names a repository is the one
+    // setup hands over, so that person wants the sign-in and nothing else.
+    // Anybody else arrived at the root because a friend sent it, and wants to
+    // know what this is before giving an agent commit rights.
+    const handedOver =
+      typeof window !== "undefined" &&
+      (new URL(window.location.href).searchParams.get("repo") !== null ||
+        window.location.pathname.replace(/\/+$/, "") !== "" ||
+        resume !== null ||
+        notice !== null);
+    if (!handedOver && !wantsSignIn) {
+      return (
+        <Landing
+          onSignIn={() => setWantsSignIn(true)}
+          onDemo={() => {
+            setResume(null);
+            setNotice(null);
+            setSession(startDemo());
+          }}
+        />
+      );
+    }
     return (
       <div className="main" style={{ maxWidth: 560 }}>
         <SignIn

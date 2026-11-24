@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useBrainstorm } from "@/lib/data";
 import type { GitHubClient } from "@/lib/github";
 import { buildRequest, REQUEST_KINDS, type FirstRequest, type RequestKind } from "@/lib/request";
 import { waitingFor, type Waiting } from "@/lib/questions";
@@ -137,6 +138,7 @@ export function QuestionList({
         const question = issue === null ? null : (questions[issue] ?? null);
         return (
           <div className="row needs" key={item.work_item} style={{ display: "block" }}>
+            <Thread client={client} workItem={item.work_item} />
             <div className="row-title">{question ?? "The factory has a question about this request."}</div>
             <div className="row-meta">
               <span className="mono">{item.work_item}</span>
@@ -172,6 +174,46 @@ export function QuestionList({
           </div>
         );
       })}
+    </div>
+  );
+}
+
+
+/**
+ * What has already been said about this request.
+ *
+ * Answering a question with no sight of the conversation it belongs to is how
+ * people end up repeating themselves, or answering a question the factory
+ * stopped caring about two turns ago. The last exchange is shown by default
+ * and the rest opens, because the useful context is usually the most recent
+ * thing.
+ */
+function Thread({ client, workItem }: { client: GitHubClient; workItem: string }) {
+  const convo = useBrainstorm(client, workItem);
+  const [all, setAll] = useState(false);
+  if (convo.state !== "ready" || convo.data === null || convo.data.turns.length === 0) return null;
+
+  const turns = convo.data.turns;
+  const shown = all ? turns : turns.slice(-2);
+  return (
+    <div className="thread">
+      {!all && turns.length > shown.length && (
+        <button className="thread-more" onClick={() => setAll(true)}>
+          {turns.length - shown.length} earlier turn{turns.length - shown.length === 1 ? "" : "s"}
+        </button>
+      )}
+      {shown.map((t, i) => (
+        <div className={t.who === "factory" ? "turn factory" : "turn person"} key={`${t.at}-${i}`}>
+          <span className="turn-who">{t.who === "factory" ? "The factory" : "You"}</span>
+          <p>{t.text}</p>
+        </div>
+      ))}
+      {convo.data.understood !== null && (
+        <div className="turn understood">
+          <span className="turn-who">What it has understood so far</span>
+          <p>{convo.data.understood}</p>
+        </div>
+      )}
     </div>
   );
 }
