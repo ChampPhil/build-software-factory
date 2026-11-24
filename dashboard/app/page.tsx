@@ -57,7 +57,7 @@ export default function Home() {
       live = false;
       clearInterval(id);
     };
-  }, [client]);
+  }, [client, version]);
 
   const factoryPrs = (pulls ?? []).filter((p) => p.labels.some((l) => l.name.startsWith("factory:")));
   const toApprove = factoryPrs.filter((p) => p.draft || p.labels.some((l) => l.name === "factory:cleared"));
