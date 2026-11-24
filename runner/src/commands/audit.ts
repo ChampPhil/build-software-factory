@@ -23,6 +23,8 @@ export interface AuditOptions {
   readonly workflowsDir?: string;
   /** FACTORY_APP_LOGINS as configured, for the rename check below. */
   readonly configuredAppLogins?: readonly string[];
+  /** Injected by the tests so the retry below does not really sleep. */
+  readonly waitMs?: (ms: number) => Promise<void>;
 }
 
 export type AuditFinding =
@@ -30,6 +32,8 @@ export type AuditFinding =
   | { readonly kind: "direct_push"; readonly detail: string }
   | { readonly kind: "gate_not_run"; readonly detail: string }
   | { readonly kind: "gate_failed_but_merged"; readonly detail: string }
+  | { readonly kind: "gate_pending"; readonly detail: string }
+  | { readonly kind: "unconfirmed"; readonly detail: string }
   | { readonly kind: "lock_file_stale"; readonly detail: string }
   | { readonly kind: "lock_file_missing"; readonly detail: string };
 
@@ -56,6 +60,47 @@ interface AssociatedPr {
 interface CheckRun {
   readonly name: string;
   readonly conclusion: string | null;
+  readonly status?: string;
+}
+
+/**
+ * Findings that mean something actually got past the gates. The rest are
+ * things the audit could not establish, or states that are normal and outside
+ * the repo's control — they are reported, but they do not fail the run and
+ * they never open a revert PR.
+ *
+ * The distinction is the whole point of this command. `factory/policy` never
+ * completes on a private repo on GitHub Free, so treating a check that has not
+ * concluded as a check that failed made factory-audit fail on every single
+ * push — six for six on the first live install — and the one signal that a
+ * commit really had bypassed the gates was buried in noise nobody could act
+ * on.
+ */
+const BLOCKING_KINDS = new Set(["direct_push", "gate_failed_but_merged", "gate_not_run", "app_login_stale", "stale_lock"]);
+
+export function blockingFindings(findings: readonly AuditFinding[]): readonly AuditFinding[] {
+  return findings.filter((f) => BLOCKING_KINDS.has(f.kind));
+}
+
+/**
+ * Ask again when the first answer is the "not yet" one. GitHub links a commit
+ * to its pull request a moment after the merge, and this audit is triggered by
+ * that merge, so the first read is a coin flip.
+ */
+async function retrying<T>(
+  get: () => Promise<T>,
+  good: (v: T | null) => boolean,
+  wait: (ms: number) => Promise<void>,
+  delays: readonly number[] = [1500, 3000, 6000],
+): Promise<T | null> {
+  let last: T | null = await get().catch(() => null);
+  if (good(last)) return last;
+  for (const ms of delays) {
+    await wait(ms);
+    last = await get().catch(() => null);
+    if (good(last)) return last;
+  }
+  return last;
 }
 
 export async function runAuditCommand(opts: AuditOptions): Promise<AuditReport> {
@@ -76,9 +121,19 @@ export async function runAuditCommand(opts: AuditOptions): Promise<AuditReport> 
   // The pull requests that brought this commit to main. A merge, squash or
   // rebase commit is a new commit, so the gates ran on the PR's head, not on
   // it. The search above matches only a PR's head, so it misses all three.
-  const associated = await opts.gh
-    .get<readonly AssociatedPr[]>(`repos/${opts.gh.repo}/commits/${opts.commit}/pulls?per_page=20`)
-    .catch(() => null);
+  // Retried, because this audit runs on `push` — seconds after the merge that
+  // created the commit — and GitHub's commit-to-PR association is eventually
+  // consistent. Asking once and taking the first empty answer made the audit
+  // report that the gates had never run on a commit whose gates had passed
+  // half a minute earlier.
+  // Only an empty list is worth asking again about: that is GitHub's "not
+  // linked yet". An error means the question cannot be answered at all, and
+  // repeating it just adds latency to a run that is already failing.
+  const associated = await retrying(
+    () => opts.gh.get<readonly AssociatedPr[]>(`repos/${opts.gh.repo}/commits/${opts.commit}/pulls?per_page=20`),
+    (v) => !(Array.isArray(v) && v.length === 0),
+    opts.waitMs ?? ((ms) => new Promise((r) => setTimeout(r, ms))),
+  );
   const assocList: readonly AssociatedPr[] = Array.isArray(associated) ? (associated as readonly AssociatedPr[]) : [];
   const mergedPrs = assocList.filter((p) => p.merged_at !== null);
 
@@ -104,11 +159,39 @@ export async function runAuditCommand(opts: AuditOptions): Promise<AuditReport> 
   const exact = mergedPrs.filter((p) => p.merge_commit_sha === opts.commit);
   const heads = [...new Set((exact.length > 0 ? exact : mergedPrs).map((p) => p.head.sha).filter((h) => h !== opts.commit))];
   const viaPr: CheckRun[] = [];
-  for (const h of heads) viaPr.push(...(await fetchRuns(h).catch(() => [])));
+  let headLookupFailed = false;
+  for (const h of heads) {
+    const runs = await fetchRuns(h).catch(() => null);
+    if (runs === null) headLookupFailed = true;
+    else viaPr.push(...runs);
+  }
   for (const name of [gatesCheck, policyCheck]) {
     const run = own.find((c) => c.name === name) ?? viaPr.find((c) => c.name === name);
     if (run === undefined) {
-      findings.push({ kind: "gate_not_run", detail: `${name} never reported on ${opts.commit.slice(0, 8)}` });
+      // Only an accusation when we know where to look. If the association was
+      // never resolved, or reading the head's checks failed, the audit has
+      // established nothing — and saying "the gates never ran" in that case is
+      // how a healthy repo ends up with a red run and a revert PR.
+      if (mergedPrs.length === 0 || headLookupFailed) {
+        findings.push({
+          kind: "unconfirmed",
+          detail:
+            `could not read the checks for ${name} on ${opts.commit.slice(0, 8)} — ` +
+            `GitHub had not yet linked the commit to its pull request. Re-run this audit to confirm.`,
+        });
+      } else {
+        findings.push({ kind: "gate_not_run", detail: `${name} never reported on ${opts.commit.slice(0, 8)}` });
+      }
+    } else if (run.status !== undefined && run.status !== "completed") {
+      // Not a failure: nothing bypassed anything. `factory/policy` sits here
+      // permanently on a private repo on GitHub Free, where a check can be
+      // reported but never required, so it is reported and the audit passes.
+      findings.push({
+        kind: "gate_pending",
+        detail:
+          `${name} is still ${run.status} on ${opts.commit.slice(0, 8)}. ` +
+          `On a private repository on GitHub Free this is its normal resting state and nothing is wrong.`,
+      });
     } else if (run.conclusion !== "success" && run.conclusion !== "neutral" && run.conclusion !== "skipped") {
       findings.push({
         kind: "gate_failed_but_merged",

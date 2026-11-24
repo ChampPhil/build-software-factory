@@ -41,6 +41,9 @@ export function SignIn({
   const [auth, setAuth] = useState<AuthConfig | null | undefined>(undefined);
   // The session waiting for the app to be installed.
   const [waiting, setWaiting] = useState<Session | null>(null);
+  // A signed-in session that has no repository yet, and the choices for it.
+  const [picking, setPicking] = useState<Session | null>(null);
+  const [choices, setChoices] = useState<readonly string[] | null>(null);
 
   // A link from setup names the repository, so the first step is already done.
   useEffect(() => {
@@ -105,19 +108,47 @@ export function SignIn({
     [onSignedIn],
   );
 
+  /**
+   * Signed in, but we do not know which repository yet.
+   *
+   * Offer the ones the app is installed on. Every entry is a repository the
+   * dashboard can really open, so this is both shorter than typing and more
+   * truthful than a free-text box that accepts anything.
+   */
+  const pickRepo = useCallback(async (session: Session): Promise<void> => {
+    setPicking(session);
+    setChoices(null);
+    const names = await new GitHubClient({ token: session.token, repo: "" }).installedRepos();
+    if (names.length === 1 && names[0] !== undefined) {
+      setPicking(null);
+      await accept({ ...session, repo: names[0] });
+      return;
+    }
+    setChoices(names);
+    if (names.length === 0) {
+      setProblem(
+        "You are signed in, but the Software Factory app is not installed on any repository yet. Install it, then sign in again.",
+      );
+    }
+  }, [accept]);
+
   // GitHub has just sent the person back: finish the job.
   useEffect(() => {
-    if (resume !== null) void accept(resume);
-  }, [resume, accept]);
+    if (resume === null) return;
+    if (resume.repo === "") void pickRepo(resume);
+    else void accept(resume);
+  }, [resume, accept, pickRepo]);
 
   async function withGithub(): Promise<void> {
     setProblem(null);
     setWarning(null);
-    if (!repoOk) {
-      setProblem("Give the repository as owner/name.");
+    if (repo.trim() !== "" && !repoOk) {
+      setProblem("Give the repository as owner/name, or leave it empty and pick from a list after signing in.");
       return;
     }
     setBusy(true);
+    // An empty repository is allowed: the person picks from their installations
+    // once GitHub has sent them back.
     const started = await startGithubLogin(repo.trim(), remember);
     if (!started.ok || started.url === undefined) {
       setBusy(false);
@@ -219,17 +250,48 @@ export function SignIn({
       )}
 
       <div style={{ display: "grid", gap: 20 }}>
-        <label className="field">
-          Which repository?
-          <input
-            type="text"
-            value={repo}
-            placeholder="owner/name"
-            autoComplete="off"
-            spellCheck={false}
-            onChange={(e) => setRepo(e.target.value)}
-          />
-        </label>
+        {picking !== null && choices !== null && choices.length > 1 && (
+          <div style={{ display: "grid", gap: 10 }}>
+            <span className="field">Which repository?</span>
+            <div style={{ display: "grid", gap: 6 }}>
+              {choices.map((name) => (
+                <button
+                  key={name}
+                  className="btn"
+                  disabled={busy}
+                  style={{ justifyContent: "flex-start", textAlign: "left" }}
+                  onClick={() => {
+                    setPicking(null);
+                    void accept({ ...picking, repo: name });
+                  }}
+                >
+                  <span className="mono">{name}</span>
+                </button>
+              ))}
+            </div>
+            <span style={{ color: "var(--ink-faint)", fontSize: 12 }}>
+              These are the repositories the Software Factory app is installed on.
+            </span>
+          </div>
+        )}
+
+        {picking !== null && choices === null && (
+          <span style={{ color: "var(--ink-faint)", fontSize: 13 }}>Finding your repositories…</span>
+        )}
+
+        {picking === null && (
+          <label className="field">
+            Which repository?
+            <input
+              type="text"
+              value={repo}
+              placeholder="owner/name — or leave this and sign in to pick from a list"
+              autoComplete="off"
+              spellCheck={false}
+              onChange={(e) => setRepo(e.target.value)}
+            />
+          </label>
+        )}
 
         {waiting !== null && (
           <div className="note" style={{ display: "grid", gap: 10 }}>
@@ -256,7 +318,7 @@ export function SignIn({
         {sso && (
           <div style={{ display: "grid", gap: 12 }}>
             <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-              <button className="btn primary" onClick={() => void withGithub()} disabled={busy || waiting !== null}>
+              <button className="btn primary" onClick={() => void withGithub()} disabled={busy || waiting !== null || picking !== null}>
                 {busy && waiting === null ? "Opening GitHub…" : "Sign in with GitHub"}
               </button>
               <span style={{ color: "var(--ink-faint)", fontSize: 13 }}>or</span>

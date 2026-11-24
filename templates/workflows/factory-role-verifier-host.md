@@ -87,6 +87,18 @@ network:
     - java
     - dotnet
     - playwright
+    # Asset CDNs. A hand-written page usually front-loads its library from
+    # one of these, and a page whose library is refused renders blank: in the
+    # first live install a p5.js game lost p5 to the proxy, the canvas never
+    # appeared, and every screenshot the factory attached was a picture of
+    # nothing. Read-only asset hosts, and narrower than the package registries
+    # already allowed above. Hosts particular to a repo are added at setup from
+    # `bsf scan-asset-hosts`.
+    - cdnjs.cloudflare.com
+    - cdn.jsdelivr.net
+    - unpkg.com
+    - fonts.googleapis.com
+    - fonts.gstatic.com
 
 sandbox:
   agent:
@@ -351,10 +363,29 @@ do not start the app or source `.runtime.env` yourself.
   `.factory/sandbox/.agent.env` is the environment rewritten to use them —
   source that file when you run tests or scripts yourself. Third parties the
   app calls are stubbed for the app; your own shell cannot reach them.
-2. Work through the spec's `acceptance_checks` **one at a time**. For each, use
+2. **Check the app actually rendered, before you check anything else.** Open
+   it, then prove to yourself it is alive: the page's own root element or
+   canvas exists, and the console has no failed loads for the app's own files
+   or for a library it pulls from a CDN. A `net::ERR_CERT_AUTHORITY_INVALID`
+   or a refused host means the sandbox proxy blocked something the page needs,
+   not that the page is fine.
+
+   **If the app did not render, stop and say so.** Do not carry on checking
+   through the console and do not attach a screenshot of the blank page. A
+   picture of nothing is worse than no picture: it reads as proof, it will be
+   skimmed as proof, and it is proof of nothing. Report it as a sandbox
+   problem, name the host or file that failed, and leave the verdict
+   unverified — a sandbox that cannot run the app is a thing to fix, and the
+   factory would rather fail loudly than hand over a PR dressed in evidence
+   that shows nothing.
+
+   When a host is missing, the fix is `.factory/sandbox/research-domains.txt`:
+   say which host, so whoever reads this can add it.
+
+3. Work through the spec's `acceptance_checks` **one at a time**. For each, use
    the app the way a developer would: click through it in the browser, call the
    API, query the database. Record what you observe, not what you expect.
-3. Record the browser, and capture evidence as you go, into
+4. Record the browser, and capture evidence as you go, into
    `/tmp/gh-aw/agent/bsf/media/`.
 
    **Record every browser session.** A person reviewing this PR watches a
@@ -387,10 +418,10 @@ do not start the app or source `.runtime.env` yourself.
    - a screenshot for each acceptance check, named for the check
    - for a bug fix, the before state as well, so a reviewer sees the change
    - the console and network panels where either is relevant to the claim
-4. Try the obvious ways the change could be wrong but still look right: the
+5. Try the obvious ways the change could be wrong but still look right: the
    empty case, the error case, the second click, a reload, a different route
    into the same screen.
-5. Write your verdict, and the report a person sees on the PR.
+6. Write your verdict, and the report a person sees on the PR.
 
 ## What the PR shows
 

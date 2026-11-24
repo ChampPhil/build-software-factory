@@ -267,3 +267,32 @@ describe("renewing", () => {
     expect(f).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * Signing in without naming a repository.
+ *
+ * Nobody arrives at this dashboard cold — they arrive from the link setup
+ * hands them, which names the repository. On the first live install that link
+ * never reached the owner, and what he met instead was a text box demanding
+ * `owner/name` from memory before the sign-in button would even light up. So
+ * an empty repository is now allowed through, and the picker offers the
+ * repositories the app is actually installed on.
+ */
+describe("signing in before choosing a repository", () => {
+  it("accepts an empty repository when starting", async () => {
+    const { win } = fakeBrowser();
+    const f = vi.fn(async () => jsonRes({ authorize_url: AUTHORIZE }));
+    const r = await startGithubLogin("", false, f);
+    expect(r).toEqual({ ok: true, url: AUTHORIZE });
+    expect(win.sessionStorage.getItem("bsf.oauth.repo")).toBe("");
+  });
+
+  it("still refuses something that is not owner/name", async () => {
+    fakeBrowser();
+    const f = vi.fn(async () => jsonRes({ authorize_url: AUTHORIZE }));
+    const r = await startGithubLogin("not-a-repo", false, f);
+    expect(r.ok).toBe(false);
+    expect(r.error ?? "").toContain("owner/name");
+    expect(f).not.toHaveBeenCalled();
+  });
+});

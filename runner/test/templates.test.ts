@@ -527,6 +527,41 @@ describe("installer and the harness", () => {
     expect(cfg.models).toMatchObject({ spec: "claude-opus-5-5", builder: "claude-sonnet-5-5", verifier: "claude-haiku-5-5", triage: "claude-haiku-5-5" });
     expect(readFileSync(join(dir, ".github/workflows/factory-role-builder.md"), "utf8")).toContain("id: claude");
   });
+
+  it("stages the launcher executable in the git index, not just on disk", () => {
+    // `chmod` alone is what the first live install did, and on Windows the
+    // filesystem carries no execute bit for git to read: the file was
+    // committed 100644 and every pipeline step died with exit 126 on a Linux
+    // runner, in a step that had nothing to do with the user's change.
+    const root = repoRoot();
+    const dir = mkdtempSync(join(tmpdir(), "bsf-mode-"));
+    execFileSync("git", ["init", "-q", dir]);
+    execFileSync("node", [join(root, "skill/scripts/install-factory.mjs"), "--into", dir], { encoding: "utf8" });
+    const staged = execFileSync("git", ["-C", dir, "ls-files", "-s", "--", ".factory/bin/bsf"], { encoding: "utf8" }).trim();
+    expect(staged.split(/\s+/)[0]).toBe("100755");
+  });
+
+  it("installs a launcher for Windows beside the POSIX one", () => {
+    // Setup runs on the user's own machine, which is as often Windows as not.
+    // A `sh` script there runs as nothing and exits 0, so `bsf dashboard-link`
+    // and `bsf mine-corrections --list` both "succeeded" silently — and the
+    // skill, told never to invent a dashboard link, said nothing about the
+    // dashboard at all.
+    const root = repoRoot();
+    const dir = mkdtempSync(join(tmpdir(), "bsf-win-"));
+    execFileSync("git", ["init", "-q", dir]);
+    execFileSync("node", [join(root, "skill/scripts/install-factory.mjs"), "--into", dir], { encoding: "utf8" });
+    const cmd = readFileSync(join(dir, ".factory/bin/bsf.cmd"), "utf8");
+    expect(cmd.startsWith("@echo off")).toBe(true);
+    // `cmd` mis-parses a batch file whose lines end with LF alone.
+    expect(cmd).toContain("\r\n");
+    expect(cmd).not.toMatch(/[^\r]\n/);
+    // Both launchers must unpack the same runner.
+    const sh = readFileSync(join(dir, ".factory/bin/bsf"), "utf8");
+    const digest = /bsf-([0-9a-f]{12})/.exec(sh)?.[1];
+    expect(digest, "the POSIX launcher names a cache directory").toBeDefined();
+    expect(cmd).toContain(`bsf-${digest ?? ""}`);
+  });
 });
 
 describe("the budget in the workflows", () => {

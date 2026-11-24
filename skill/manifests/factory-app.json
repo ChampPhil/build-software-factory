@@ -8,19 +8,23 @@
     "not requested cannot be granted. That is what stops the factory editing",
     ".github/workflows and so tampering with the gates that judge it.",
     "",
-    "{{REPO_URL}} and {{REDIRECT_URL}} are substituted by create-app.mjs."
+    "{{REPO_URL}} and {{REDIRECT_URL}} are substituted by create-app.mjs.",
+    "",
+    "{{SETUP_URL}} is where GitHub sends the user after they install the App;",
+    "create-app.mjs serves it, so the script notices the install and continues."
   ],
   "name": "Build Software Factory",
   "url": "{{REPO_URL}}",
   "description": "Runs the software factory on this repository: opens draft PRs, reports gate results, and labels and comments on issues. Cannot edit workflows.",
   "public": false,
   "redirect_url": "{{REDIRECT_URL}}",
+  "setup_url": "{{SETUP_URL}}",
+  "setup_on_update": false,
   "hook_attributes": {
     "url": "{{REPO_URL}}",
     "active": false
   },
   "request_oauth_on_install": false,
-  "setup_on_update": false,
   "default_events": [],
   "default_permissions": {
     "contents": "write",

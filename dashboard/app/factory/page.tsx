@@ -5,7 +5,7 @@ import { readSession } from "@/lib/session";
 import { useClient, useFactorySettings, useIndex, useStandingGoals, useWriters } from "@/lib/data";
 import { AskFactory, SettingsPanel, WhoCanStart } from "@/components/settings";
 import { StandingGoals } from "@/components/routing";
-import { PageHead, Section, Dot } from "@/components/primitives";
+import { PageHead, Section, Dot, AsOf } from "@/components/primitives";
 import { EmptyFactoryNote } from "@/components/empty-factory";
 
 /**
@@ -36,6 +36,8 @@ export default function Factory() {
         title="Factory"
         lede="How this factory is set up. Change a setting here and it is saved in one step; every change is still a commit with your name on it."
       />
+
+      <AsOf at={data?.updated_at} />
 
       {data === null && index.state === "ready" && (
         <EmptyFactoryNote installed={settings.state === "ready" ? settings.data !== null : null} />
@@ -131,7 +133,7 @@ export default function Factory() {
 
           {client !== null && settings.state === "ready" && settings.data !== null && (
             <Section title="Settings" lede="Changes save in one step, as you. The factory's own check still has to pass.">
-              <SettingsPanel client={client} yaml={settings.data} onApplied={() => setVersion((v) => v + 1)} />
+              <SettingsPanel client={client} yaml={settings.data} onApplied={() => setVersion((v) => v + 1)} enforcement={health?.enforcement ?? null} />
             </Section>
           )}
 

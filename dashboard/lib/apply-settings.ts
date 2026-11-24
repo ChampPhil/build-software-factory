@@ -33,6 +33,17 @@ export interface ApplyOptions {
   readonly pollMs?: number;
   /** How long to wait for the policy check before leaving the PR open. */
   readonly waitMs?: number;
+  /**
+   * The repo's enforcement mode, from `index.health.enforcement`.
+   *
+   * On `audit` — a private repository on GitHub Free — a check can be reported
+   * but never required, and `factory/policy` therefore sits at `in_progress`
+   * for ever. Waiting two minutes for it to finish and then saying "the check
+   * has not finished yet" is how a saved setting looked like a setting that
+   * had silently failed: the dashboard went on showing the old value with
+   * nothing explaining why. When this says `audit`, say so at once instead.
+   */
+  readonly enforcement?: "branch_protection" | "audit" | null;
 }
 
 const POLICY_CHECK = "factory/policy";
@@ -119,6 +130,19 @@ export async function applySettingsChange(
     await client.addLabels(pr.number, [SETTINGS_LABEL]);
     // GitHub's own clock for when the label landed: a check that finished before it ran without the label.
     const labelled = (await client.get<{ updated_at: string }>(`repos/${repo}/pulls/${pr.number}`)).updated_at;
+    const url = pr.html_url;
+
+    if (opts.enforcement === "audit") {
+      return {
+        status: "open",
+        pr: pr.number,
+        url,
+        reason:
+          "Saved as a pull request. This repository is on GitHub Free and private, " +
+          "so required checks are unavailable and the factory cannot merge this for you — " +
+          "merge the pull request and the setting takes effect.",
+      };
+    }
 
     stage("checking");
     const deadline = Date.now() + waitMs;
@@ -133,7 +157,6 @@ export async function applySettingsChange(
       if (mine !== undefined) { verdict = "failure"; failureText = mine.conclusion ?? "failure"; break; }
       await sleep(pollMs);
     }
-    const url = pr.html_url;
     if (verdict === "failure") {
       return { status: "open", pr: pr.number, url, reason: `The factory's check did not pass this (${failureText}). It stays open as a pull request for a person to review.` };
     }

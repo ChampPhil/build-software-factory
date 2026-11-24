@@ -116,6 +116,10 @@
         "needs_info"
       ]
     },
+    "triage_reason": {
+      "type": "string",
+      "description": "Why triage ended the run, in the words the author is shown. Set for needs_info (the question), out_of_scope and duplicate. The factory posts this to the source thread itself, and a job that runs whatever happened to the roles reads it back \u2014 so a run whose role died still tells whoever asked for it what became of their request."
+    },
     "runs": {
       "type": "array",
       "items": {

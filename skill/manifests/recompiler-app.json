@@ -1,7 +1,7 @@
 {
   "_comment": [
-    "Manifest for the recompiler App (spike §5). Deliberately minimal: it can",
-    "change files and nothing else — it cannot approve, merge, label or",
+    "Manifest for the recompiler App (spike \u00a75). Deliberately minimal: it can",
+    "change files and nothing else \u2014 it cannot approve, merge, label or",
     "administer. Its one job is to run `gh aw compile` in Actions and open a",
     "PR with the regenerated .lock.yml files.",
     "",
@@ -11,19 +11,23 @@
     "like any other, which fails any PR touching .github/workflows until a",
     "trusted human approves.",
     "",
-    "Optional. A user who declines gets the skill's repair mode instead."
+    "Optional. A user who declines gets the skill's repair mode instead.",
+    "",
+    "{{SETUP_URL}} is where GitHub sends the user after they install the App;",
+    "create-app.mjs serves it, so the script notices the install and continues."
   ],
   "name": "Build Software Factory Recompiler",
   "url": "{{REPO_URL}}",
   "description": "Recompiles the factory's gh-aw workflow lock files and opens a pull request. Cannot approve, merge or administer anything.",
   "public": false,
   "redirect_url": "{{REDIRECT_URL}}",
+  "setup_url": "{{SETUP_URL}}",
+  "setup_on_update": false,
   "hook_attributes": {
     "url": "{{REPO_URL}}",
     "active": false
   },
   "request_oauth_on_install": false,
-  "setup_on_update": false,
   "default_events": [],
   "default_permissions": {
     "contents": "write",

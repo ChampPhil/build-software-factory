@@ -15,7 +15,8 @@ import { runMergeCommand } from "./commands/merge-run.js";
 import { runGardenCommand } from "./commands/garden.js";
 import { runConflictsCommand } from "./commands/conflicts.js";
 import { runSyncCommand } from "./commands/sync-settings.js";
-import { runAuditCommand } from "./commands/audit.js";
+import { runAuditCommand, blockingFindings } from "./commands/audit.js";
+import { scanAssetHosts } from "./commands/asset-hosts.js";
 import { byFileOf } from "./commands/gates.js";
 import { parseYaml } from "./lib/yaml.js";
 import type { CandidatesFile } from "./lib/types.js";
@@ -162,7 +163,11 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
   bsf sync-settings [--branch NAME] [--apply]
       Apply branch protection from factory.yaml. Adds checks, never removes.
 
+  bsf attribution
+      The credit line, as Markdown, from the one place it is defined.
   bsf audit [--commit SHA]
+  bsf scan-asset-hosts [--root DIR]
+      The external hosts this repo's own pages load, for the sandbox allowlist.
       After a push to main: did anything reach main without passing the gates,
       and is every compiled role workflow current with its source?
 
@@ -203,6 +208,8 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
   bsf write-triage WORK_ITEM --from PATH
   bsf guardrails record [--out PATH]
   bsf run status WORK_ITEM
+  bsf run announce WORK_ITEM
+      Make sure a run that produced no PR still told the author why.
   bsf run closed --pr N --merged true|false
   bsf run drop --items ID[,ID...] --why TEXT
   bsf spec check --file PATH [--pipeline P]
@@ -284,7 +291,7 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
       It is a static export that talks to GitHub from your browser, so there
       is nothing else to run and no server sees your token.
 
-  bsf doctor [--root PATH] [--repo OWNER/REPO] [--json]
+  bsf doctor [--root PATH] [--repo OWNER/REPO] [--json] [--quiet]
       What is wrong with an installed factory: missing definition, role or
       context files, a guardrail file that no longer validates, a missing
       workflow, a lock file too stale for gh-aw to run, and — with --repo — a
@@ -457,8 +464,16 @@ async function main(argv: readonly string[]): Promise<number> {
     case "sync-settings":
       return syncCommand(args);
 
+    case "attribution":
+      // One place for the credit line, so every surface that shows it — the
+      // dashboard, the setup PR, the bootstrap PR — says the same thing, and a
+      // product added to PRODUCTS reaches all of them.
+      process.stdout.write(`${(await import("./lib/brand.js")).attributionMarkdown()}\n`);
+      return 0;
     case "audit":
       return auditCommand(args);
+    case "scan-asset-hosts":
+      return scanAssetHostsCommand(args);
 
     case "consistency":
       return consistencyCommand(args);
@@ -1333,6 +1348,15 @@ async function runCommand(second: string | undefined, args: Args, third?: string
     return 0;
   }
 
+  if (second === "announce") {
+    // `bsf run announce WORK_ITEM`: the safety net that makes sure a run which
+    // ended without a PR still said something to whoever asked for it.
+    if (third === undefined) die("usage: bsf run announce WORK_ITEM");
+    const { announceTerminalState } = await import("./commands/run-lifecycle.js");
+    process.stdout.write(`${await announceTerminalState(new GitHub({ repo: requireRepo() }), third)}\n`);
+    return 0;
+  }
+
   if (second === "start") {
     // `bsf run start WORK_ITEM --attempt N [--escalate true] [--first-step ROLE]`
     if (third === undefined) die("usage: bsf run start WORK_ITEM [--attempt N] [--escalate true]");
@@ -1865,6 +1889,26 @@ async function syncCommand(args: Args): Promise<number> {
   return 0;
 }
 
+/**
+ * `bsf scan-asset-hosts` — the hosts the repo's front end loads at runtime.
+ *
+ * These go in `.factory/sandbox/research-domains.txt`, which setup folds into
+ * every role's `network.allowed`. Without them the sandbox proxy refuses the
+ * CDN an app front-loads, the page renders blank, and every screenshot the
+ * factory attaches is a picture of nothing.
+ */
+function scanAssetHostsCommand(args: Args): number {
+  const root = typeof args["root"] === "string" ? args["root"] : process.cwd();
+  const scan = scanAssetHosts(root);
+  if (args["why"] === true || args["why"] === "true") {
+    for (const h of scan.hosts) process.stdout.write(`${h}\t${scan.where[h] ?? ""}\n`);
+  } else {
+    for (const h of scan.hosts) process.stdout.write(`${h}\n`);
+  }
+  process.stderr.write(`${scan.hosts.length} host(s) across ${scan.filesRead} file(s)\n`);
+  return 0;
+}
+
 async function auditCommand(args: Args): Promise<number> {
   const gh = new GitHub({ repo: requireRepo() });
   const commit = typeof args["commit"] === "string" ? args["commit"] : headSha();
@@ -1875,12 +1919,19 @@ async function auditCommand(args: Args): Promise<number> {
     configuredAppLogins: appLogins(),
   });
   for (const c of report.checked) process.stdout.write(`checked: ${c}\n`);
-  if (report.findings.length === 0) {
+  const blocking = blockingFindings(report.findings);
+  // Everything is reported; only a finding that means something really got
+  // past the gates fails the run. A check that has not concluded, and a
+  // lookup GitHub had not caught up with, are both normal.
+  for (const f of report.findings) {
+    const out = blocking.includes(f) ? process.stderr : process.stdout;
+    out.write(`${f.kind}: ${f.detail}\n`);
+  }
+  setOutput("findings", String(blocking.length));
+  if (blocking.length === 0) {
     process.stdout.write(`${commit.slice(0, 8)} passed every gate it should have\n`);
     return 0;
   }
-  for (const f of report.findings) process.stderr.write(`${f.kind}: ${f.detail}\n`);
-  setOutput("findings", String(report.findings.length));
   return 1;
 }
 
@@ -2265,13 +2316,21 @@ async function doctorCommand(args: Args): Promise<number> {
     ...(repo === undefined ? {} : { gh: new GitHub({ repo }) }),
   });
 
+  const broken = report.findings.filter((f) => f.severity === "broken").length;
+  // `--quiet` is for a workflow that only wants the verdict: the exit code
+  // gates whether a run worth minutes of agent time should start at all.
+  if (args["quiet"] === true) {
+    setOutput("broken", String(broken));
+    setOutput("installed", String(report.installed));
+    return broken > 0 ? 1 : 0;
+  }
+
   if (args["json"] === true) {
     process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
   } else {
     process.stdout.write(`${formatReport(report)}\n`);
   }
 
-  const broken = report.findings.filter((f) => f.severity === "broken").length;
   setOutput("broken", String(broken));
   setOutput("installed", String(report.installed));
   // A factory that is simply not installed is not a failure to report: the
@@ -2951,6 +3010,11 @@ async function mineCommand(args: Args): Promise<number> {
         `  ${(s.at ?? "unknown date").slice(0, 10)}  ${s.source.padEnd(10)} ${s.session}\n` +
           `${s.opening === "" ? "" : `      ${s.opening}\n`}`,
       );
+    }
+    // An empty result said nothing at all, which reads as a command that
+    // failed rather than a repo with no past agent sessions to read.
+    if (listing.sessions.length === 0) {
+      process.stdout.write("No past agent sessions found for this repository, so there is nothing to mine.\n");
     }
     setOutput("sessions", String(listing.sessions.length));
     return 0;

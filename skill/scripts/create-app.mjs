@@ -22,9 +22,9 @@
  */
 
 import { createServer } from "node:http";
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { randomBytes } from "node:crypto";
 import { spawn, execFileSync } from "node:child_process";
 
@@ -130,7 +130,22 @@ export const APP_NAME_MAX = 34;
  * is the part to protect: shorten the prefix until the whole suffix fits, and
  * only cut into the repo as a last resort, keeping the paren either way.
  */
-export function appName(base, slug) {
+/**
+ * GitHub accepts letters, numbers, spaces, hyphens and the parentheses we add;
+ * an underscore is rejected outright. A repository name may hold anything, so
+ * the slug is cleaned before it goes anywhere near the name — otherwise the
+ * default name is refused on the Create page with nothing explaining why, and
+ * the user is left editing a field they were not told they could edit.
+ */
+export function slugForAppName(slug) {
+  return slug
+    .replace(/[^A-Za-z0-9 -]+/g, "-")
+    .replace(/-{2,}/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+export function appName(base, rawSlug) {
+  const slug = slugForAppName(rawSlug);
   const prefixes = /recompiler/i.test(base)
     ? ["Factory Recompiler", "Recompiler", "Recomp"]
     : ["Build Software Factory", "Software Factory", "Factory"];
@@ -144,7 +159,8 @@ export function appName(base, slug) {
   // cut the repo rather than the structure.
   const shortest = prefixes[prefixes.length - 1];
   const room = APP_NAME_MAX - shortest.length - " ()".length;
-  return `${shortest} (${slug.slice(0, Math.max(1, room))})`;
+  const cut = slug.slice(0, Math.max(1, room)).replace(/-+$/, "");
+  return `${shortest} (${cut === "" ? slug.slice(0, 1) : cut})`;
 }
 
 function escapeHtml(s) {
@@ -160,8 +176,15 @@ function buildManifest({ recompiler, repo, redirectUrl }) {
   delete manifest._comment;
 
   const repoUrl = `https://github.com/${repo}`;
+  // GitHub sends the user to `setup_url` after they install the App, which is
+  // what lets this script notice the install and carry on by itself. Without
+  // it the user is left sitting on GitHub's "all set" page with no idea that
+  // anything is waiting on them.
+  const setupUrl = redirectUrl.replace(/\/callback$/, "/installed");
   const substitute = (v) =>
-    typeof v === "string" ? v.replace("{{REPO_URL}}", repoUrl).replace("{{REDIRECT_URL}}", redirectUrl) : v;
+    typeof v === "string"
+      ? v.replace("{{REPO_URL}}", repoUrl).replace("{{REDIRECT_URL}}", redirectUrl).replace("{{SETUP_URL}}", setupUrl)
+      : v;
 
   for (const [k, v] of Object.entries(manifest)) {
     if (typeof v === "string") manifest[k] = substitute(v);
@@ -198,12 +221,27 @@ code{background:#f4f4f5;padding:.1rem .3rem;border-radius:3px}button{font:inheri
 <h1>Creating the factory's GitHub App</h1>
 <p>Sending you to GitHub. You will see a page with the name already filled in — press
 <strong>Create GitHub App</strong>, and you will land back here.</p>
+<p><strong>The name is yours to change.</strong> It only has to be unique across GitHub.
+If you edit it, GitHub allows letters, numbers, spaces and hyphens, up to
+<strong>34 characters</strong> — no underscores. Those two rules are the only reason a
+name is ever refused on that page.</p>
 <form id="f" method="post" action="${action}">
   <input type="hidden" name="manifest" value="${json}">
   <input type="hidden" name="state" value="${escapeHtml(state)}">
   <noscript><button type="submit">Continue to GitHub</button></noscript>
 </form>
 <script>document.getElementById('f').submit();</script>
+</body></html>`;
+}
+
+function installedPage() {
+  return `<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>Installed</title>
+<style>body{font:16px/1.6 system-ui,sans-serif;max-width:34rem;margin:4rem auto;padding:0 1.5rem;color:#111}</style>
+</head><body>
+<h1>Installed</h1>
+<p>That was the last thing here that needed you. You can close this tab — setup is
+carrying on where you left it.</p>
 </body></html>`;
 }
 
@@ -306,27 +344,83 @@ async function main() {
     log(`Run the same command without --preview to create the ${kind} App.`);
     return;
   }
-  storeCredentials({ repo: args.repo, kind, app: result, dryRun: false });
+  const app = result.app;
+  storeCredentials({ repo: args.repo, kind, app, dryRun: false });
 
   log("");
-  log(`✓ ${result.name} created, and its credentials stored on ${args.repo}.`);
+  log(`✓ ${app.name} created, and its credentials stored on ${args.repo}.`);
   log("");
   log("  Stored as repository secrets and variables:");
   for (const line of storedNames(kind)) log(`    ${line}`);
-  log("");
-  log(`  Install it here, picking ${args.repo}:`);
-  log(`    ${result.html_url}/installations/new`);
   log("");
   if (!args.recompiler) {
     log("  The App deliberately has no `workflows` permission, so it cannot edit");
     log("  .github/workflows and cannot tamper with the gates that judge its work.");
     log("");
   }
+
+  // The App exists; it is not installed on the repository yet, and nothing
+  // works until it is. This used to be where the user was handed a URL and
+  // left: they pressed Install on GitHub, landed on GitHub's own "all set"
+  // page, and had no way of knowing that anything was still waiting on them.
+  const installUrl = `${app.html_url}/installations/new`;
+  log(`  One step left: install it on ${args.repo}.`);
+  if (openBrowser(installUrl)) log("  Opening your browser. Pick the repository, then press Install.");
+  else log(`  Open this and pick ${args.repo}:\n    ${installUrl}`);
+  log("");
+  log("  Waiting for the install… (this continues by itself)");
+
+  const confirmed = await waitForInstall({ repo: args.repo, installedAt: result.installedAt });
+  result.close();
+
+  if (!confirmed) {
+    fail(
+      `the App was created and its credentials stored, but it is not installed on ${args.repo} yet. ` +
+        `Install it at ${installUrl}, then run this command again — it will see the existing App.`,
+    );
+  }
+  log("");
+  log(`✓ installed on ${args.repo}. Nothing else here needs you.`);
+}
+
+/**
+ * Wait until the App is installed on the repository.
+ *
+ * Two routes, because either one alone has a hole: GitHub's setup_url redirect
+ * only arrives if the user finishes in this browser, and polling alone would
+ * make a user who did everything right wait out a poll interval. Whichever
+ * answers first wins.
+ */
+async function waitForInstall({ repo, installedAt, everyMs = 4000, forMs = 15 * 60 * 1000 }) {
+  const deadline = Date.now() + forMs;
+  let redirected = false;
+  void installedAt.then(() => {
+    redirected = true;
+  });
+  while (Date.now() < deadline) {
+    if (gh(["api", `repos/${repo}/installation`, "--jq", ".id"], { allowFail: true })) return true;
+    if (redirected) {
+      // The redirect landed but the API has not caught up; give it a moment.
+      await new Promise((r) => setTimeout(r, everyMs));
+      if (gh(["api", `repos/${repo}/installation`, "--jq", ".id"], { allowFail: true })) return true;
+    }
+    await new Promise((r) => setTimeout(r, everyMs));
+  }
+  return false;
 }
 
 function runFlow({ manifest, state, args, kind }) {
   return new Promise((resolve) => {
     let settled = false;
+
+    // Resolved when GitHub redirects to setup_url, or when polling sees the
+    // installation — whichever happens first. The poll is the fallback for a
+    // user who finishes the install in a different browser or profile, where
+    // the redirect never reaches this server.
+    let installed = () => {};
+    const installedAt = new Promise((r) => {
+      installed = r;
+    });
 
     const server = createServer(async (req, res) => {
       const url = new URL(req.url, `http://localhost:${args.port}`);
@@ -334,6 +428,14 @@ function runFlow({ manifest, state, args, kind }) {
       if (url.pathname === "/" || url.pathname === "/start") {
         res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
         res.end(postPage({ manifest, state, org: args.org }));
+        return;
+      }
+
+      if (url.pathname === "/installed") {
+        // GitHub's setup_url redirect, after the user pressed Install.
+        res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+        res.end(installedPage());
+        installed();
         return;
       }
 
@@ -394,8 +496,10 @@ function runFlow({ manifest, state, args, kind }) {
       res.end(donePage({ appName: app.name, installUrl: `${app.html_url}/installations/new` }));
 
       settled = true;
-      server.close();
-      resolve(app);
+      // The server stays up: the App exists, but it is not installed on the
+      // repository yet, and the install is the step the user was previously
+      // left stranded on. It closes in `main`, once the install is confirmed.
+      resolve({ app, installedAt, close: () => server.close() });
     });
 
     server.listen(args.port, "127.0.0.1", () => {
@@ -456,10 +560,39 @@ function storeCredentials({ repo, kind, app }) {
 
 // Only run when executed directly, so the pure helpers above can be imported
 // and tested without the script trying to create an App.
-const invokedDirectly =
-  process.argv[1] !== undefined &&
-  import.meta.url === new URL(`file://${process.argv[1].replace(/\\/g, "/")}`).href;
+//
+// This has to hold when the skill folder is reached through a symlink, which is
+// how every agent's skills directory is set up: Node resolves `import.meta.url`
+// to the real path while `process.argv[1]` keeps the link's path, so comparing
+// the two strings says "not direct" and the script exits 0 having done nothing.
+// A hand-built `file://` string got Windows backslashes wrong on top of that.
+// So: compare real paths through `pathToFileURL`, and fall back to the file's
+// own name, which is the thing that actually identifies this entry point.
+export function runningAsEntryPoint(moduleUrl, argv1 = process.argv[1]) {
+  if (argv1 === undefined) return false;
+  // Split on both separators rather than using `path.basename`, which only
+  // treats a backslash as one when it is itself running on Windows — and this
+  // check has to give the same answer wherever it is read from.
+  const lastSegment = (p) => p.split(/[\\/]/).pop() ?? p;
+  if (lastSegment(argv1) === lastSegment(fileURLToPath(moduleUrl))) return true;
+  const real = (p) => {
+    try {
+      return realpathSync(p);
+    } catch {
+      return p;
+    }
+  };
+  try {
+    return pathToFileURL(real(fileURLToPath(moduleUrl))).href === pathToFileURL(real(argv1)).href;
+  } catch {
+    return false;
+  }
+}
 
-if (invokedDirectly || process.env["BSF_CREATE_APP_RUN"] === "1") {
+if (runningAsEntryPoint(import.meta.url)) {
+  // Printed before anything can fail, because the bug this replaces made
+  // silence look like success: the script exited 0, created no App, stored no
+  // secrets, and said nothing at all.
+  log("create-app: starting…");
   main().catch((err) => fail(err?.message ?? String(err)));
 }

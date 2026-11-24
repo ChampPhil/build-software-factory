@@ -355,6 +355,17 @@ button {
 .note.quiet { border-left-color: var(--line-bright); background: var(--surface); color: var(--ink-dim); }
 .note.bad { border-left-color: var(--fail); background: var(--fail-wash); }
 
+/* When the snapshot behind a page was last written. Quiet by default: it is
+   context, not a warning — until it is a day old, when it explains why
+   something the person did by hand is not showing. */
+.as-of {
+  margin: -4px 0 18px;
+  font-size: 13px;
+  color: var(--ink-dim);
+}
+.as-of time { font-variant-numeric: tabular-nums; }
+.as-of.stale { color: var(--ink); }
+
 .empty {
   border: 1px dashed var(--line-bright);
   border-radius: 4px;

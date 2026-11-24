@@ -325,6 +325,32 @@ export class GitHubClient {
   }
 
   /**
+   * The repositories this user has the Software Factory app installed on.
+   *
+   * A user-to-server token can read its own installations, which is exactly
+   * the list worth offering: every repository here is one the dashboard can
+   * actually open. Returns an empty list rather than throwing, so a picker can
+   * fall back to asking for the name.
+   */
+  async installedRepos(): Promise<readonly string[]> {
+    try {
+      const installs = await this.get<{ readonly installations?: readonly { readonly id: number }[] }>(
+        "user/installations?per_page=100",
+      );
+      const names: string[] = [];
+      for (const inst of installs.installations ?? []) {
+        const repos = await this.get<{ readonly repositories?: readonly { readonly full_name: string }[] }>(
+          `user/installations/${inst.id}/repositories?per_page=100`,
+        ).catch(() => ({ repositories: [] as readonly { readonly full_name: string }[] }));
+        for (const r of repos.repositories ?? []) if (r.full_name !== undefined) names.push(r.full_name);
+      }
+      return [...new Set(names)].sort((a, b) => a.localeCompare(b));
+    } catch {
+      return [];
+    }
+  }
+
+  /**
    * Whether this token can do the things the dashboard offers.
    *
    * Reads are probed, one per permission, because a missing one is a 403 that can

@@ -3,11 +3,11 @@ import { spawn, execFileSync, type ChildProcess } from "node:child_process";
 import { readFileSync, existsSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 // @ts-expect-error -- a plain .mjs script with no type declarations; the
 // helpers under test are pure, and importing them is only possible because
 // the script now guards its own entry point.
-import { appName, APP_NAME_MAX } from "../../skill/scripts/create-app.mjs";
+import { appName, APP_NAME_MAX, slugForAppName, runningAsEntryPoint } from "../../skill/scripts/create-app.mjs";
 
 /**
  * Exercises the App-creation script's local server: the page it posts to
@@ -252,6 +252,63 @@ describe("the App's name", () => {
     const name = appName("Factory Recompiler", "bsf-fixtures-ts-webapp");
     expect(name.length).toBeLessThanOrEqual(APP_NAME_MAX);
     expect(name.toLowerCase()).toContain("recomp");
+  });
+
+  it("holds only characters GitHub accepts, whatever the repo is called", () => {
+    // The live run's repo was CS2_Rob_The_Bobber. GitHub refuses an underscore
+    // in an App name, so the default name was rejected on the Create page with
+    // nothing on it saying why, and the user was left editing a field nobody
+    // had told them was editable.
+    for (const slug of [
+      "ChampPhil-CS2_Rob_The_Bobber",
+      "owner-repo.with.dots",
+      "owner-repo_with_many_underscores_and_more",
+      "owner-ünïcödé",
+      "_-_-_",
+    ]) {
+      const name = appName("Build Software Factory", slug);
+      expect(name, name).toMatch(/^[A-Za-z0-9 ()-]+$/);
+      expect(name.length, name).toBeLessThanOrEqual(APP_NAME_MAX);
+      expect(name.endsWith(")"), name).toBe(true);
+      expect(name, name).not.toContain("_");
+    }
+  });
+
+  it("does not leave a hyphen hanging where it cut the repo", () => {
+    expect(slugForAppName("owner-repo_name")).toBe("owner-repo-name");
+    expect(slugForAppName("__lead_and_trail__")).toBe("lead-and-trail");
+    expect(appName("Build Software Factory", "owner-a_b_c_d_e_f_g_h_i_j_k_l_m")).not.toMatch(/-\)$/);
+  });
+});
+
+describe("the script knows when it is the entry point", () => {
+  /**
+   * The failure this guards: run from Cursor on Windows, the script exited 0,
+   * printed nothing, created no App and stored no secrets — and the silence
+   * read as success. Every agent's skills directory is a symlink, and Node
+   * resolves `import.meta.url` to the real path while `process.argv[1]` keeps
+   * the link's path, so comparing the two strings said "not direct".
+   */
+  it("recognises itself through a symlinked skills folder", () => {
+    const dir = mkdtempSync(join(tmpdir(), "bsf-entry-"));
+    const real = join(dir, "real");
+    const link = join(dir, "link");
+    execFileSync("mkdir", ["-p", real]);
+    writeFileSync(join(real, "create-app.mjs"), "// test\n");
+    execFileSync("ln", ["-s", real, link]);
+    const moduleUrl = pathToFileURL(join(real, "create-app.mjs")).href;
+    expect(runningAsEntryPoint(moduleUrl, join(link, "create-app.mjs"))).toBe(true);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("recognises itself from a Windows-style argv path", () => {
+    const moduleUrl = "file:///C:/Users/x/skill/scripts/create-app.mjs";
+    expect(runningAsEntryPoint(moduleUrl, "C:\\Users\\x\\skill\\scripts\\create-app.mjs")).toBe(true);
+  });
+
+  it("stays out of the way when it is only imported", () => {
+    expect(runningAsEntryPoint("file:///a/create-app.mjs", "/usr/lib/node_modules/vitest/vitest.mjs")).toBe(false);
+    expect(runningAsEntryPoint("file:///a/create-app.mjs", undefined)).toBe(false);
   });
 });
 

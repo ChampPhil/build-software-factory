@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { readSession } from "@/lib/session";
 import { useClient, useIndex, useRun, useVerifierReport } from "@/lib/data";
 import { Evidence } from "@/components/evidence";
-import { PageHead, Section, Empty, Note, PipelineTag, Dot, Pips } from "@/components/primitives";
+import { PageHead, Section, Empty, Note, PipelineTag, Dot, Pips, AsOf } from "@/components/primitives";
 import { timeline, costBreakdown, costMismatch, formatDuration, formatUsd } from "@/lib/metrics";
 import type { GitHubClient } from "@/lib/github";
 import type { RunFile, RunGate } from "@/lib/types";
@@ -57,6 +57,7 @@ export default function Runs() {
   return (
     <>
       <PageHead title="Runs" lede="Every run the factory has recorded, newest first." />
+      <AsOf at={index.state === "ready" ? index.data?.updated_at : undefined} />
       {recent.length === 0 ? (
         <Empty title="No runs yet">
           Each run writes one file when it finishes, with its steps, gate attempts, evidence and

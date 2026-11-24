@@ -9,6 +9,12 @@ You are setting up a software factory on the user's repo. Everything the user
 does happens at the start and takes minutes; then it runs unattended and ends
 in a pull request they merge.
 
+**This setup runs from any coding agent** — Claude Code, Cursor, Codex, or
+another. Nothing below depends on which one you are. The factory's own agents,
+the ones that run in GitHub Actions afterwards, are Claude Code regardless of
+what you are: that is the only harness whose spend the budget cap can hold, and
+`install-factory.mjs` sets it back to Claude Code if it finds anything else.
+
 Work through the phases in order. Each has a reference file with the detail —
 read it when you start that phase, not before.
 
@@ -21,10 +27,11 @@ reads as a hang.
 | They do | You do |
 | --- | --- |
 | Click **Create**, then **Install** on GitHub's App pages | Everything around it, via `scripts/create-app.mjs` |
-| Paste a model API key once | Store it as a repo secret |
+| Set `ANTHROPIC_API_KEY` as a repo secret, themselves | Tell them exactly where, then check it is there with `gh secret list` |
 | Answer a few questions about the product | Turn the answers into its intent and its first practices |
 | Merge the bootstrap PR | Install the runner, the definition and the workflows in it |
 | Merge the setup PR | Everything between the two: the setup episode runs on its own |
+| Sign in to the dashboard, once, from the link you give them | Hand them that link before you say setup is done |
 
 Nothing else is theirs. If you find yourself about to ask for something not on
 that list, you are about to do their job for them — work it out instead, say
@@ -49,6 +56,42 @@ gets fixed, not which file is wrong.
 comment on any issue or PR adds a standing instruction every agent follows,
 through a PR they approve. When the factory stops on something and says so,
 `/retry` on that issue or PR hands it back once they have done what it needed.
+
+## Never handle their secrets
+
+The user sets every secret themselves, and you verify it exists. You never ask
+for a key, a token or a password, you never accept one if it is offered, and
+you never pass one on — not in the conversation, not through a file, not as a
+command argument. A key pasted into a chat stays in that chat.
+
+If one does reach you, stop and say so: tell them to revoke it and issue a new
+one. That is cheap. A leaked key that nobody mentioned is not.
+
+## Running commands on their machine
+
+**Find out which platform you are on before you run anything.** Setup runs on
+the user's own machine, and roughly half of them are on Windows. Everything
+below is the difference, and getting it wrong wastes their time on errors that
+look like the factory is broken.
+
+- **One command per call.** Never join commands with `&&`: PowerShell rejects
+  it outright. If you need two things in sequence, run two commands. (`;` works
+  in both shells, but two calls tell you which one failed.)
+- **The runner has two launchers.** `.factory/bin/bsf` is for macOS and Linux;
+  `.factory/bin/bsf.cmd` is for Windows. Where this skill writes `bsf X`, run
+  `./.factory/bin/bsf X` on macOS and Linux and `.\.factory\bin\bsf.cmd X` on
+  Windows. **Spell out the `.cmd`** rather than relying on PowerShell to find
+  it. Calling the extensionless `bsf` on Windows does nothing at all and exits
+  **0**, so a missing `.cmd` reads as a command that worked and printed nothing.
+- **A command that prints nothing has not necessarily worked.** If you expected
+  output — a URL, a list, a count — and got none, you have a failure, not an
+  empty result. Say so rather than carrying on.
+- **Never push to the default branch.** Agent environments block it, and you
+  will lose the time twice. Post-bootstrap fixes go on a `factory/fix-*` branch
+  and through a pull request, like everything else.
+- **Retry a failed `git add` once** on Windows before reporting it. An
+  antivirus scanner or the search indexer can hold a file under `.git/objects`
+  for a moment; the second attempt succeeds.
 
 ## Before you start
 

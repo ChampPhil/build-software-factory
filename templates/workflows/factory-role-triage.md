@@ -81,6 +81,18 @@ network:
     - java
     - dotnet
     - playwright
+    # Asset CDNs. A hand-written page usually front-loads its library from
+    # one of these, and a page whose library is refused renders blank: in the
+    # first live install a p5.js game lost p5 to the proxy, the canvas never
+    # appeared, and every screenshot the factory attached was a picture of
+    # nothing. Read-only asset hosts, and narrower than the package registries
+    # already allowed above. Hosts particular to a repo are added at setup from
+    # `bsf scan-asset-hosts`.
+    - cdnjs.cloudflare.com
+    - cdn.jsdelivr.net
+    - unpkg.com
+    - fonts.googleapis.com
+    - fonts.gstatic.com
 
 sandbox:
   agent:
@@ -295,7 +307,8 @@ The work item is in `/tmp/gh-aw/agent/bsf/work-item.json`. Read
 1. **Understand the request.** What would be true, in the running app, if this
    were done? Say it in one sentence.
 2. **For a bug, reproduce it.** Start the app per the runbook and try. Capture
-   a "before" screenshot into `/tmp/gh-aw/agent/bsf/media/` — the reviewer will compare it
+   a "before" screenshot of the state the bug is in — not the app's front page —
+   into `/tmp/gh-aw/agent/bsf/media/`; the reviewer will compare it
    with the verifier's "after". If you cannot reproduce it, that is an outcome,
    not a failure: say exactly what you tried.
 3. **Check the duplicate shortlist.** The shortlist in the work item comes from
@@ -321,16 +334,23 @@ whether the run goes on:
 `outcome` is exactly one of:
 
 - **`proceed`** — understood, in scope, reproduced if it is a bug.
-- **`needs_info`** — also comment one specific question on the source and stop.
-  One question, answerable in a sentence. Not a list.
-- **`out_of_scope`** — also comment why, in plain language.
+- **`needs_info`** — add `"question"`: the one thing you need to know,
+  answerable in a sentence. One question, not a list. Write it to the author,
+  in plain language, as the words they will read.
+- **`out_of_scope`** — say why in `reason`, in plain language, as the words the
+  author will read.
 - **`duplicate`** — set `"duplicate_of": "wi_…"` to the open item it duplicates,
   and say which in `reason`.
 
-The source is the work item's `source.ref` (`#N`, an issue or PR number): when
-you comment, pass that number as the item number. When `source.ref` is null
-the request came from the dashboard and has no thread; your `reason` is the
-answer, and the dashboard shows it.
+**You do not comment the outcome yourself.** The factory posts it to the
+source thread from this file, and labels the issue, as soon as the outcome is
+recorded. That is deliberate: when this was a line asking you to "also
+comment", the comment was the half that went missing whenever a run ended
+early, and the person who filed the request got an acknowledgement followed by
+permanent silence. Write the file; the factory does the talking.
+
+When the work item's `source.ref` is null the request came from the dashboard
+and has no thread; your `reason` is the answer, and the dashboard shows it.
 
 ## Do not
 

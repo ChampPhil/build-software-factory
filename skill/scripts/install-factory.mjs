@@ -14,6 +14,7 @@
 // already exists — the definition, the context, the guardrails — is the
 // user's, and is kept unless --force.
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, chmodSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -130,10 +131,44 @@ for (const [src, dest] of PLAN) {
     cpSync(file, target);
   }
 }
+// The launcher has to be executable on GitHub's Linux runners, where every
+// pipeline step calls it. `chmod` alone is not enough: on Windows the
+// filesystem carries no execute bit for git to read, so git stages the file
+// 100644 and the runner fails with exit 126 ("Permission denied") on a step
+// that has nothing to do with the user's change. `git update-index --chmod=+x`
+// sets the bit in the index itself, which is what gets committed, and is
+// harmless where chmod already worked. Then it is verified, because a silent
+// 100644 here is a setup failure three steps later.
 if (!dryRun) {
   for (const f of ["bsf"]) {
     const p = join(into, ".factory/bin", f);
-    if (existsSync(p)) chmodSync(p, 0o755);
+    if (!existsSync(p)) continue;
+    chmodSync(p, 0o755);
+    const tracked = `.factory/bin/${f}`;
+    try {
+      // Retried once: on Windows an antivirus scanner or the search indexer can
+      // hold a file under .git/objects for a moment, and the first add fails
+      // with "Permission denied" or "failed to insert into database".
+      try {
+        execFileSync("git", ["-C", into, "add", "--", tracked], { stdio: "pipe" });
+      } catch {
+        execFileSync("git", ["-C", into, "add", "--", tracked], { stdio: "pipe" });
+      }
+      execFileSync("git", ["-C", into, "update-index", "--chmod=+x", "--", tracked], { stdio: "pipe" });
+    } catch (e) {
+      console.error(`could not mark ${tracked} executable in the git index: ${e instanceof Error ? e.message : String(e)}`);
+      process.exit(1);
+    }
+    const mode = execFileSync("git", ["-C", into, "ls-files", "-s", "--", tracked], { encoding: "utf8" }).trim().split(/\s+/)[0];
+    if (mode !== "100755") {
+      console.error(
+        `${tracked} is staged as ${mode === undefined || mode === "" ? "untracked" : mode}, not 100755. ` +
+          `The Linux runner would fail with exit 126 on it. Fix with:\n` +
+          `  git -C ${into} update-index --chmod=+x -- ${tracked}`,
+      );
+      process.exit(1);
+    }
+    console.log(`${tracked} is executable in the index (100755)`);
   }
 }
 
@@ -153,6 +188,56 @@ if (existsSync(cfgPath) && !dryRun) {
     writeFileSync(cfgPath, next);
     console.log(`switched the harness from ${was} to claude-code: only Claude Code's spend can be capped`);
   }
+}
+
+// The bootstrap PR's body, written here rather than composed by the agent.
+//
+// It used to be a description in the skill's prose — "end the body with this
+// line, exactly" — and the agent wrote the rest freehand. On the first live
+// install that produced a mangled link to assessment.md ("assetmnet", with
+// stray slashes and a question mark) and an attribution whose link text had
+// drifted from the one place it is defined. A body nobody types cannot be
+// mistyped, and the attribution comes from `bsf attribution`, so adding a
+// product to PRODUCTS reaches this PR too.
+if (!dryRun) {
+  const bodyPath = join(into, ".factory/bootstrap-pr.md");
+  let attribution = "";
+  try {
+    attribution = execFileSync(join(into, ".factory/bin/bsf"), ["attribution"], { encoding: "utf8" }).trim();
+  } catch {
+    attribution = "";
+  }
+  const body = [
+    "## The factory, installed but not running",
+    "",
+    "This adds the factory to the repository: the packed runner in `.factory/bin`,",
+    "its definition and guardrails under `.factory/`, and the workflows that run it.",
+    "Nothing runs until this is merged.",
+    "",
+    "**Merging this is the approval.** It touches protected paths, so no check can",
+    "stand in for a person reading it.",
+    "",
+    "### What to look at",
+    "",
+    "- `assessment.md` — what the factory found in this repository, and what it",
+    "  concluded. It is deleted when the setup PR merges, so read it here.",
+    "- `.factory/definition/context/practices.md` — the product answers, in your",
+    "  words. Everything the factory builds is judged against these.",
+    "- `.factory/definition/policy.yaml` — what the factory may change, and what",
+    "  is protected from it.",
+    "",
+    "### What happens when you merge",
+    "",
+    "`factory-setup` starts by itself and designs the sandbox: it reads the",
+    "repository, brings up what it declares, measures how far verification can",
+    "actually go, and opens a second pull request with the result. That one is the",
+    "factory switching on.",
+    "",
+    attribution,
+    "",
+  ].join("\n");
+  writeFileSync(bodyPath, body);
+  console.log(`wrote the bootstrap PR body to ${relative(into, bodyPath)}`);
 }
 
 console.log(`${dryRun ? "would write" : "wrote"} ${written.length} file(s) into ${into}`);

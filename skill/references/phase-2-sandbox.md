@@ -12,10 +12,20 @@ says how far verification can go, measured rather than claimed.
 1. **Bootstrap.** `node scripts/install-factory.mjs --into <checkout>` on a
    branch: the packed runner (`.factory/bin`), the definition templates, the
    guardrail files, and every workflow, precompiled. Write the user's product
-   answers into `practices.md` and `fundamentals.md`'s product intent. Open
-   the bootstrap PR. It changes protected paths, so the user's merge is the
-   approval. End the PR body with this line, exactly:
-   `Built with [Build Software Factory](https://github.com/ChampPhil/build-software-factory) by Philip Valcin`.
+   answers into `practices.md` and `fundamentals.md`'s product intent.
+
+   **Open the bootstrap PR with the body the installer wrote** — it is at
+   `.factory/bootstrap-pr.md`, and it already carries the attribution:
+
+   ```
+   gh pr create --title "Install the software factory" --body-file .factory/bootstrap-pr.md
+   ```
+
+   Do not compose this body yourself. When this was a description of what the
+   body should contain, the first live install produced a broken link to
+   `assessment.md` and an attribution line that had drifted from the one place
+   it is defined. It changes protected paths, so the user's merge is the
+   approval.
 2. **Dispatch `factory-setup`.** It runs unattended:
    - **Design.** The setup agent reads the repo and writes a complete
      candidate: the four context files, `manifest.json`, any stub servers, and

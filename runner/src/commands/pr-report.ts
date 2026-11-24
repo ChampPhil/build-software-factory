@@ -33,6 +33,51 @@ export interface PrReport {
   readonly conceptual?: string;
 }
 
+/**
+ * Captions that admit the picture shows nothing.
+ *
+ * The first live install attached, to every PR, a screenshot of a page whose
+ * library had been refused by the sandbox proxy — captioned, honestly, "the
+ * canvas is not rendered because p5 did not load". The checks passed on
+ * console output, so nothing failed, and the PR arrived dressed in evidence
+ * that showed a blank page. A reviewer reads a picture before they read
+ * anything, so proof that shows nothing is worse than no proof: it is
+ * skimmed as if it meant something.
+ *
+ * The verifier is told to stop and report a sandbox problem instead. This is
+ * the backstop for when it does not.
+ */
+const PROOF_EXCUSES = [
+  /\bnot render(ed|ing)?\b/i,
+  /\bdid ?n[o']t load\b/i,
+  /\bfailed to load\b/i,
+  /\bblank (page|screen|canvas)\b/i,
+  /\bcould ?n[o']t (be )?(load|render|start)/i,
+  /\bERR_CERT_AUTHORITY_INVALID\b/i,
+];
+
+/** Image proof whose own caption says the app was not running. */
+export function uselessProof(
+  reports: readonly { readonly role: string; readonly report: { readonly blocks: readonly Block[] } }[],
+): readonly string[] {
+  const out: string[] = [];
+  for (const r of reports) {
+    for (const b of r.report.blocks) {
+      if (b.type !== "file") continue;
+      if (!IMAGE_EXT.has(extname(b.file).toLowerCase()) && !VIDEO_EXT.has(extname(b.file).toLowerCase())) continue;
+      const excuse = PROOF_EXCUSES.find((re) => re.test(b.caption));
+      if (excuse === undefined) continue;
+      out.push(
+        `${r.role} attached ${b.file} and its caption says the app was not running ` +
+          `("${b.caption.slice(0, 120)}"). A picture of a page that did not render is not proof. ` +
+          `Fix the sandbox — usually a host missing from .factory/sandbox/research-domains.txt, ` +
+          `found with \`bsf scan-asset-hosts\` — and verify again.`,
+      );
+    }
+  }
+  return out;
+}
+
 export type Block =
   | { readonly type: "file"; readonly file: string; readonly caption: string; readonly poster?: string }
   | { readonly type: "diagram"; readonly title: string; readonly mermaid: string };
@@ -310,6 +355,7 @@ export function renderReport(input: RenderInput): Rendered {
     const hasVideo = input.reports.some((r) => r.report.blocks.some((b) => b.type === "file" && VIDEO_EXT.has(extname(b.file).toLowerCase())));
     if (!hasVideo) problems.push("this change touches the UI, and no role recorded a video of it working");
   }
+  problems.push(...uselessProof(input.reports));
 
   const focus = input.reports.flatMap((r) => r.report.focus ?? []);
   const tail: string[] = [];

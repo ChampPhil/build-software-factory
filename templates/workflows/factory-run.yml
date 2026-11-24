@@ -498,6 +498,70 @@ jobs:
           PR: ${{ needs.build.outputs.created_pr_number || needs.build-host.outputs.created_pr_number || needs.hardener.outputs.created_pr_number || inputs.pr_number }}
         run: bsf report publish --work-item "$WORK_ITEM" --pr "$PR"
 
+  # Whatever happened to the roles, the person who asked for this hears back.
+  #
+  # The live install's first feature request went silent: triage decided it
+  # needed one question answered, recorded that on the work item, and then its
+  # own job failed before the comment went out — so the author got an
+  # acknowledgement and then nothing, for ever. Reading the recorded outcome in
+  # a job that always runs is what makes that impossible. Idempotent, so it
+  # costs nothing on a run that went fine.
+  announce:
+    # Every role's budget hold has to be settled before this runs, like any
+    # other job that follows a role: the hold is released by the `-budget` job.
+    needs:
+      - plan
+      - triage
+      - triage-budget
+      - triaged
+      - hardener
+      - hardener-budget
+      - spec
+      - spec-budget
+      - build
+      - build-budget
+      - build-host
+      - build-host-budget
+      - after-gates
+    if: always() && inputs.work_item != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Fetch the factory runner from the default branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: .factory-trusted
+          sparse-checkout: |
+            .factory/bin
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Put the trusted runner on PATH
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/bsf"
+          cp -R .factory-trusted/.factory/bin/. "$RUNNER_TEMP/bsf/"
+          rm -rf .factory-trusted
+          echo "$RUNNER_TEMP/bsf" >> "$GITHUB_PATH"
+      - name: Mint a token
+        id: token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.FACTORY_APP_CLIENT_ID }}
+          private-key: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
+          permission-contents: read
+          permission-issues: write
+          permission-pull-requests: write
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+      - name: Say what happened, if nothing else has
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          WORK_ITEM: ${{ inputs.work_item }}
+        run: bsf run announce "$WORK_ITEM"
+
   rollup:
     needs: [plan, after-gates]
     if: always()

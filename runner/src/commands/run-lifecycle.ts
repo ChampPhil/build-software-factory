@@ -459,6 +459,8 @@ export interface TriageResult {
   readonly outcome: TriageOutcome;
   readonly reason: string;
   readonly duplicate_of?: string;
+  /** For `needs_info`: the one question to put to the author. */
+  readonly question?: string;
 }
 
 /** Problems with a triage result, or none. */
@@ -468,6 +470,13 @@ export function triageProblems(r: unknown): readonly string[] {
   const out: string[] = [];
   if (!TRIAGE_OUTCOMES.includes(o["outcome"] as TriageOutcome)) out.push(`outcome must be one of ${TRIAGE_OUTCOMES.join(", ")}`);
   if (typeof o["reason"] !== "string" || o["reason"].trim() === "") out.push("reason is required");
+  if (o["outcome"] === "needs_info" && (typeof o["question"] !== "string" || o["question"].trim() === "")) {
+    // The factory posts this question itself, so there has to be one. When the
+    // agent was asked to both record the outcome and remember to comment, the
+    // comment was the half that went missing — and the author of the request
+    // was left with an acknowledgement and then permanent silence.
+    out.push("needs_info names the one question to ask the author, in question");
+  }
   if (o["outcome"] === "duplicate" && (typeof o["duplicate_of"] !== "string" || !/^wi_[0-9A-HJKMNP-TV-Z]{26}$/.test(o["duplicate_of"]))) {
     out.push("a duplicate names the work item it duplicates in duplicate_of (wi_…)");
   }
@@ -481,24 +490,128 @@ const TRIAGE_STATUS: Record<TriageOutcome, Status> = {
   duplicate: "duplicate",
 };
 
+/**
+ * What the factory says to the author when triage ends the pipeline.
+ *
+ * Rendered here, from the recorded outcome, rather than left to the agent to
+ * remember: `needs_info`, `out_of_scope` and `duplicate` all stop the run, and
+ * all three were silent whenever the agent's own job did not finish cleanly.
+ * The live install's very first feature request died exactly this way — the
+ * outcome reached the work item, the question never reached the issue.
+ */
+export function triageMessage(result: TriageResult): string {
+  switch (result.outcome) {
+    case "needs_info":
+      return (
+        `**One question before I start.**\n\n${(result.question ?? result.reason).trim()}\n\n` +
+        `Answer in a comment here and I will pick this up again — nothing else is needed from you.`
+      );
+    case "out_of_scope":
+      return (
+        `**I am not going to take this on.** ${result.reason.trim()}\n\n` +
+        `If that is wrong, say so in a comment and it will be looked at again.`
+      );
+    case "duplicate":
+      return (
+        `**This looks like a duplicate.** ${result.reason.trim()}\n\n` +
+        `If it is actually a different problem, say so in a comment and it will be reopened as its own item.`
+      );
+    case "proceed":
+      return "";
+  }
+}
+
+const TRIAGE_LABEL: Partial<Record<TriageOutcome, string>> = {
+  needs_info: "factory:needs-info",
+  out_of_scope: "factory:out-of-scope",
+  duplicate: "factory:duplicate",
+};
+
+/** Marks the factory's own outcome comment, so saying it twice is impossible. */
+const triageMarker = (workItem: string): string => `<!-- bsf:triage:${workItem} -->`;
+
+/**
+ * Tell the author what triage decided, on the thread they opened.
+ *
+ * Idempotent: the marker means this can be called from the role's own run and
+ * again from the safety net that runs whatever happened, without the author
+ * hearing it twice. Returns whether anything was posted.
+ */
+export async function announceTriage(
+  gh: GitHub,
+  workItem: string,
+  source: string | null | undefined,
+  result: TriageResult,
+): Promise<boolean> {
+  const target = issueNumber(source);
+  if (target === null || result.outcome === "proceed") return false;
+  const marker = triageMarker(workItem);
+  const existing = await gh
+    .get<readonly { readonly body?: string }[]>(`repos/${gh.repo}/issues/${target}/comments?per_page=100`)
+    .catch(() => []);
+  if (existing.some((c) => (c.body ?? "").includes(marker))) return false;
+  await gh.send("POST", `repos/${gh.repo}/issues/${target}/comments`, {
+    body: `${triageMessage(result)}\n\n${marker}`,
+  });
+  const label = TRIAGE_LABEL[result.outcome];
+  if (label !== undefined) {
+    await gh.send("POST", `repos/${gh.repo}/issues/${target}/labels`, { labels: [label] }).catch(() => undefined);
+  }
+  return true;
+}
+
 /** Apply triage's outcome to the item, which is what tells the rest of the run whether to go on. */
 export async function writeTriage(gh: GitHub, workItem: string, result: TriageResult, now: string): Promise<Status> {
   const store = new FactoryStore(gh);
   const item = await store.get<WorkItemDoc & { related?: readonly string[] }>(workItemPath(workItem), "work-item");
   if (item === null) throw new Error(`${workItem} is not on the data ref`);
   const status = TRIAGE_STATUS[result.outcome];
-  if (status === item.status) return status;
+  if (status === item.status) {
+    // Already recorded — but the author may still not have been told, which is
+    // the whole failure this guards against. Announcing is idempotent.
+    await announceTriage(gh, item.id, item.source?.ref, result).catch(() => undefined);
+    return status;
+  }
   const related =
     result.duplicate_of === undefined ? item.related ?? [] : [...new Set([...(item.related ?? []), result.duplicate_of])];
   const ledger = await store.ledger(now);
   await store.put(
     [
-      { path: workItemPath(item.id), content: json({ ...item, status, related }) },
+      { path: workItemPath(item.id), content: json({ ...item, status, related, triage_reason: result.question ?? result.reason }) },
       { path: LEDGER, content: json(withStatus(ledger, item, status, null, now)) },
     ],
     `triage: ${item.id} ${result.outcome}`,
   );
+  // The factory speaks for itself. This used to be a line in the role's prompt
+  // asking the agent to "also comment", which meant the author heard nothing
+  // whenever the agent wrote its outcome and stopped.
+  await announceTriage(gh, item.id, item.source?.ref, result).catch(() => undefined);
   return status;
+}
+
+/**
+ * The safety net: say something about an item whose run ended without a PR.
+ *
+ * Runs whatever happened to the roles, because the case that matters is the
+ * one where a role's own job failed. Reads the recorded outcome rather than any
+ * job's result, and is idempotent, so it is harmless when the run went fine.
+ */
+export async function announceTerminalState(gh: GitHub, workItem: string): Promise<string> {
+  const store = new FactoryStore(gh);
+  const item = await store.get<WorkItemDoc & { triage_reason?: string }>(workItemPath(workItem), "work-item");
+  if (item === null) return `${workItem} is not on the data ref`;
+  if (typeof item.pr === "number") return `${workItem} is PR #${item.pr}; nothing to say here`;
+  const outcome = ({ needs_info: "needs_info", rejected: "out_of_scope", duplicate: "duplicate" } as const)[
+    item.status as "needs_info" | "rejected" | "duplicate"
+  ];
+  if (outcome === undefined) return `${workItem} is ${item.status}; nothing to say here`;
+  const reason = item.triage_reason ?? "Triage stopped here and did not record why.";
+  const said = await announceTriage(gh, item.id, item.source?.ref, {
+    outcome,
+    reason,
+    ...(outcome === "needs_info" ? { question: reason } : {}),
+  });
+  return said ? `told ${item.source?.ref ?? "the dashboard"} that ${workItem} is ${item.status}` : `${workItem}: already said`;
 }
 
 /** Whether the run should go on past triage: the item is still the run's. */
