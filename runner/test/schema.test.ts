@@ -9,6 +9,16 @@ import {
 
 /** Every doc-09 example, as a valid fixture per schema. */
 const valid: Record<SchemaName, unknown> = {
+  "brainstorm": {
+    schema: "brainstorm/1",
+    work_item: "wi_01M838E95ZX1Z6BP5CH4JQN799",
+    turns: [
+      { at: "2026-11-24T16:00:00Z", who: "factory", text: "What should someone be able to do once this is done that they cannot do now?" },
+      { at: "2026-11-24T16:04:00Z", who: "person", text: "Filter the invoice list down to the ones that have not been paid." },
+    ],
+    understood: "Add a filter to the invoice list so unpaid invoices can be seen on their own.",
+    open: [],
+  },
   "install-record": {
     schema: "install-record/1",
     branch_protection_existed: false,

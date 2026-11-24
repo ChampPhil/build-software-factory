@@ -6,6 +6,7 @@ import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { effectiveAssociation, type GitHub } from "../lib/github.js";
 import { FactoryStore, CURSOR, INCOMING, LEDGER, json, workItemPath, runPath } from "../lib/store.js";
+import { appendTurn } from "./brainstorm.js";
 import type { CorrectionRecord } from "./corrections.js";
 import { decideCandidate, candidateRequest } from "./candidate-decisions.js";
 import type { Change } from "../lib/dataref.js";
@@ -469,6 +470,17 @@ export async function runIntakeCommand(opts: IntakeRunOptions): Promise<IntakeRu
       d.outcome === "answers_open_item" && (d.event.body ?? "").trim() !== ""
         ? `${doc.body}\n\nAnswer from @${d.event.actor}:\n${d.event.body ?? ""}`
         : doc.body;
+    // Their answer joins the conversation, so the next run of triage builds on
+    // it instead of starting again from the issue text. Without this the item
+    // comes back with no memory of what was already settled, and the second
+    // question reads as though nobody was listening to the first answer.
+    if (d.outcome === "answers_open_item" && (d.event.body ?? "").trim() !== "") {
+      await appendTurn(opts.gh, d.openItem, {
+        at: opts.now,
+        who: "person",
+        text: (d.event.body ?? "").trim(),
+      }).catch(() => undefined);
+    }
     let next: Record<string, unknown> = { ...doc, status: "queued", body };
     // A request admitted late, or one that was waiting on the chief of staff's
     // question, is routed now, with the answer in front of it.

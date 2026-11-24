@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://build-software-factory.dev/schema/brainstorm.json",
+  "title": "Brainstorm",
+  "description": "The conversation held with the author of a request before any code is written, and what the factory understood from it. An input to the spec stage, never a document the person reviews. Doc 09.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "work_item",
+    "turns",
+    "understood",
+    "open"
+  ],
+  "properties": {
+    "schema": {
+      "const": "brainstorm/1"
+    },
+    "work_item": {
+      "type": "string"
+    },
+    "turns": {
+      "type": "array",
+      "description": "Every turn, oldest first.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "at",
+          "who",
+          "text"
+        ],
+        "properties": {
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "who": {
+            "enum": [
+              "factory",
+              "person"
+            ]
+          },
+          "text": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "understood": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "What the factory believes is being asked, in its own words, played back and left uncorrected. When this can be written without filling anything in, the conversation is over. That is the end condition; there is no turn limit."
+    },
+    "open": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Questions still outstanding. Empty is what 'enough' looks like."
+    },
+    "closed_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}
