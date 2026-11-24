@@ -166,8 +166,8 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
   bsf attribution
       The credit line, as Markdown, from the one place it is defined.
   bsf audit [--commit SHA]
-  bsf scan-asset-hosts [--root DIR]
-      The external hosts this repo's own pages load, for the sandbox allowlist.
+  bsf scan-asset-hosts [--root DIR] [--why]
+      The external hosts this repo's own pages load. Each needs a sandbox stub.
       After a push to main: did anything reach main without passing the gates,
       and is every compiled role workflow current with its source?
 
@@ -1892,10 +1892,10 @@ async function syncCommand(args: Args): Promise<number> {
 /**
  * `bsf scan-asset-hosts` — the hosts the repo's front end loads at runtime.
  *
- * These go in `.factory/sandbox/research-domains.txt`, which setup folds into
- * every role's `network.allowed`. Without them the sandbox proxy refuses the
- * CDN an app front-loads, the page renders blank, and every screenshot the
- * factory attaches is a picture of nothing.
+ * Each is a sandbox dependency with `"stand_in": "stub"`. They do not go in
+ * `egress`: the sandbox is hermetic so that a CDN being down cannot change
+ * what the factory concludes. Miss one and the page renders blank, and every
+ * screenshot the factory attaches is a picture of nothing.
  */
 function scanAssetHostsCommand(args: Args): number {
   const root = typeof args["root"] === "string" ? args["root"] : process.cwd();

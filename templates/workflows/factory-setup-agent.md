@@ -83,18 +83,6 @@ network:
     - docs.python.org
     - nodejs.org
     - learn.microsoft.com
-    # Asset CDNs. A hand-written page usually front-loads its library from
-    # one of these, and a page whose library is refused renders blank: in the
-    # first live install a p5.js game lost p5 to the proxy, the canvas never
-    # appeared, and every screenshot the factory attached was a picture of
-    # nothing. Read-only asset hosts, and narrower than the package registries
-    # already allowed above. Hosts particular to a repo are added at setup from
-    # `bsf scan-asset-hosts`.
-    - cdnjs.cloudflare.com
-    - cdn.jsdelivr.net
-    - unpkg.com
-    - fonts.googleapis.com
-    - fonts.gstatic.com
 
 # The setup agent reads a repo it has never seen, and roles: all lets anyone
 # who can start factory-setup reach it. Threat detection inspects what the
@@ -248,24 +236,11 @@ in the repo itself is kept.
    .factory/bin/bsf sandbox check --file /tmp/gh-aw/agent/bsf/setup/manifest.json
    ```
 3. **`stubs/`**, if the app needs a third party you cannot reach (see below).
-4. **`research-domains.txt`** — one host per line. Two kinds of host go here,
-   and both matter:
-
-   - **Hosts the app itself loads to render.** Run this and put every host it
-     prints in the file:
-
-     ```bash
-     .factory/bin/bsf scan-asset-hosts --why
-     ```
-
-     It reads the repo's own markup and styles for `src=`, `href=` and `url()`
-     pointing at an absolute https host. A page that front-loads its library
-     from a CDN **will not render in the sandbox** unless its host is here: the
-     proxy refuses the request, the browser reports a certificate error, and
-     every screenshot the factory ever attaches to a PR is a blank page. The
-     common CDNs are allowed by default; this catches the rest.
-   - **Documentation sites** of the frameworks and libraries this repo uses.
-     The spec role reads them when it researches.
+4. **`research-domains.txt`** — one host per line: the documentation sites of
+   the frameworks and libraries this repo actually uses. The spec role reads
+   them when it researches. **Not** the hosts the app loads at runtime: the
+   sandbox has no egress by design, and those hosts get stubs instead (§
+   "External hosts the app loads" below).
 5. **`guardrails.patch`** and **`guardrails.json`** — the repo's own checkers,
    extended with the factory's rules (see "Guardrails" below). Skip both on an
    amendment.
@@ -357,6 +332,33 @@ sent only by a scheduled job), and say so in `why`.
 A round is not done until every probe passes. What still fails after the last
 round is frozen as not exercised, with what happened, so no role is told the
 sandbox can do something it cannot.
+
+### External hosts the app loads to render
+
+A page that front-loads a library from a CDN is one of these dependencies, and
+the easiest to miss, because nothing crashes — the page just comes up empty.
+The sandbox has **no egress** (`"egress": []`), so the browser's request to
+that host fails, usually as `ERR_CERT_AUTHORITY_INVALID` rather than anything
+that names the real problem, and every screenshot of that app for the rest of
+the factory's life is a blank page.
+
+Find them by reading the repo rather than by waiting for a trial to show it:
+
+```bash
+.factory/bin/bsf scan-asset-hosts --why
+```
+
+It prints every absolute https host the repo's own markup and styles name in a
+`src=`, `href=` or `url()`, and the file each came from. Every one is a
+dependency with `"stand_in": "stub"`: vendor the library if the repo already
+has it, or capture it, and have the stub server rewrite those URLs to
+same-origin paths. **Do not add them to `egress`.** The point of a hermetic
+sandbox is that a third party being down, or rate-limiting a runner, cannot
+change what the factory concludes about a change.
+
+Give each one a `probe` that only passes when the library really loaded — a
+page that renders something only that library can draw — rather than one that
+passes on the shell of the page.
 
 ## Sign-in
 

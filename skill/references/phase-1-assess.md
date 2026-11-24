@@ -14,14 +14,14 @@ deleted on merge so it is not unrequested markdown), and the first
   the network.** A hand-written site with its libraries on a CDN and no
   `package.json` is a common thing to find, and it changes two expectations
   that are better set now than discovered later:
-    - **Its sandbox tier will be `static`, not `renders`**, unless the CDN
-      hosts are allowed through; say so in the assessment, with the tier the
-      repo can expect and what that means for proof (logs and file checks
-      rather than screenshots of the app). Run `bsf scan-asset-hosts --why` and
-      list what it finds, so phase 2 can allow those hosts and phase 6 can put
-      them in `research-domains.txt`. A page whose library the sandbox refuses
-      renders blank, and a blank page makes every screenshot the factory ever
-      attaches worthless.
+    - **Every one of those hosts needs a stub**, because the sandbox has no
+      egress by design. Run `bsf scan-asset-hosts --why` and list what it
+      finds: each is a dependency the sandbox stands in for locally, not a host
+      to allow through. A page whose library never loads renders blank, and a
+      blank page makes every screenshot the factory ever attaches worthless.
+      Say in the assessment what the tier will be — a repo with nothing to
+      build or test scores `static` whatever its pages do — so the expectation
+      is set before the first PR arrives with logs instead of pictures.
     - **It has nothing for guardrails to extend**, so phase 3 §0 applies and
       the setup PR will add a minimum toolchain. Say that in the assessment
       too: it is a change the owner did not ask for, and they should meet it
