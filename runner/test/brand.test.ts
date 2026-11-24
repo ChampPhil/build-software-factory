@@ -24,7 +24,9 @@ describe("visible attribution", () => {
 
   it("shows in the README, the bootstrap PR instructions and the dashboard", () => {
     expect(read("README.md")).toContain("Built by Philip Valcin");
-    expect(read("skill/references/phase-2-sandbox.md")).toContain("Built with [Build Software Factory]");
+    // The literal is gone on purpose: the bootstrap PR body is generated, and
+    // the skill tells the agent to use it rather than retyping the line.
+    expect(read("skill/references/phase-2-sandbox.md")).toContain(".factory/bootstrap-pr.md");
     expect(read("dashboard/components/shell.tsx")).toContain("<BrandCredit />");
   });
 
@@ -35,7 +37,7 @@ describe("visible attribution", () => {
     };
     const setup = renderReport({ repo: "o/r", kind: "setup", reports: [stored as never], footer: "Setup run 1" });
     const change = renderReport({ repo: "o/r", kind: "change", reports: [{ ...stored, role: "builder" } as never], footer: "Work item 1" });
-    expect(setup.body).toContain("Built with [Build Software Factory]");
-    expect(change.body).not.toContain("Built with [Build Software Factory]");
+    expect(setup.body).toContain(attributionMarkdown());
+    expect(change.body).not.toContain(attributionMarkdown());
   });
 });

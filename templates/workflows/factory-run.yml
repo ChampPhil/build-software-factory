@@ -507,7 +507,22 @@ jobs:
   # a job that always runs is what makes that impossible. Idempotent, so it
   # costs nothing on a run that went fine.
   announce:
-    needs: [plan, triage, triaged, hardener, spec, build, build-host, after-gates]
+    # Every role's budget hold has to be settled before this runs, like any
+    # other job that follows a role: the hold is released by the `-budget` job.
+    needs:
+      - plan
+      - triage
+      - triage-budget
+      - triaged
+      - hardener
+      - hardener-budget
+      - spec
+      - spec-budget
+      - build
+      - build-budget
+      - build-host
+      - build-host-budget
+      - after-gates
     if: always() && inputs.work_item != ''
     runs-on: ubuntu-latest
     permissions:

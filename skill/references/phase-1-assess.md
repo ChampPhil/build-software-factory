@@ -10,6 +10,22 @@ deleted on merge so it is not unrequested markdown), and the first
 ## Inventory what exists
 
 - **Languages, frameworks, package managers**, and whether this is a monorepo.
+- **Whether the repo has any tooling at all**, and **what its pages load from
+  the network.** A hand-written site with its libraries on a CDN and no
+  `package.json` is a common thing to find, and it changes two expectations
+  that are better set now than discovered later:
+    - **Its sandbox tier will be `static`, not `renders`**, unless the CDN
+      hosts are allowed through; say so in the assessment, with the tier the
+      repo can expect and what that means for proof (logs and file checks
+      rather than screenshots of the app). Run `bsf scan-asset-hosts --why` and
+      list what it finds, so phase 2 can allow those hosts and phase 6 can put
+      them in `research-domains.txt`. A page whose library the sandbox refuses
+      renders blank, and a blank page makes every screenshot the factory ever
+      attaches worthless.
+    - **It has nothing for guardrails to extend**, so phase 3 §0 applies and
+      the setup PR will add a minimum toolchain. Say that in the assessment
+      too: it is a change the owner did not ask for, and they should meet it
+      here rather than in a diff.
   One factory per repo, with a section per app in the feature map and runbook.
 - **Existing CI**, and above all **the name of the repo's own test check and
   what triggers it.** If it runs on pushes to `factory/*` branches, Gate 2 can

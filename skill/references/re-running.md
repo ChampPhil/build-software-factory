@@ -63,6 +63,62 @@ stale for gh-aw to run, a missing secret, a ref that was deleted.
 3. **Recompile the lock files** if gh-aw's version check is failing them. This
    is the path for a user who declined the recompiler App.
 
+## What looks broken but is not
+
+A first run throws up several things that look like failures and are not. Say
+so when the user asks, rather than investigating them as bugs.
+
+- **`factory/policy` stays pending, for ever.** A private repository on GitHub
+  Free cannot have required checks, so this check is reported and never
+  required, and it never concludes. Merge when **`factory/gates`** passes;
+  that is the check that means something here. `bsf doctor` reports the
+  repository's enforcement mode, and `audit` is this one.
+- **`factory-audit` runs on every push and may report `gate_pending` or
+  `unconfirmed`.** Both are informational and neither fails the run. The audit
+  is the fallback for repositories that cannot require checks: it reads what
+  actually landed on the default branch and only fails on a commit that really
+  did bypass the gates. A revert PR follows only where
+  `enforcement.audit_revert_pr` is on.
+- **`factory-audit` failing right after the setup merge.** The setup PR
+  touches protected paths, which is exactly what the audit watches, and the
+  commit may land before GitHub has linked it to its pull request. Re-run the
+  audit; if it passes, there was nothing wrong.
+- **`assessment.md` still on the default branch.** It is meant to be deleted
+  when the setup PR merges. If it is still there, the delete did not make it
+  into that PR — remove it on a `factory/fix-*` branch rather than by pushing
+  to the default branch.
+- **Guardrails reporting 0 rules.** On a repository with no linter, formatter
+  or test runner, the gates have nothing to check and pass vacuously. That is
+  a real problem, not a cosmetic one: phase 3 §0 installs a minimum toolchain
+  so the gates mean something.
+
+## Filing a smoke-test request from the command line
+
+The issue forms are the normal way in, but a repository's forms are not always
+reachable yet, and `gh` is more reliable to script:
+
+```
+gh issue create --title "Smoke test: say hello on the home page" --body-file -
+```
+
+with a body of:
+
+```
+What should be true when this is done:
+The home page shows the word "hello" somewhere visible.
+
+Where it should go (if you know):
+The home page template.
+```
+
+Then label it so intake picks it up:
+
+```
+gh issue edit <number> --add-label factory:accept
+```
+
+The label is what starts the factory, not the form.
+
 ## Requests to change the factory
 
 People ask for changes to how the factory runs on the dashboard's **Ask the

@@ -190,6 +190,56 @@ if (existsSync(cfgPath) && !dryRun) {
   }
 }
 
+// The bootstrap PR's body, written here rather than composed by the agent.
+//
+// It used to be a description in the skill's prose — "end the body with this
+// line, exactly" — and the agent wrote the rest freehand. On the first live
+// install that produced a mangled link to assessment.md ("assetmnet", with
+// stray slashes and a question mark) and an attribution whose link text had
+// drifted from the one place it is defined. A body nobody types cannot be
+// mistyped, and the attribution comes from `bsf attribution`, so adding a
+// product to PRODUCTS reaches this PR too.
+if (!dryRun) {
+  const bodyPath = join(into, ".factory/bootstrap-pr.md");
+  let attribution = "";
+  try {
+    attribution = execFileSync(join(into, ".factory/bin/bsf"), ["attribution"], { encoding: "utf8" }).trim();
+  } catch {
+    attribution = "";
+  }
+  const body = [
+    "## The factory, installed but not running",
+    "",
+    "This adds the factory to the repository: the packed runner in `.factory/bin`,",
+    "its definition and guardrails under `.factory/`, and the workflows that run it.",
+    "Nothing runs until this is merged.",
+    "",
+    "**Merging this is the approval.** It touches protected paths, so no check can",
+    "stand in for a person reading it.",
+    "",
+    "### What to look at",
+    "",
+    "- `assessment.md` — what the factory found in this repository, and what it",
+    "  concluded. It is deleted when the setup PR merges, so read it here.",
+    "- `.factory/definition/context/practices.md` — the product answers, in your",
+    "  words. Everything the factory builds is judged against these.",
+    "- `.factory/definition/policy.yaml` — what the factory may change, and what",
+    "  is protected from it.",
+    "",
+    "### What happens when you merge",
+    "",
+    "`factory-setup` starts by itself and designs the sandbox: it reads the",
+    "repository, brings up what it declares, measures how far verification can",
+    "actually go, and opens a second pull request with the result. That one is the",
+    "factory switching on.",
+    "",
+    attribution,
+    "",
+  ].join("\n");
+  writeFileSync(bodyPath, body);
+  console.log(`wrote the bootstrap PR body to ${relative(into, bodyPath)}`);
+}
+
 console.log(`${dryRun ? "would write" : "wrote"} ${written.length} file(s) into ${into}`);
 if (removed.length > 0) {
   console.log(`${dryRun ? "would remove" : "removed"} ${removed.length} file(s) the factory no longer ships:`);

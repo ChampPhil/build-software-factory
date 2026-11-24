@@ -12,6 +12,24 @@ The factory goes live when the user merges the setup PR.
 3. **The user merges.** On merge, `factory-sync` adds the factory's required
    checks where the plan allows, **keeping every existing protection rule**,
    and gardening picks up the seeded cleanup that night.
+
+   Then check two things actually happened, because both are claimed elsewhere
+   in this skill and neither is verified anywhere:
+
+   ```
+   gh api repos/OWNER/NAME/contents/assessment.md --jq .name
+   ```
+
+   That should be a 404. `assessment.md` is meant to be deleted by this merge —
+   it exists to be read in the PR, and the factory does not leave unrequested
+   markdown in a repository. If it is still there, the delete did not make it
+   into the setup PR; remove it on a `factory/fix-*` branch.
+
+   And `factory-audit` will run on this merge and may fail. The setup PR
+   touches protected paths, which is what the audit watches, and the commit can
+   land before GitHub has linked it to its pull request. Re-run it; if it
+   passes, nothing was wrong. Tell the user that, so a red tick on their first
+   merge does not read as a broken factory.
    Before they merge, create the three labels the request forms apply, so a
    form never silently drops one: `gh label create factory:accept`,
    `factory:harden` and `factory:tidy` with `--force`. The forms themselves

@@ -7,9 +7,39 @@ eslint config extended. It does not get a second linter beside the first.
 Output: `.factory/guardrails/` plus edits to existing tool configs, all inside
 the setup PR.
 
+## 0. When the repo has no tools at all
+
+"Extend what is there" has nothing to extend in a repo with no linter, no
+formatter and no test runner — a hand-written page with its libraries on a CDN,
+which is a very common thing to find. The first live install was exactly this,
+and the result was a factory with **0 rules installed and 0 baselined**:
+`factory/gates` passed because it had nothing to check, and every change went
+through on an agent's word.
+
+That is worse than no guardrails, because it looks like guardrails. So when the
+dominant language has no tool present, install a minimum one as part of the
+setup PR, and say in the PR that you did and why:
+
+- **JavaScript or TypeScript** — a `package.json` if there is none, with eslint
+  and prettier as devDependencies and `lint` and `format` scripts, then the
+  universal rules below configured on them.
+- **Python** — ruff, with `lint` and `format` entry points.
+- **Anything else** — the standard formatter and linter for that language, or,
+  if there is genuinely none, say so in the setup PR and leave the coverage
+  floor at 0 rather than pretending.
+
+Keep it to the smallest thing that makes the gates mean something. This is a
+tool the repo's owner did not ask for, so it earns its place by being the
+minimum, and the setup PR says plainly that it was added and that removing it
+leaves the gates vacuous.
+
+A repo with tools but no tests is a different case: that is §5, and the floor
+starts at 0 by design.
+
 ## 1. Universal rules
 
-From `rules/<language>.yaml`, each configured on a tool the repo already has:
+From `rules/<language>.yaml`, each configured on a tool the repo already has
+(or on the minimum one §0 just installed):
 formatter, type strictness, secrets scanning, dependency cycles, suppression
 control (a reason required, counted, capped).
 

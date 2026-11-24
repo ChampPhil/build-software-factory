@@ -163,6 +163,8 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
   bsf sync-settings [--branch NAME] [--apply]
       Apply branch protection from factory.yaml. Adds checks, never removes.
 
+  bsf attribution
+      The credit line, as Markdown, from the one place it is defined.
   bsf audit [--commit SHA]
   bsf scan-asset-hosts [--root DIR]
       The external hosts this repo's own pages load, for the sandbox allowlist.
@@ -462,6 +464,12 @@ async function main(argv: readonly string[]): Promise<number> {
     case "sync-settings":
       return syncCommand(args);
 
+    case "attribution":
+      // One place for the credit line, so every surface that shows it — the
+      // dashboard, the setup PR, the bootstrap PR — says the same thing, and a
+      // product added to PRODUCTS reaches all of them.
+      process.stdout.write(`${(await import("./lib/brand.js")).attributionMarkdown()}\n`);
+      return 0;
     case "audit":
       return auditCommand(args);
     case "scan-asset-hosts":
@@ -3002,6 +3010,11 @@ async function mineCommand(args: Args): Promise<number> {
         `  ${(s.at ?? "unknown date").slice(0, 10)}  ${s.source.padEnd(10)} ${s.session}\n` +
           `${s.opening === "" ? "" : `      ${s.opening}\n`}`,
       );
+    }
+    // An empty result said nothing at all, which reads as a command that
+    // failed rather than a repo with no past agent sessions to read.
+    if (listing.sessions.length === 0) {
+      process.stdout.write("No past agent sessions found for this repository, so there is nothing to mine.\n");
     }
     setOutput("sessions", String(listing.sessions.length));
     return 0;

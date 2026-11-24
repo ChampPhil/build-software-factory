@@ -9,6 +9,12 @@ You are setting up a software factory on the user's repo. Everything the user
 does happens at the start and takes minutes; then it runs unattended and ends
 in a pull request they merge.
 
+**This setup runs from any coding agent** — Claude Code, Cursor, Codex, or
+another. Nothing below depends on which one you are. The factory's own agents,
+the ones that run in GitHub Actions afterwards, are Claude Code regardless of
+what you are: that is the only harness whose spend the budget cap can hold, and
+`install-factory.mjs` sets it back to Claude Code if it finds anything else.
+
 Work through the phases in order. Each has a reference file with the detail —
 read it when you start that phase, not before.
 

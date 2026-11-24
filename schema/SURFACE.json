@@ -1,5 +1,5 @@
 {
-  "frozen_at": "2026-11-23",
+  "frozen_at": "2026-11-24",
   "schema_major": 1,
   "note": "The shape of every schema at the frozen major. `bsf schema-surface --check` compares the live schemas against this and fails on a breaking change. Regenerate with `bsf schema-surface --freeze` only alongside an additive change, or alongside a major bump that ships a migration in `bsf migrate`.",
   "surface": {
@@ -3331,6 +3331,7 @@
           "status",
           "success_check",
           "title",
+          "triage_reason",
           "trigger_class"
         ],
         "required": [
@@ -3438,6 +3439,9 @@
           "\"running\"",
           "\"waiting_trust\""
         ]
+      },
+      "/properties/triage_reason": {
+        "type": "string"
       },
       "/properties/runs": {
         "type": "array"
