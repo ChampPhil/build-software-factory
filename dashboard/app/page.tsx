@@ -8,6 +8,7 @@ import { EmptyFactoryNote } from "@/components/empty-factory";
 import { waitingOn } from "@/lib/questions";
 import { NewRequest, QuestionList } from "@/components/request";
 import { CandidateList } from "@/components/corrections";
+import { Review } from "@/components/review";
 import { PageHead, Section, Empty, Note, PipelineTag, Dot } from "@/components/primitives";
 import { elapsedSince } from "@/lib/metrics";
 import type { PullSummary, IssueSummary } from "@/lib/github";
@@ -28,6 +29,8 @@ export default function Home() {
   const pendingCandidates = (guardrails.state === "ready" ? guardrails.data.candidates?.candidates ?? [] : []).filter((c) => c.status === "pending");
 
   const [filing, setFiling] = useState(false);
+  const [reviewing, setReviewing] = useState<number | null>(null);
+  const [version, setVersion] = useState(0);
 
   const [pulls, setPulls] = useState<readonly PullSummary[] | null>(null);
   const [issues, setIssues] = useState<readonly IssueSummary[] | null>(null);
@@ -145,12 +148,19 @@ export default function Home() {
         >
           <div className="rows">
             {toApprove.map((pr) => (
-              <div className="row needs" key={pr.number} style={{ gridTemplateColumns: "auto 1fr auto auto auto" }}>
+              <div key={pr.number}>
+              <div className="row needs" style={{ gridTemplateColumns: "auto 1fr auto auto auto" }}>
                 <Dot tone={pr.draft ? "run" : "pass"} title={pr.draft ? "draft" : "ready"} />
                 <a className="row-title" href={pr.html_url}>{pr.title}</a>
                 {pipelineOf(pr) !== null && <PipelineTag pipeline={pipelineOf(pr)!} />}
                 <span className="row-meta">{elapsedSince(pr.created_at)} old</span>
-                <a className="btn" href={pr.html_url}>Review</a>
+                <button className="btn primary" onClick={() => setReviewing(reviewing === pr.number ? null : pr.number)}>
+                  {reviewing === pr.number ? "Close" : "Review"}
+                </button>
+              </div>
+              {reviewing === pr.number && client !== null && (
+                <Review client={client} pr={pr} onDone={() => { setReviewing(null); setVersion((v) => v + 1); }} />
+              )}
               </div>
             ))}
           </div>
@@ -165,11 +175,18 @@ export default function Home() {
         >
           <div className="rows">
             {definitionPrs.map((pr) => (
-              <div className="row needs" key={pr.number} style={{ gridTemplateColumns: "auto 1fr auto auto" }}>
+              <div key={pr.number}>
+              <div className="row needs" style={{ gridTemplateColumns: "auto 1fr auto auto" }}>
                 <Dot tone="define" />
                 <a className="row-title" href={pr.html_url}>{pr.title}</a>
                 <span className="row-meta">{elapsedSince(pr.created_at)} old</span>
-                <a className="btn" href={pr.html_url}>Review</a>
+                <button className="btn primary" onClick={() => setReviewing(reviewing === pr.number ? null : pr.number)}>
+                  {reviewing === pr.number ? "Close" : "Review"}
+                </button>
+              </div>
+              {reviewing === pr.number && client !== null && (
+                <Review client={client} pr={pr} onDone={() => { setReviewing(null); setVersion((v) => v + 1); }} />
+              )}
               </div>
             ))}
           </div>

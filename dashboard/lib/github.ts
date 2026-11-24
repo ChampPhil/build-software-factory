@@ -58,6 +58,15 @@ export interface RateLimit {
   readonly resetAt: Date | null;
 }
 
+export interface PullFile {
+  readonly filename: string;
+  readonly status: string;
+  readonly additions: number;
+  readonly deletions: number;
+  readonly changes: number;
+  readonly patch?: string;
+}
+
 export class GitHubClient {
   private lastRate: RateLimit | null = null;
 
@@ -315,6 +324,43 @@ export class GitHubClient {
 
   async addLabels(issueOrPr: number, labels: readonly string[]): Promise<void> {
     await this.send("POST", `repos/${this.auth.repo}/issues/${issueOrPr}/labels`, { labels });
+  }
+
+  /**
+   * Merge a pull request.
+   *
+   * The dashboard's whole point is that somebody should not have to go to
+   * GitHub for something the dashboard can do, and merging is the thing they
+   * came here to do. There is no separate approve step: if they want to merge
+   * from the factory they merge from the factory, and if they want a
+   * line-by-line read the diff is here with a link to GitHub beside it.
+   */
+  async mergePull(number: number, method: "squash" | "merge" | "rebase" = "squash"): Promise<void> {
+    await this.send("PUT", `repos/${this.repo}/pulls/${number}/merge`, { merge_method: method });
+  }
+
+  async setIssueState(number: number, state: "open" | "closed"): Promise<void> {
+    await this.send("PATCH", `repos/${this.repo}/issues/${number}`, { state });
+  }
+
+  async removeLabel(number: number, label: string): Promise<void> {
+    await this.send("DELETE", `repos/${this.repo}/issues/${number}/labels/${encodeURIComponent(label)}`);
+  }
+
+  /** Re-run the jobs that failed in a workflow run, which is the common case. */
+  async rerunFailedJobs(runId: number): Promise<void> {
+    await this.send("POST", `repos/${this.repo}/actions/runs/${runId}/rerun-failed-jobs`);
+  }
+
+  /**
+   * A pull request's changed files, with their patches.
+   *
+   * Rendered inline for a small diff, which is most of what the factory opens.
+   * A big one keeps its link to GitHub rather than being rebuilt badly here:
+   * nobody needs a worse version of a diff viewer that already exists.
+   */
+  async pullFiles(number: number): Promise<readonly PullFile[]> {
+    return this.get<readonly PullFile[]>(`repos/${this.repo}/pulls/${number}/files?per_page=100`);
   }
 
   async dispatchWorkflow(workflow: string, ref: string, inputs: Record<string, string> = {}): Promise<void> {
