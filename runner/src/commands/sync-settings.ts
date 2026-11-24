@@ -1,4 +1,6 @@
 import type { GitHub } from "../lib/github.js";
+import { FactoryStore } from "../lib/store.js";
+import { INSTALL_RECORD, type InstallRecord } from "./uninstall.js";
 
 /**
  * `bsf sync-settings` — applies branch protection from `factory.yaml` (doc 07).
@@ -39,6 +41,28 @@ export interface SyncReport {
   readonly kept: readonly string[];
   readonly declinedToLoosen: readonly string[];
   readonly applied: boolean;
+}
+
+/**
+ * Note, once, what the factory changed that is not a file.
+ *
+ * Written only on the first apply: afterwards `branch_protection_existed`
+ * would describe the factory's own handiwork rather than what it found.
+ */
+async function recordInstall(gh: GitHub, what: { existed: boolean; added: readonly string[] }): Promise<void> {
+  const store = new FactoryStore(gh);
+  if ((await store.get<InstallRecord>(INSTALL_RECORD, "install-record")) !== null) return;
+  const record: InstallRecord = {
+    schema: "install-record/1",
+    branch_protection_existed: what.existed,
+    added_checks: [...what.added],
+    created_labels: [],
+    recorded_at: new Date().toISOString(),
+  };
+  await store.put(
+    [{ path: INSTALL_RECORD, content: `${JSON.stringify(record, null, 2)}\n` }],
+    "record what the install changed, so uninstall can undo it",
+  );
 }
 
 export async function runSyncCommand(opts: SyncOptions): Promise<SyncReport> {
@@ -97,6 +121,11 @@ export async function runSyncCommand(opts: SyncOptions): Promise<SyncReport> {
   if (opts.apply === true && (added.length > 0 || current === null)) {
     await opts.gh.send("PUT", path, body);
     applied = true;
+    // Record what this changed, once, so `bsf uninstall` can put it back.
+    // Without it an uninstall has to guess whether protection was the
+    // factory's doing, and the safe guess — leave everything — means the
+    // factory cannot fully take itself out of a repository.
+    await recordInstall(opts.gh, { existed: current !== null, added }).catch(() => undefined);
   }
 
   return { existed: current !== null, added, kept, declinedToLoosen, applied };

@@ -9,6 +9,13 @@ import {
 
 /** Every doc-09 example, as a valid fixture per schema. */
 const valid: Record<SchemaName, unknown> = {
+  "install-record": {
+    schema: "install-record/1",
+    branch_protection_existed: false,
+    added_checks: ["factory/gates", "factory/policy"],
+    created_labels: ["factory:accept", "factory:harden"],
+    recorded_at: "2026-11-24T16:00:00Z",
+  },
   "pr-report": {
     schema: "pr-report/1",
     summary: ["Invoices can be filtered by status.", "The filter is a row of chips above the table.", "Paid invoices stay bold."],

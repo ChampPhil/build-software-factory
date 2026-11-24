@@ -1045,6 +1045,47 @@
         ]
       }
     },
+    "install-record.json": {
+      "/": {
+        "type": "object",
+        "properties": [
+          "added_checks",
+          "branch_protection_existed",
+          "created_labels",
+          "recorded_at",
+          "schema"
+        ],
+        "required": [
+          "added_checks",
+          "branch_protection_existed",
+          "created_labels",
+          "recorded_at",
+          "schema"
+        ],
+        "additionalProperties": false
+      },
+      "/properties/schema": {
+        "const": "\"install-record/1\""
+      },
+      "/properties/branch_protection_existed": {
+        "type": "boolean"
+      },
+      "/properties/added_checks": {
+        "type": "array"
+      },
+      "/properties/added_checks/items": {
+        "type": "string"
+      },
+      "/properties/created_labels": {
+        "type": "array"
+      },
+      "/properties/created_labels/items": {
+        "type": "string"
+      },
+      "/properties/recorded_at": {
+        "type": "string"
+      }
+    },
     "ledger.json": {
       "/": {
         "type": "object",
