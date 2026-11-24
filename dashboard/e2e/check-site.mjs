@@ -109,7 +109,10 @@ async function open(browser, base, handler) {
 }
 
 async function signIn(page, base, token = "github_pat_" + "t".repeat(40), repo = "acme/widgets") {
-  await page.goto(`${base}/`);
+  // The root is the landing page now: somebody arriving cold is told what this
+  // is before being asked to sign in to it. A link carrying a repository — the
+  // one setup hands over — skips straight past it, which is what this does.
+  await page.goto(`${base}/?repo=${encodeURIComponent(repo)}`);
   await page.getByPlaceholder("owner/name").fill(repo);
   await page.getByPlaceholder("github_pat_…").fill(token);
   await page.getByRole("button", { name: "Connect" }).click();
@@ -200,6 +203,23 @@ try {
     check(/connect-src 'self' https:\/\/api\.github\.com(;|$)/.test(csp), "the page may connect only to itself and api.github.com");
     check(/frame-ancestors 'none'/.test(csp), "it cannot be framed");
     check(r.headers.get("referrer-policy") === "no-referrer", "it sends no referrer");
+  }
+
+  console.log("1b. The landing page");
+  {
+    const { page, context } = await open(browser, base, () => { throw new Error("the landing must not call GitHub"); });
+    // A stranger sent the bare link is told what this is before being asked
+    // to sign in to it.
+    await page.goto(`${base}/`);
+    await page.getByText(/Wake up to a pull request/).waitFor();
+    ok("a stranger gets the landing page, not a sign-in form");
+    check((await page.getByPlaceholder("owner/name").count()) === 0, "the landing does not demand a repository up front");
+
+    // The link setup hands over names a repository, and skips it.
+    await page.goto(`${base}/?repo=acme%2Fwidgets`);
+    await page.getByPlaceholder("owner/name").waitFor();
+    ok("a link carrying a repository goes straight to sign-in");
+    await context.close();
   }
 
   console.log("2. Demo");

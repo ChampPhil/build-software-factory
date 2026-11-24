@@ -262,3 +262,26 @@ export function useStandingGoals(client: GitHubClient | null): Loaded<StandingGo
   const load = client === null ? null : () => client.fileFromRef<StandingGoalsFile>("standing-goals.json");
   return usePolled(load, 60_000, [client?.repo]);
 }
+
+/**
+ * The conversation the factory has been having about a request.
+ *
+ * Shown in the dashboard so answering is a reply in a thread rather than
+ * typing into a box with no idea what was already said. The log lives on the
+ * data ref; a request that was never asked about has none, and that is not an
+ * error — it just means this is the first thing anybody said.
+ */
+export interface BrainstormFile {
+  readonly work_item: string;
+  readonly turns: readonly { readonly at: string; readonly who: "factory" | "person"; readonly text: string }[];
+  readonly understood: string | null;
+  readonly open: readonly string[];
+}
+
+export function useBrainstorm(client: GitHubClient | null, workItem: string | null, version = 0): Loaded<BrainstormFile | null> {
+  const load =
+    client === null || workItem === null
+      ? null
+      : () => client.fileFromRef<BrainstormFile>(`brainstorms/${workItem}.json`);
+  return usePolled(load, 30_000, [client?.repo, workItem, version]);
+}

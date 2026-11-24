@@ -1083,3 +1083,193 @@ textarea {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* --------------------------------------------------------------- landing
+ *
+ * The one place in this product allowed to be loud. Everywhere else the rule
+ * is that colour means a person must act; here there is no work to mark, so
+ * the type carries it instead — one very large statement and then quiet.
+ */
+
+.landing {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 0 var(--gutter) 96px;
+}
+
+.landing-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 22px 0;
+  border-bottom: 1px solid var(--rule);
+}
+.landing-top b {
+  font-size: var(--t-19);
+  font-weight: 600;
+  letter-spacing: -0.028em;
+}
+
+.hero {
+  padding: 84px 0 56px;
+}
+.hero h1 {
+  margin: 0;
+  font-size: var(--t-44);
+  line-height: 1.06;
+  letter-spacing: -0.038em;
+  font-weight: 600;
+  /* No hard breaks: the measure decides where the lines fall, so it holds at
+     every width instead of only at the one it was written for. */
+  max-width: 21ch;
+  text-wrap: balance;
+}
+.hero-sub {
+  margin: 26px 0 0;
+  font-size: var(--t-19);
+  line-height: 1.5;
+  color: var(--quiet);
+  max-width: 62ch;
+}
+.hero-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 32px;
+}
+.hero-actions .btn {
+  display: inline-block;
+}
+
+/* The product, not a picture of the product. */
+.demo {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 32px;
+  padding: 34px 0 10px;
+  border-top: 1px solid var(--ink);
+}
+.demo-label {
+  font-size: var(--t-13);
+  color: var(--quiet);
+  margin-bottom: 10px;
+}
+.demo-label-mid {
+  margin-top: 22px;
+}
+.demo .row:hover {
+  background: none;
+}
+
+.landing-section {
+  padding: 58px 0 0;
+}
+.landing-section > h2 {
+  font-size: var(--t-24);
+  font-weight: 600;
+  letter-spacing: -0.022em;
+  margin: 0 0 20px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--rule);
+}
+.landing-points {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 30px;
+}
+.landing-points h3 {
+  font-size: var(--t-15);
+  font-weight: 600;
+  margin: 0 0 8px;
+}
+.landing-points p,
+.landing-prose {
+  margin: 0;
+  color: var(--quiet);
+  line-height: 1.6;
+  max-width: 68ch;
+}
+.landing-install .btn {
+  display: inline-block;
+  margin-top: 22px;
+}
+.landing-foot {
+  margin-top: 68px;
+  padding-top: 22px;
+  border-top: 1px solid var(--rule);
+  color: var(--quieter);
+  font-size: var(--t-13);
+}
+
+@media (max-width: 820px) {
+  .demo,
+  .landing-points {
+    grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 560px) {
+  .landing {
+    padding: 0 18px 64px;
+  }
+  .hero {
+    padding: 48px 0 36px;
+  }
+  .hero h1 {
+    font-size: var(--t-32);
+  }
+  .hero-sub {
+    font-size: var(--t-15);
+  }
+  .hero-actions {
+    flex-direction: column;
+  }
+  .hero-actions .btn {
+    width: 100%;
+    padding: 12px 14px;
+  }
+}
+
+/* ---------------------------------------------------------------- thread
+ *
+ * The conversation the factory has been having about a request. Answering a
+ * question with no sight of what came before is how people repeat themselves
+ * or answer a question that stopped mattering two turns ago.
+ *
+ * Not chat bubbles: this is two or three exchanges, read once, inside a row
+ * that is already marked. A speaker label and a hairline carry the turn-taking
+ * without borrowing a messaging app's furniture.
+ */
+.thread {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 14px;
+  padding-left: 12px;
+  border-left: 1px solid var(--rule-firm);
+}
+.turn p {
+  margin: 3px 0 0;
+  font-size: var(--t-14, 14px);
+  line-height: 1.5;
+}
+.turn-who {
+  font-size: var(--t-12);
+  color: var(--quieter);
+}
+.turn.person p {
+  color: var(--quiet);
+}
+.turn.understood {
+  border-top: 1px dashed var(--rule-firm);
+  padding-top: 10px;
+}
+.turn.understood p {
+  color: var(--quiet);
+  font-style: italic;
+}
+.thread-more {
+  font-size: var(--t-12);
+  color: var(--quiet);
+  text-align: left;
+  padding: 0;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
