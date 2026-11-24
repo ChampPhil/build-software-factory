@@ -22,7 +22,15 @@ const STAGE_TEXT: Readonly<Record<Stage, string>> = {
  * The settings a person may change, each with its own control. Saving applies
  * the change in one step as the signed-in person; nobody opens a file.
  */
-export function SettingsPanel({ client, yaml, onApplied }: { client: GitHubClient; yaml: string; onApplied: () => void }) {
+export function SettingsPanel({
+  client, yaml, onApplied, enforcement,
+}: {
+  client: GitHubClient;
+  yaml: string;
+  onApplied: () => void;
+  /** From `index.health.enforcement`; decides whether the policy check can ever finish. */
+  enforcement?: "branch_protection" | "audit" | null | undefined;
+}) {
   const current = useMemo(() => readSettings(yaml), [yaml]);
   const [draft, setDraft] = useState<Record<string, SettingValue>>({ ...current });
   const [stage, setStage] = useState<Stage | null>(null);
@@ -37,7 +45,7 @@ export function SettingsPanel({ client, yaml, onApplied }: { client: GitHubClien
 
   const save = async (): Promise<void> => {
     setOutcome(null);
-    const result = await applySettingsChange(client, changes, { onStage: setStage });
+    const result = await applySettingsChange(client, changes, { onStage: setStage, enforcement: enforcement ?? null });
     setStage(null);
     setOutcome(result);
     if (result.status === "applied") onApplied();

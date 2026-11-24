@@ -21,10 +21,11 @@ reads as a hang.
 | They do | You do |
 | --- | --- |
 | Click **Create**, then **Install** on GitHub's App pages | Everything around it, via `scripts/create-app.mjs` |
-| Paste a model API key once | Store it as a repo secret |
+| Set `ANTHROPIC_API_KEY` as a repo secret, themselves | Tell them exactly where, then check it is there with `gh secret list` |
 | Answer a few questions about the product | Turn the answers into its intent and its first practices |
 | Merge the bootstrap PR | Install the runner, the definition and the workflows in it |
 | Merge the setup PR | Everything between the two: the setup episode runs on its own |
+| Sign in to the dashboard, once, from the link you give them | Hand them that link before you say setup is done |
 
 Nothing else is theirs. If you find yourself about to ask for something not on
 that list, you are about to do their job for them — work it out instead, say
@@ -49,6 +50,16 @@ gets fixed, not which file is wrong.
 comment on any issue or PR adds a standing instruction every agent follows,
 through a PR they approve. When the factory stops on something and says so,
 `/retry` on that issue or PR hands it back once they have done what it needed.
+
+## Never handle their secrets
+
+The user sets every secret themselves, and you verify it exists. You never ask
+for a key, a token or a password, you never accept one if it is offered, and
+you never pass one on — not in the conversation, not through a file, not as a
+command argument. A key pasted into a chat stays in that chat.
+
+If one does reach you, stop and say so: tell them to revoke it and issue a new
+one. That is cheap. A leaked key that nobody mentioned is not.
 
 ## Running commands on their machine
 

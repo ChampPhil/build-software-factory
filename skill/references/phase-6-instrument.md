@@ -56,8 +56,38 @@ Offer it; do not insist.
 ## 3. The model API key
 
 One repo secret, `ANTHROPIC_API_KEY`: the factory's agents all run on Claude
-Code. `gh secret set` reads from stdin, so the key never appears in a process
-list.
+Code.
+
+**Never ask the user for the key, and never accept it if they offer it.** Not
+in the conversation, not in a file, not as an argument you pass on. Whatever
+you are told about how this conversation is stored, a key pasted into a chat
+is in that chat for as long as it exists, and in whatever that chat is backed
+up to. On the first live install the agent asked for it in chat and the user
+pasted it, which is exactly the failure this paragraph exists to stop. If a
+key does end up in the conversation, say so plainly and tell them to revoke it
+in the Anthropic Console and issue a new one.
+
+**They set it; you check it.** Give them one of these and wait:
+
+- In their own terminal, which keeps it out of this conversation:
+
+  ```
+  gh secret set ANTHROPIC_API_KEY --repo <owner/name>
+  ```
+
+  It prompts, reads from stdin, and echoes nothing.
+- Or in the browser: **Settings → Secrets and variables → Actions → New
+  repository secret**. Name it exactly `ANTHROPIC_API_KEY`, paste the key as
+  the value, **Add secret**.
+
+Then confirm it landed, which tells you it exists and never shows you a value:
+
+```
+gh secret list --repo <owner/name>
+```
+
+If `ANTHROPIC_API_KEY` is not in that list, say which of the two routes they
+should try again. Do not offer a third route that involves you holding the key.
 
 Suggest, once, that they make this key in its own Anthropic Console workspace
 with a monthly spend limit at or a little above the factory's budget. The

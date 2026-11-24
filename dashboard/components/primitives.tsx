@@ -166,6 +166,33 @@ export function Section({
   );
 }
 
+/**
+ * When the figures above were last written.
+ *
+ * The data ref is only rewritten when a factory run writes it, so anything a
+ * person does by hand — merging a PR themselves, closing an issue, changing a
+ * setting — is invisible here until the next run. Without a date on the page
+ * that reads as the dashboard being wrong rather than being a snapshot, and
+ * the first live install's owner reasonably concluded the dashboard
+ * contradicted itself.
+ */
+export function AsOf({ at }: { at: string | null | undefined }) {
+  if (at === undefined || at === null || at === "") return null;
+  const d = new Date(at);
+  if (Number.isNaN(d.getTime())) return null;
+  const stale = Date.now() - d.getTime() > 24 * 3_600_000;
+  return (
+    <p className={stale ? "as-of stale" : "as-of"}>
+      <time dateTime={at} title={at}>
+        As of {d.toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" })}
+      </time>
+      {stale
+        ? " — the factory has not written since, so anything done by hand after this is not counted here yet."
+        : " — written by the factory's last run."}
+    </p>
+  );
+}
+
 /** An empty state is an instruction, not an apology. */
 export function Empty({ title, children }: { title: string; children: ReactNode }) {
   return (

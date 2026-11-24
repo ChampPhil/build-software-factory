@@ -289,7 +289,7 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
       It is a static export that talks to GitHub from your browser, so there
       is nothing else to run and no server sees your token.
 
-  bsf doctor [--root PATH] [--repo OWNER/REPO] [--json]
+  bsf doctor [--root PATH] [--repo OWNER/REPO] [--json] [--quiet]
       What is wrong with an installed factory: missing definition, role or
       context files, a guardrail file that no longer validates, a missing
       workflow, a lock file too stale for gh-aw to run, and — with --repo — a
@@ -2308,13 +2308,21 @@ async function doctorCommand(args: Args): Promise<number> {
     ...(repo === undefined ? {} : { gh: new GitHub({ repo }) }),
   });
 
+  const broken = report.findings.filter((f) => f.severity === "broken").length;
+  // `--quiet` is for a workflow that only wants the verdict: the exit code
+  // gates whether a run worth minutes of agent time should start at all.
+  if (args["quiet"] === true) {
+    setOutput("broken", String(broken));
+    setOutput("installed", String(report.installed));
+    return broken > 0 ? 1 : 0;
+  }
+
   if (args["json"] === true) {
     process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
   } else {
     process.stdout.write(`${formatReport(report)}\n`);
   }
 
-  const broken = report.findings.filter((f) => f.severity === "broken").length;
   setOutput("broken", String(broken));
   setOutput("installed", String(report.installed));
   // A factory that is simply not installed is not a failure to report: the

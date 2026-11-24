@@ -13,6 +13,16 @@
 name: factory-setup
 
 on:
+  # Merging the bootstrap PR is what starts this. It used to be dispatch-only,
+  # so after the merge nothing happened and the person had to go back to their
+  # agent and tell it to carry on — twice over, once here and once after the
+  # App install. A merge is an event; there is no reason to wait for a human to
+  # relay it.
+  push:
+    branches: [main, master]
+    paths:
+      - '.factory/definition/**'
+      - '.factory/bin/**'
   workflow_dispatch:
     inputs:
       amend:
@@ -29,7 +39,59 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Is there anything to run with? The App and the model key arrive after the
+  # bootstrap PR is merged, so a push can land here before either exists. The
+  # failure then was a full agent run dying deep inside a reusable workflow on
+  # a missing secret — minutes of runner time and an error that named
+  # `workflow_call`, not the thing the person had not done yet. `bsf doctor`
+  # already knows how to ask; it takes seconds, and it says what is missing in
+  # words the person can act on.
+  ready:
+    runs-on: ubuntu-latest
+    outputs:
+      ready: ${{ steps.doctor.outputs.ready }}
+    steps:
+      - name: Fetch the factory runner from the default branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: .factory-trusted
+          sparse-checkout: |
+            .factory/bin
+            .factory/definition
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Put the trusted runner on PATH
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/bsf"
+          cp -R .factory-trusted/.factory/bin/. "$RUNNER_TEMP/bsf/"
+          echo "$RUNNER_TEMP/bsf" >> "$GITHUB_PATH"
+      - name: Is the App installed and the model key set?
+        id: doctor
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if bsf doctor --repo "$GITHUB_REPOSITORY" --quiet; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            {
+              echo "### Setup is waiting on you"
+              echo
+              echo "The factory's definition is on \`$GITHUB_REF_NAME\`, but it cannot run yet:"
+              echo
+              bsf doctor --repo "$GITHUB_REPOSITORY" || true
+              echo
+              echo "Finish those, then run **factory-setup** from the Actions tab — or just ask"
+              echo "your coding agent to carry on with the software factory setup."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
   plan:
+    needs: ready
+    if: needs.ready.outputs.ready == 'true'
     runs-on: ubuntu-latest
     outputs:
       model_builder: ${{ steps.models.outputs.model_builder }}

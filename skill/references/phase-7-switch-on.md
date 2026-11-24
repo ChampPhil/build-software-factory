@@ -27,7 +27,24 @@ The factory goes live when the user merges the setup PR.
    "Add a factory badge to the README"), wait for the factory to comment that it
    has read it and produce a draft PR, and show the user the dashboard link. A
    real run on their repo, end to end, while they are still watching.
-6. **Hand off.**
+6. **Hand off, and make sure the dashboard link is in it.** This is a step,
+   not a courtesy: nobody starts at the website, so the link you give here is
+   the only way the person ever finds the dashboard. On the first live install
+   the hand-off went out without it — `bsf dashboard-link` silently printed
+   nothing on Windows, and the rule below about never inventing a link meant
+   the agent said nothing at all. The user only learned the dashboard existed
+   by asking.
+
+   So: run it, and check you actually got a URL.
+
+   ```
+   bsf dashboard-link --repo OWNER/NAME
+   ```
+
+   If it prints nothing, that is a failure, not an empty result — the command
+   always has an address to print. Say that the dashboard link could not be
+   produced and that `https://buildsoftwarefactory.com` is where it lives, and
+   do not treat the hand-off as complete.
 
 ## The hand-off message
 
@@ -35,7 +52,7 @@ Keep it to what they need to know:
 
 - **What is running**, and what it will do tonight (gardening) and in three
   days (the first review).
-- **Where to watch it** — the dashboard link, from `bsf dashboard-link --repo OWNER/NAME`. It opens the shared dashboard with the repository already filled in; signing in is one button, "Sign in with GitHub", which asks them to approve the dashboard's GitHub App; if it is not installed on this repository yet, the page links to the install step itself, so there is nothing to do ahead of time. If the command says there is no address yet, tell them the dashboard is not published yet, and never make up a link. The dashboard also has a demo they can open without signing in.
+- **Where to watch it** — the dashboard link, from `bsf dashboard-link --repo OWNER/NAME`. It opens the shared dashboard with the repository already filled in; signing in is one button, "Sign in with GitHub", which asks them to approve the dashboard's GitHub App; if it is not installed on this repository yet, the page links to the install step itself, so there is nothing to do ahead of time. If the command genuinely reports that there is no address, say so and point them at `https://buildsoftwarefactory.com`; never invent a repository-specific link. The dashboard also has a demo they can open without signing in.
 - **How to change how it runs**: the dashboard's Factory page has a control for the budget, merge by itself, and the nightly cleanup, and an Ask the factory box for anything else. Never point them at a file.
 - **How to ask for work**: the New request button on the dashboard, one of the four issue forms, or Slack or Linear if connected. If the factory needs something clarified it asks one question on the issue, before any code, and waits: nothing times out, and the dashboard's Home has an answer box.
 - **That every auto-merge toggle is off**, so nothing merges without them, and

@@ -93,8 +93,18 @@ export interface StartResult {
 }
 
 /** Remember what the way back needs, then ask the site where to send the person. */
+/**
+ * Start the GitHub sign-in.
+ *
+ * `repo` may be empty. Nobody arrives at this dashboard cold — they arrive
+ * from a link setup gave them, which names the repository — but when that link
+ * never reached them, being made to type `owner/name` from memory before the
+ * sign-in button will even light up is a wall in front of the first thing they
+ * came to do. Signing in first and then picking from the repositories the app
+ * is actually installed on is the same information, without the typing.
+ */
 export async function startGithubLogin(repo: string, remember: boolean, f: Fetch = defaultFetch): Promise<StartResult> {
-  if (!validRepo(repo)) return { ok: false, error: "Enter the repository as owner/name." };
+  if (repo !== "" && !validRepo(repo)) return { ok: false, error: "Enter the repository as owner/name." };
 
   const state = newState();
   const verifier = newVerifier();
@@ -182,7 +192,13 @@ export async function completeGithubLogin(f: Fetch = defaultFetch): Promise<Call
   if (code === null || pending.verifier === null) {
     return { handled: true, error: "The sign-in was interrupted. Try again." };
   }
-  if (pending.repo === null || !validRepo(pending.repo)) {
+  // An empty repository is a deliberate choice, not a loss: the person signed
+  // in without naming one and picks from their installations on the way back.
+  // Anything non-empty still has to be a real `owner/name`.
+  if (pending.repo === null) {
+    return { handled: true, error: "The sign-in was interrupted on the way to GitHub. Try again." };
+  }
+  if (pending.repo !== "" && !validRepo(pending.repo)) {
     return { handled: true, error: "The repository was lost on the way to GitHub. Enter it and try again." };
   }
 
