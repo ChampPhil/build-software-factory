@@ -154,6 +154,74 @@
         "minimum": 0
       }
     },
+    "brainstorm.json": {
+      "/": {
+        "type": "object",
+        "properties": [
+          "closed_at",
+          "open",
+          "schema",
+          "turns",
+          "understood",
+          "work_item"
+        ],
+        "required": [
+          "open",
+          "schema",
+          "turns",
+          "understood",
+          "work_item"
+        ],
+        "additionalProperties": false
+      },
+      "/properties/schema": {
+        "const": "\"brainstorm/1\""
+      },
+      "/properties/work_item": {
+        "type": "string"
+      },
+      "/properties/turns": {
+        "type": "array"
+      },
+      "/properties/turns/items": {
+        "type": "object",
+        "properties": [
+          "at",
+          "text",
+          "who"
+        ],
+        "required": [
+          "at",
+          "text",
+          "who"
+        ],
+        "additionalProperties": false
+      },
+      "/properties/turns/items/properties/at": {
+        "type": "string"
+      },
+      "/properties/turns/items/properties/who": {
+        "enum": [
+          "\"factory\"",
+          "\"person\""
+        ]
+      },
+      "/properties/turns/items/properties/text": {
+        "type": "string"
+      },
+      "/properties/understood": {
+        "type": "null|string"
+      },
+      "/properties/open": {
+        "type": "array"
+      },
+      "/properties/open/items": {
+        "type": "string"
+      },
+      "/properties/closed_at": {
+        "type": "string"
+      }
+    },
     "candidates.json": {
       "/": {
         "type": "object",

@@ -18,6 +18,7 @@ import { runSyncCommand } from "./commands/sync-settings.js";
 import { runAuditCommand, blockingFindings } from "./commands/audit.js";
 import { scanAssetHosts } from "./commands/asset-hosts.js";
 import { planUninstall, applyUninstall, formatPlan } from "./commands/uninstall.js";
+import { readBrainstorm, render as renderBrainstorm } from "./commands/brainstorm.js";
 import { byFileOf } from "./commands/gates.js";
 import { parseYaml } from "./lib/yaml.js";
 import type { CandidatesFile } from "./lib/types.js";
@@ -171,6 +172,8 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
       The external hosts this repo's own pages load. Each needs a sandbox stub.
   bsf uninstall [--apply] [--purge-data] [--root DIR]
       Take the factory out of operation. Keeps everything it built.
+  bsf brainstorm WORK_ITEM [--out PATH]
+      The conversation held with the author so far, for a role to read.
       After a push to main: did anything reach main without passing the gates,
       and is every compiled role workflow current with its source?
 
@@ -479,6 +482,8 @@ async function main(argv: readonly string[]): Promise<number> {
       return scanAssetHostsCommand(args);
     case "uninstall":
       return uninstallCommand(args);
+    case "brainstorm":
+      return brainstormCommand(args);
 
     case "consistency":
       return consistencyCommand(args);
@@ -1922,6 +1927,27 @@ function scanAssetHostsCommand(args: Args): number {
  * a branch and opens a pull request, because the workflows sit under protected
  * paths and taking them out is a change a person should see.
  */
+/**
+ * `bsf brainstorm WORK_ITEM` — the conversation so far, as prose.
+ *
+ * Triage reads it at the top of every run so a second turn builds on the
+ * first instead of starting again; spec reads it because what the person said
+ * when asked directly beats anything inferred from the issue text.
+ */
+async function brainstormCommand(args: Args): Promise<number> {
+  const id = typeof args["_"] === "string" ? args["_"] : (args["_"] as string[] | undefined)?.[0];
+  if (id === undefined) die("usage: bsf brainstorm WORK_ITEM [--out PATH]");
+  const text = renderBrainstorm(await readBrainstorm(new GitHub({ repo: requireRepo() }), id));
+  const out = args["out"];
+  if (typeof out === "string") {
+    mkdirSync(dirname(out), { recursive: true });
+    writeFileSync(out, `${text}\n`);
+  } else {
+    process.stdout.write(`${text}\n`);
+  }
+  return 0;
+}
+
 async function uninstallCommand(args: Args): Promise<number> {
   const root = typeof args["root"] === "string" ? args["root"] : process.cwd();
   const gh = new GitHub({ repo: requireRepo() });

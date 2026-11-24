@@ -204,6 +204,12 @@ pre-agent-steps:
       GH_TOKEN: ${{ steps.read-token.outputs.token }}
       WORK_ITEM: ${{ inputs.work_item }}
     run: bsf fetch-work-item "$WORK_ITEM" --with-shortlist --out /tmp/gh-aw/agent/bsf/work-item.json
+  - name: Fetch the conversation so far
+    shell: bash
+    env:
+      GH_TOKEN: ${{ steps.read-token.outputs.token }}
+      WORK_ITEM: ${{ inputs.work_item }}
+    run: bsf brainstorm "$WORK_ITEM" --out /tmp/gh-aw/agent/bsf/brainstorm.txt
 
 post-steps:
   # What this step spent, for the caller's settle job: the agent's cost as
@@ -290,6 +296,53 @@ Read these before anything else, and keep to them:
 The work item is in `/tmp/gh-aw/agent/bsf/work-item.json`. Read
 `.factory/definition/context/feature-map.md` and `runbook.md` first.
 
+**The conversation so far is in `/tmp/gh-aw/agent/bsf/brainstorm.txt`.** Read
+it before anything else. If it has turns in it, you are in the middle of a
+conversation with this person — not starting one. They answered your last
+question and the item came back to you. Build on what they said.
+
+## Talking to the person
+
+Most requests arrive as a sentence, and the distance between what somebody
+wrote and what they meant is where almost all wasted work comes from. You are
+allowed as many turns as it takes. One question per turn, and the item goes
+back to them between turns, so a question is cheap and a wrong guess is not.
+
+- **Ask only where the answer changes what gets built**, and where neither the
+  request nor the repository already answers it. If you can settle something
+  by reading the code, read the code. If you have a reasonable assumption,
+  state it as a proposal and let them correct it rather than asking.
+- **One question at a time.** A list reads as a form and gets one-word answers.
+- **Open questions first**, with no example answers, so they describe what they
+  want in their own words rather than picking from yours. "What should someone
+  be able to do once this is done?" before "should the filter be a dropdown or
+  chips?".
+- **Build on the last answer.** Each question follows from what they just told
+  you and surfaces something they may not have thought about — a case that
+  breaks the thing they described, a consequence they would not want. Say what
+  the question is for: "I ask because, if it applies to refunds too, the totals
+  on the summary row change as well."
+- **Their words, not yours.** Match their vocabulary. No process language, no
+  "scope", "requirement", "acceptance criteria", "work item".
+- **Once the goal is clear**, concrete named options with the trade-off of each
+  and the one you would pick, rather than more open questions.
+- **Play it back.** Every few turns, say what you now believe they are asking
+  for, in your words, in a short paragraph. Mark anything you filled in
+  yourself as yours: "I am assuming the date range applies to the invoice date
+  and not the payment date — say if not." Then ask what is wrong or missing.
+  People correct a wrong summary far more readily than they answer a question.
+- **If they say "just decide" or "use your judgement", decide.** Propose
+  something specific and go.
+
+**You are finished when you can write the playback with nothing filled in** —
+when every assumption has either been confirmed or has stopped mattering. Not
+after a set number of questions, and not when you run out of things to ask.
+There is no turn limit.
+
+**If six or so questions have not got you there**, the request probably needs a
+person more than it needs another question. Say that plainly, say what you do
+and do not understand, and leave it with them.
+
 ## What to do
 
 1. **Understand the request.** What would be true, in the running app, if this
@@ -321,10 +374,16 @@ whether the run goes on:
 
 `outcome` is exactly one of:
 
-- **`proceed`** — understood, in scope, reproduced if it is a bug.
-- **`needs_info`** — add `"question"`: the one thing you need to know,
-  answerable in a sentence. One question, not a list. Write it to the author,
-  in plain language, as the words they will read.
+- **`proceed`** — understood, in scope, reproduced if it is a bug. If there
+  was a conversation, add `"understood"`: the settled playback. The spec stage
+  reads the whole conversation, so nothing you learned is lost, and the person
+  is never asked to review a document.
+- **`needs_info`** — the conversation is open and it is their turn. Add
+  `"question"`: the one thing you want to know next, in the words they will
+  read. Add `"understood"` whenever you can say what you now believe is being
+  asked — that is the playback, and it is what tells the next run how far this
+  has got. This is not a dead end: they answer, and the item comes straight
+  back to you with the whole conversation.
 - **`out_of_scope`** — say why in `reason`, in plain language, as the words the
   author will read.
 - **`duplicate`** — set `"duplicate_of": "wi_…"` to the open item it duplicates,

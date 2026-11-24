@@ -124,6 +124,7 @@ export function schemaFor(path: string): Parameters<typeof assertValid>[0] | nul
   if (path.startsWith("live/")) return "live";
   if (path.startsWith("reviews/")) return "review";
   if (path === "install-record.json") return "install-record";
+  if (path.startsWith("brainstorms/")) return "brainstorm";
   // Files the layout does not name — the event cursor, the budget note — have
   // no shared schema. Guessing one would reject legitimate writes.
   return null;

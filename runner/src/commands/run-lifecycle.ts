@@ -1,5 +1,6 @@
 import { runId as newRunId } from "../lib/ids.js";
 import { FactoryStore, LEDGER, json, livePath, runPath, workItemPath, type Ledger } from "../lib/store.js";
+import { appendTurn, closeBrainstorm } from "./brainstorm.js";
 import { reportsHolding } from "./sandbox-reports.js";
 import type { GitHub } from "../lib/github.js";
 import { afterGates, type AfterGates } from "./run-plan.js";
@@ -461,6 +462,15 @@ export interface TriageResult {
   readonly duplicate_of?: string;
   /** For `needs_info`: the one question to put to the author. */
   readonly question?: string;
+  /**
+   * What the factory now believes is being asked, in its own words.
+   *
+   * The playback. Written whenever triage can say it, and read at the top of
+   * the next run so a conversation builds rather than restarting. When this
+   * can be written with nothing filled in, the conversation is over — that is
+   * the end condition, and there is no turn limit.
+   */
+  readonly understood?: string;
 }
 
 /** Problems with a triage result, or none. */
@@ -586,6 +596,16 @@ export async function writeTriage(gh: GitHub, workItem: string, result: TriageRe
   // asking the agent to "also comment", which meant the author heard nothing
   // whenever the agent wrote its outcome and stopped.
   await announceTriage(gh, item.id, item.source?.ref, result).catch(() => undefined);
+
+  // Keep the conversation. A question asked and forgotten is how the second
+  // turn ends up repeating the first.
+  if (result.outcome === "needs_info" && result.question !== undefined) {
+    await appendTurn(gh, item.id, { at: now, who: "factory", text: result.question }, result.understood ?? null, [
+      result.question,
+    ]).catch(() => undefined);
+  } else if (result.outcome === "proceed" && result.understood !== undefined) {
+    await closeBrainstorm(gh, item.id, result.understood, now).catch(() => undefined);
+  }
   return status;
 }
 

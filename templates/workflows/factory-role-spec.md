@@ -204,6 +204,12 @@ pre-agent-steps:
       GH_TOKEN: ${{ steps.read-token.outputs.token }}
       WORK_ITEM: ${{ inputs.work_item }}
     run: bsf fetch-work-item "$WORK_ITEM" --with-triage --out /tmp/gh-aw/agent/bsf/work-item.json
+  - name: Fetch the conversation held with the author
+    shell: bash
+    env:
+      GH_TOKEN: ${{ steps.read-token.outputs.token }}
+      WORK_ITEM: ${{ inputs.work_item }}
+    run: bsf brainstorm "$WORK_ITEM" --out /tmp/gh-aw/agent/bsf/brainstorm.txt
 
 post-steps:
   # What this step spent, for the caller's settle job: the agent's cost as
@@ -290,6 +296,22 @@ is written. Find that out now, not after the builder has spent an attempt.
 If the work item has `standing_goals`, a person has asked the factory to focus
 somewhere for a while. They explain why a request matters; they never change
 what it asks for or what may be touched.
+
+## What they actually said
+
+If `/tmp/gh-aw/agent/bsf/brainstorm.txt` has anything in it, read it before
+you research anything. It is the conversation triage held with the person who
+filed this, and it is the closest thing you have to having them in the room.
+What they said there outranks what you would otherwise infer from the issue
+text: they were asked directly, and they answered.
+
+Where the conversation settled something, it is settled — do not research it
+again or second-guess it. Where it marks something as the factory's own
+assumption that they did not correct, it is still an assumption, and the spec
+says so rather than stating it as fact.
+
+They are not going to read your spec. They had their say in the conversation.
+This is for the roles that build and verify.
 
 ## The goal
 
