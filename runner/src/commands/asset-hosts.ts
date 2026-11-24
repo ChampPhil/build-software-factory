@@ -1,17 +1,19 @@
 /**
- * The hosts a repo's own front end loads at runtime.
+ * The external hosts a repo's own pages load to render.
  *
- * The sandbox's egress allowlist covers package registries, so dependencies
- * install — but an app that pulls a library straight from a CDN in its HTML
- * gets no such help. In the first live install, a p5.js game loaded p5 from
- * cdnjs, the sandbox proxy refused the host, the browser reported
- * ERR_CERT_AUTHORITY_INVALID, and the canvas never rendered. Every screenshot
- * the factory attached to every PR was a blank page, politely captioned as
- * such, while the checks themselves passed on console output. The proof looked
- * worthless because the app under it was never running.
+ * Each one needs a **stub**, not egress: a sandbox is hermetic on purpose, so
+ * that a third party being down or rate-limiting a runner cannot change what
+ * the factory concludes about a change.
  *
- * Front-loading a CDN is what most hand-written pages do, so this is found by
- * reading the repo rather than by hoping the setup agent notices.
+ * Missing one is quiet and expensive. In the first live install a p5.js game
+ * loaded p5 from cdnjs; the request failed as ERR_CERT_AUTHORITY_INVALID, the
+ * canvas never drew, and every screenshot the factory attached to every PR was
+ * a blank page — politely captioned as such, while the checks passed on
+ * console output. It took the sandbox-amendment loop three rounds to work out
+ * why, because nothing crashed.
+ *
+ * Front-loading a CDN is what most hand-written pages do, so these are found by
+ * reading the repo rather than by hoping someone notices.
  */
 
 import { readFileSync, readdirSync, statSync } from "node:fs";
