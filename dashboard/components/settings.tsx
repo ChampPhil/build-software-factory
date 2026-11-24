@@ -88,7 +88,7 @@ function Control({ setting: s, value, was, disabled, onChange }: {
   return (
     <div className="row" style={{ gridTemplateColumns: "1fr auto" }}>
       <div>
-        <div className="row-title">{s.label}{changed && was !== null ? <span className="row-meta"> · was {describeValue(s, was)}</span> : null}</div>
+        <div className="row-title">{s.label}{changed && was !== null ? <span className="row-meta"> was {describeValue(s, was)}</span> : null}</div>
         <div className="row-meta">{s.help}</div>
       </div>
       {s.kind === "boolean" ? (

@@ -136,27 +136,27 @@ export function QuestionList({
         const result = sent[item.work_item];
         const question = issue === null ? null : (questions[issue] ?? null);
         return (
-          <div className="row" key={item.work_item} style={{ display: "block" }}>
+          <div className="row needs" key={item.work_item} style={{ display: "block" }}>
             <div className="row-title">{question ?? "The factory has a question about this request."}</div>
             <div className="row-meta">
-              {item.work_item}
-              {waitingFor(item.created_at, now) !== null && <> · {waitingFor(item.created_at, now)}</>}
-              {issue !== null && <> · issue #{issue}</>}
+              <span className="mono">{item.work_item}</span>
+              {waitingFor(item.created_at, now) !== null && <span>{waitingFor(item.created_at, now)}</span>}
+              {issue !== null && <span>issue #{issue}</span>}
             </div>
             {issue === null ? (
               <div className="row-meta">This request did not come from an issue, so there is nowhere to answer. Send it again.</div>
             ) : result === "sent" ? (
               <div className="row-meta">Sent. The factory picks the request up again in a moment.</div>
             ) : (
-              <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+              <div className="answer-field">
                 <textarea
                   aria-label={`Answer for ${item.work_item}`}
                   value={text[item.work_item] ?? ""}
                   onChange={(e) => setText((t) => ({ ...t, [item.work_item]: e.target.value }))}
-                  style={{ minHeight: 48, flex: 1 }}
+                  style={{ minHeight: 56 }}
                 />
                 <button
-                  className="btn primary"
+                  className="btn primary inline"
                   disabled={busy !== null || (text[item.work_item] ?? "").trim() === ""}
                   onClick={() => void answer(item.work_item, issue)}
                 >

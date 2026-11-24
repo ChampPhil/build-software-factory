@@ -40,7 +40,7 @@ function Video({ client, item }: { client: GitHubClient; item: EvidenceItem }) {
     return (
       <button className="btn" onClick={() => setOpen(true)} aria-label={`Play ${item.caption}`}>
         {poster.url !== null && <img src={poster.url} alt="" style={{ maxWidth: 320, display: "block", marginBottom: 6 }} />}
-        ▶ Play {[clock(item.seconds), size(item.bytes)].filter((x) => x !== "").join(" · ")}
+        ▶ Play {[clock(item.seconds), size(item.bytes)].filter((x) => x !== "").join("  ")}
       </button>
     );
   }

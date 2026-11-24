@@ -49,7 +49,7 @@ export default function Live() {
 
       {escalated.length > 0 && (
         <div className="section">
-          <h2 style={{ color: "var(--fail)" }}>Escalated · {escalated.length}</h2>
+          <div className="section-head"><h2 style={{ color: "var(--fail)" }}>Escalated</h2><span className="section-count">{escalated.length}</span></div>
           <p className="lede">These used all three attempts and stopped. They stay here until someone acts.</p>
           <div className="rows">
             {escalated.map((c) => (
@@ -99,7 +99,7 @@ export default function Live() {
 
       {queue.length > 0 && (
         <div className="section">
-          <h2>Merge queue · {queue.length}</h2>
+          <div className="section-head"><h2>Merge queue</h2><span className="section-count">{queue.length}</span></div>
           <p className="lede">
             One at a time, in the order each became eligible. Each is re-checked against the latest
             default branch before it lands, which is what stops two pull requests that pass alone

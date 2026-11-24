@@ -44,7 +44,8 @@ export default function Sessions() {
         </div>
       ) : (
         <Section
-          title={`Corrections from sessions · ${fromSessions.length}`}
+          title="Corrections from sessions"
+          count={fromSessions.length}
           lede="Grouped into problem classes. Fifteen instances of one correction is one candidate with fifteen occurrences."
         >
           <div className="rows">

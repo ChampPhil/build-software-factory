@@ -42,12 +42,12 @@ export function CandidateList({ client, candidates }: { client: GitHubClient; ca
       {candidates.map((c) => {
         const result = sent[c.id];
         return (
-          <div className="row" key={c.id} style={{ gridTemplateColumns: "1fr auto auto auto" }}>
+          <div className="row needs" key={c.id} style={{ gridTemplateColumns: "1fr auto auto auto" }}>
             <div>
               <div className="row-title">{c.problem_class}</div>
               <div className="row-meta">
-                {c.occurrences} occurrence{c.occurrences === 1 ? "" : "s"}
-                {c.sources[0]?.quote !== undefined && <> · &ldquo;{c.sources[0].quote}&rdquo;</>}
+                <span>{c.occurrences} occurrence{c.occurrences === 1 ? "" : "s"}</span>
+                {c.sources[0]?.quote !== undefined && <span>&ldquo;{c.sources[0].quote}&rdquo;</span>}
               </div>
             </div>
             <span className="tag hardening">{FIX[c.proposed_fix]}</span>
@@ -83,9 +83,9 @@ export function CorrectionList({ items, repo }: { items: readonly WorkItemDoc[];
             <div>
               <div className="row-title">{quote === "" ? i.title : quote}</div>
               <div className="row-meta">
-                @{i.source.actor} · {whereOf(i)}
-                {link !== null && <> · <a href={link} target="_blank" rel="noreferrer">their words</a></>}
-                {i.pr !== null && <> · <a href={`https://github.com/${repo}/pull/${i.pr}`} target="_blank" rel="noreferrer">hardening PR #{i.pr}</a></>}
+                @{i.source.actor} {whereOf(i)}
+                {link !== null && <> <a href={link} target="_blank" rel="noreferrer">their words</a></>}
+                {i.pr !== null && <> <a href={`https://github.com/${repo}/pull/${i.pr}`} target="_blank" rel="noreferrer">hardening PR #{i.pr}</a></>}
               </div>
             </div>
             <span className="tag hardening">{i.status.replace(/_/g, " ")}</span>

@@ -79,7 +79,7 @@ export default function Dashboard() {
         <Figure label="Human interactions / PR" value={h.humanInteractionsPerPr} format={asDecimal}
           sub="comments, change requests and human commits" />
         <Figure label="Runs" value={{ known: true, value: m.runs }} format={asCount}
-          sub={`${m.merged ?? 0} merged · ${m.escalated ?? 0} escalated`} />
+          sub={`${m.merged ?? 0} merged, ${m.escalated ?? 0} escalated`} />
       </dl>
 
       <Section

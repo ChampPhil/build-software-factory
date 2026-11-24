@@ -151,15 +151,22 @@ export function PageHead({
 }
 
 export function Section({
-  title, lede, children,
+  title, lede, count, children,
 }: {
   title: string;
   lede?: string | undefined;
+  /** How many things are in it. Set as its own element rather than glued to
+      the title with a middle dot, which is the commonest tell of a generated
+      page and reads as decoration rather than as a number. */
+  count?: number | undefined;
   children: ReactNode;
 }) {
   return (
     <section className="section">
-      <h2>{title}</h2>
+      <div className="section-head">
+        <h2>{title}</h2>
+        {count !== undefined && <span className="section-count">{count}</span>}
+      </div>
       {lede !== undefined && <p className="lede">{lede}</p>}
       {children}
     </section>
