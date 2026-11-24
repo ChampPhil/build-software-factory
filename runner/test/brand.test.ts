@@ -8,6 +8,19 @@ import { renderReport } from "../src/commands/pr-report.js";
 const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const read = (p: string): string => readFileSync(join(root, p), "utf8");
 
+describe("the credit line says the same thing everywhere", () => {
+  it("the dashboard's own markup uses the link label, not the product name", () => {
+    // These are two renderings of one line — Markdown for the pull requests
+    // the factory opens, JSX for the dashboard footer — and nothing but a
+    // test stops one being changed without the other. That is how the footer
+    // kept saying "Build Software Factory" after the link text had changed.
+    const jsx = read("dashboard/components/brand-credit.tsx");
+    expect(jsx).toContain("{BRAND.linkLabel}");
+    expect(jsx).not.toContain("{BRAND.name}");
+    expect(attributionMarkdown()).toContain("Build Your Software Factory");
+  });
+});
+
 describe("visible attribution", () => {
   it("is the same in the dashboard and the runner", () => {
     const dash = read("dashboard/lib/brand.ts");
