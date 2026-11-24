@@ -76,7 +76,7 @@ export function StandingGoals({ client, file }: { client: GitHubClient; file: St
           {goals.map((g) => (
             <div className="row" key={g.id} style={{ gridTemplateColumns: "1fr auto auto" }}>
               <span className="row-title">{g.text}</span>
-              <span className="row-meta">{GOAL_LANES.find((l) => l.value === (g.lane ?? ""))?.label ?? g.lane} · {g.by}</span>
+              <span className="row-meta">{GOAL_LANES.find((l) => l.value === (g.lane ?? ""))?.label ?? g.lane} {g.by}</span>
               <button className="btn" disabled={state === "sending"} onClick={() => void run(() => client.removeStandingGoal(g.id))}>
                 Remove
               </button>

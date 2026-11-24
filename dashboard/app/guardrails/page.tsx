@@ -84,7 +84,7 @@ export default function Guardrails() {
           <div style={{ display: "grid", gap: 18, maxWidth: 680 }}>
             <Gauge
               name="Total coverage"
-              read={`${gauge.high}% high mark · ${gauge.floor}% floor`}
+              read={`${gauge.high}% high mark, ${gauge.floor}% floor`}
               fraction={gauge.high / 100}
               markAt={gauge.floor / 100}
               markLabel="floor"
@@ -135,7 +135,8 @@ export default function Guardrails() {
       )}
 
       {retired.length > 0 && (
-        <Section title={`Cleared · ${retired.length}`} lede="These rules are at zero and enforced outright.">
+        <Section title="Cleared"
+          count={retired.length} lede="These rules are at zero and enforced outright.">
           <div className="rows">
             {retired.map((b) => (
               <div className="row" key={b.rule} style={{ gridTemplateColumns: "1fr auto" }}>
@@ -149,7 +150,8 @@ export default function Guardrails() {
 
       {hardened.length > 0 && client !== null && (
         <Section
-          title={`Hardened from corrections · ${hardened.length}`}
+          title="Hardened from corrections"
+          count={hardened.length}
           lede="Each time a person corrects an agent (a review comment, a change request, a fix they pushed, or a word in a local session), the factory changes the codebase so the mistake does not come back. Here is each correction and where it went."
         >
           <CorrectionList items={hardened} repo={session?.repo ?? ""} />
@@ -158,7 +160,8 @@ export default function Guardrails() {
 
       {pending.length > 0 && client !== null && (
         <Section
-          title={`Candidates · ${pending.length}`}
+          title="Candidates"
+          count={pending.length}
           lede="Problem classes mined from past corrections. Hardening picks how to fix each: a new static rule, a stronger verification requirement, or a refactor that makes the mistake impossible. All three are equal options."
         >
           <CandidateList client={client} candidates={pending} />

@@ -100,7 +100,7 @@ export default function Home() {
       <PageHead
         title="Waiting on you"
         lede="Everything that needs a person, oldest first. The factory keeps working on the rest."
-        actions={<Link className="btn primary" href="/live">Watch it work</Link>}
+        actions={<Link className="btn" href="/live">Watch it work</Link>}
       />
 
       {problem !== null && <Note tone="bad">{problem}</Note>}
@@ -116,12 +116,13 @@ export default function Home() {
 
       {escalated.length > 0 && (
         <Section
-          title={`Escalations · ${escalated.length}`}
+          title="Escalations"
+          count={escalated.length}
           lede="Work the factory could not finish. Each one used its three attempts."
         >
           <div className="rows">
             {escalated.map((item) => (
-              <div className="row" key={item.work_item} style={{ gridTemplateColumns: "auto 1fr auto auto" }}>
+              <div className="row needs" key={item.work_item} style={{ gridTemplateColumns: "auto 1fr auto auto" }}>
                 <Dot tone="fail" title="escalated" />
                 <span className="row-title mono">{item.work_item}</span>
                 <PipelineTag pipeline={item.pipeline} />
@@ -138,12 +139,13 @@ export default function Home() {
 
       {toApprove.length > 0 && (
         <Section
-          title={`Pull requests to approve · ${toApprove.length}`}
+          title="Pull requests to approve"
+          count={toApprove.length}
           lede="Read the evidence in the PR body first; the diff is below it."
         >
           <div className="rows">
             {toApprove.map((pr) => (
-              <div className="row" key={pr.number} style={{ gridTemplateColumns: "auto 1fr auto auto auto" }}>
+              <div className="row needs" key={pr.number} style={{ gridTemplateColumns: "auto 1fr auto auto auto" }}>
                 <Dot tone={pr.draft ? "run" : "pass"} title={pr.draft ? "draft" : "ready"} />
                 <a className="row-title" href={pr.html_url}>{pr.title}</a>
                 {pipelineOf(pr) !== null && <PipelineTag pipeline={pipelineOf(pr)!} />}
@@ -157,12 +159,13 @@ export default function Home() {
 
       {definitionPrs.length > 0 && (
         <Section
-          title={`Practices to approve · ${definitionPrs.length}`}
+          title="Practices to approve"
+          count={definitionPrs.length}
           lede="Standing instructions someone declared with /practice. Every agent will follow one once a trusted person approves it."
         >
           <div className="rows">
             {definitionPrs.map((pr) => (
-              <div className="row" key={pr.number} style={{ gridTemplateColumns: "auto 1fr auto auto" }}>
+              <div className="row needs" key={pr.number} style={{ gridTemplateColumns: "auto 1fr auto auto" }}>
                 <Dot tone="define" />
                 <a className="row-title" href={pr.html_url}>{pr.title}</a>
                 <span className="row-meta">{elapsedSince(pr.created_at)} old</span>
@@ -175,7 +178,8 @@ export default function Home() {
 
       {needsInfo.length > 0 && client !== null && (
         <Section
-          title={`Questions · ${needsInfo.length}`}
+          title="Questions"
+          count={needsInfo.length}
           lede="The factory asked one thing before it writes any code. It waits until you answer; nothing times out."
         >
           <QuestionList client={client} waiting={waiting} questions={questions.state === "ready" ? questions.data : {}} />
@@ -188,7 +192,7 @@ export default function Home() {
             <NewRequest client={client} initial={suggestion} onClose={() => setFiling(false)} />
           ) : (
             <div className="rows">
-              <div className="row" style={{ gridTemplateColumns: "1fr auto" }}>
+              <div className="row needs" style={{ gridTemplateColumns: "1fr auto" }}>
                 <div>
                   <div className="row-title">{suggestion.title}</div>
                   {suggestion.goal !== "" && <div className="row-meta">Goal: {suggestion.goal}</div>}
@@ -204,7 +208,8 @@ export default function Home() {
 
       {pendingCandidates.length > 0 && client !== null && (
         <Section
-          title={`Guardrail candidates · ${pendingCandidates.length}`}
+          title="Guardrail candidates"
+          count={pendingCandidates.length}
           lede="Mistakes people have corrected before. Accept one and the factory changes the codebase so it cannot recur; reject it and it is not proposed again."
         >
           <CandidateList client={client} candidates={pendingCandidates} />
@@ -213,12 +218,13 @@ export default function Home() {
 
       {(outside.length > 0 || waitingTrust.length > 0) && (
         <Section
-          title={`Outside requests · ${outside.length + waitingTrust.length}`}
+          title="Outside requests"
+          count={outside.length + waitingTrust.length}
           lede="From accounts the factory does not trust, including integrations' bots. Nothing starts until someone adds factory:accept."
         >
           <div className="rows">
             {outside.map((issue) => (
-              <div className="row" key={issue.number} style={{ gridTemplateColumns: "auto 1fr auto auto" }}>
+              <div className="row needs" key={issue.number} style={{ gridTemplateColumns: "auto 1fr auto auto" }}>
                 <Dot tone="idle" />
                 <a className="row-title" href={issue.html_url}>{issue.title}</a>
                 <span className="row-meta">{issue.user?.login ?? "unknown"}</span>
@@ -226,7 +232,7 @@ export default function Home() {
               </div>
             ))}
             {waitingTrust.map((item) => (
-              <div className="row" key={item.work_item} style={{ gridTemplateColumns: "auto 1fr auto" }}>
+              <div className="row needs" key={item.work_item} style={{ gridTemplateColumns: "auto 1fr auto" }}>
                 <Dot tone="idle" />
                 <span className="row-title mono">{item.work_item}</span>
                 <PipelineTag pipeline={item.pipeline} />

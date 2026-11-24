@@ -84,11 +84,11 @@ export default function Improvement() {
                         {p.runs.length} run{p.runs.length === 1 ? "" : "s"}
                         {p.pr !== undefined && repo !== undefined ? (
                           <>
-                            {" · "}
+                            {", "}
                             <a href={`https://github.com/${repo}/pull/${p.pr}`}>#{p.pr}</a>
                           </>
                         ) : p.work_item !== undefined ? (
-                          <> · {p.work_item}</>
+                          <>, {p.work_item}</>
                         ) : null}
                       </span>
                     </div>
@@ -100,7 +100,8 @@ export default function Improvement() {
 
           {latest?.unrouted !== undefined && latest.unrouted.length > 0 && (
             <Section
-              title={`Hardening runs that scored badly · ${latest.unrouted.length}`}
+              title="Hardening runs that scored badly"
+          count={latest.unrouted.length}
               lede="Hardening work was graded too. These failures were not filed as new hardening work, so one bad run cannot start another. They are here for a person to look at."
             >
               <div className="rows">
@@ -124,9 +125,9 @@ export default function Improvement() {
                   <div key={r.id} className="row" style={{ gridTemplateColumns: "1fr auto" }}>
                     <span className="row-title mono">{r.id}</span>
                     <span className="row-num row-meta">
-                      {r.window.runs} runs · {r.problems.length} problem
+                      {r.window.runs} runs, {r.problems.length} problem
                       {r.problems.length === 1 ? "" : "s"}
-                      {r.unrouted !== undefined && r.unrouted.length > 0 ? ` · ${r.unrouted.length} not routed` : ""}
+                      {r.unrouted !== undefined && r.unrouted.length > 0 ? `, ${r.unrouted.length} not routed` : ""}
                     </span>
                   </div>
                 ))}

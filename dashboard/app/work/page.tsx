@@ -72,7 +72,7 @@ export default function Work() {
 
       {shown.length > 0 && (
         <div className="section">
-          <h2>Open · {shown.length}</h2>
+          <div className="section-head"><h2>Open</h2><span className="section-count">{shown.length}</span></div>
           <div className="rows">
             {shown.map((item) => (
               <div className="row" key={item.work_item} style={{ gridTemplateColumns: "auto 1fr auto auto auto auto" }}>
@@ -99,7 +99,7 @@ export default function Work() {
 
       {recent.length > 0 && (
         <div className="section">
-          <h2>Finished in the last 30 days · {recent.length}</h2>
+          <div className="section-head"><h2>Finished in the last 30 days</h2><span className="section-count">{recent.length}</span></div>
           <p className="lede">Older than this lives in the run files, which are kept indefinitely.</p>
           <div className="rows">
             {recent.map((item) => (

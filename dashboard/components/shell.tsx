@@ -178,8 +178,8 @@ export function Shell({ children }: { children: ReactNode }) {
     );
   }
 
-  const counts: Partial<Record<string, { n: number; attention?: boolean }>> = {
-    "/live": openCount === null ? undefined : { n: openCount, attention: openCount > 0 },
+  const counts: Partial<Record<string, { n: number; attention?: boolean; live?: boolean }>> = {
+    "/live": openCount === null ? undefined : { n: openCount, live: openCount > 0 },
     "/work": openCount === null ? undefined : { n: openCount },
     "/runs": queueCount === null || queueCount === 0 ? undefined : { n: queueCount },
   };
@@ -191,8 +191,8 @@ export function Shell({ children }: { children: ReactNode }) {
           <b>Software Factory</b>
         </div>
         <button
-          className="btn primary"
-          style={{ margin: "0 12px 12px" }}
+          className="btn"
+          style={{ margin: "0 12px 16px" }}
           onClick={() => setComposing(true)}
         >
           New request
@@ -205,7 +205,7 @@ export function Shell({ children }: { children: ReactNode }) {
               <Link key={p.href} href={p.href} {...(current ? { "aria-current": "page" as const } : {})}>
                 <span>{p.label}</span>
                 {count !== undefined && (
-                  <span className={count.attention === true ? "count attention" : "count"}>{count.n}</span>
+                  <span className={`count${count.attention === true ? " attention" : ""}${count.live === true ? " live" : ""}`}>{count.n}</span>
                 )}
               </Link>
             );

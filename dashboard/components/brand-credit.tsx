@@ -7,7 +7,7 @@ export function BrandCredit() {
       Built with <a href={BRAND.url} target="_blank" rel="noopener noreferrer">{BRAND.name}</a> by {BRAND.author}
       {PRODUCTS.length > 0 && (
         <>
-          {" "}· More from {BRAND.author}:{" "}
+          {" "}More from {BRAND.author}:{" "}
           {PRODUCTS.map((p, i) => (
             <span key={p.url}>
               {i > 0 && ", "}

@@ -150,7 +150,7 @@ function RunDetail({ run, repo, client }: { run: RunFile; repo?: string | undefi
                   <Dot tone="fail" />
                   <span>
                     <b>{f.rule}</b>
-                    {f.file !== undefined && <span className="mono"> · {f.file}{f.line !== undefined && `:${f.line}`}</span>}
+                    {f.file !== undefined && <span className="mono"> {f.file}{f.line !== undefined && `:${f.line}`}</span>}
                     {f.message !== undefined && <div className="row-meta">{f.message}</div>}
                   </span>
                   <span className="row-meta">attempt {g.attempt}</span>
