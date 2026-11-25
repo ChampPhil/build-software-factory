@@ -213,7 +213,7 @@ try {
     // A stranger sent the bare link is told what this is before being asked
     // to sign in to it.
     await page.goto(`${base}/`);
-    await page.getByText(/Wake up to a pull request/).waitFor();
+    await page.getByRole("heading", { name: /Set up your automated software factory/ }).waitFor();
     ok("a stranger gets the landing page, not a sign-in form");
     check((await page.getByPlaceholder("owner/name").count()) === 0, "the landing does not demand a repository up front");
 
@@ -231,6 +231,11 @@ try {
     await page.getByRole("button", { name: /demo/ }).click();
     await page.getByText(/This is a demo/).waitFor();
     await visitAll(page, base, "demo");
+    await page.goto(`${base}/request/?id=wi-0143`);
+    await page.getByText("words that change what gets built").waitFor();
+    const talk = await page.locator("main").innerText();
+    check(/Transaction date/.test(talk) && /not yet checked/.test(talk) && /Where it stops being the same problem/.test(talk), "the frame is taught as a turn, unverified credits marked");
+    check(/Should a refund show under the date it happened/.test(talk) && !/\*\*/.test(talk), "and ends on its question, with no Markdown showing");
     for (const [from, to] of Object.entries(MOVED)) {
       await page.goto(base + from);
       await page.waitForURL((u) => u.pathname === to, { timeout: 5000 }).catch(() => {});

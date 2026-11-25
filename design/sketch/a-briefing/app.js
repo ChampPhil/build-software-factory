@@ -29,7 +29,7 @@
     reqPipe: "all",
     reqQuery: "",
     runFilter: "all",
-    talk: "live",          // first | live | cold | understood
+    talk: "live",          // first | frame | live | cold | understood
     mergeMethod: "squash",
     nextIssue: 224,
     nextPr: 225,
@@ -114,6 +114,7 @@
       <article class="item ask">
         <div class="where"><span class="tag you">Your answer moves this on</span><span>#${it.issue}</span><span>asked ${ago(F.waiting[0].since)}</span></div>
         <h3><a href="#r-${key(it)}" data-go="r-${key(it)}">${esc(it.title)}</a></h3>
+        ${it.issue === 214 ? named() : ""}
         <p class="voice">${esc(F.waiting[0].line)}</p>
         <form class="answer" data-act-submit="answer" data-k="${key(it)}">
           <textarea class="field" rows="1" aria-label="Your answer" placeholder="Answer here, or on the issue"></textarea>
@@ -276,7 +277,7 @@
       <div class="table req-t" role="table" aria-label="Requests">
         <div class="tr th" role="row"><span role="columnheader">Request</span><span role="columnheader">State</span><span role="columnheader">Kind</span><span role="columnheader">From</span><span role="columnheader">Opened</span><span role="columnheader" class="r">Cost</span></div>
         ${list.map((i) => `<a class="tr" role="row" href="#r-${key(i)}" data-go="r-${key(i)}">
-          <span role="cell" class="t"><b>${esc(i.title)}</b><small>${i.issue ? "#" + i.issue : "no issue"}${i.pr ? `, PR #${i.pr}` : ""}${i.priority === "high" ? ", high priority" : ""}</small></span>
+          <span role="cell" class="t"><b>${esc(i.title)}</b>${i.issue === 214 ? `<small>${esc(B.frame.named)}</small>` : ""}<small>${i.issue ? "#" + i.issue : "no issue"}${i.pr ? `, PR #${i.pr}` : ""}${i.priority === "high" ? ", high priority" : ""}</small></span>
           <span role="cell">${badge(i.status)}</span><span role="cell">${PIPE[i.pipeline]}</span>
           <span role="cell">${esc(i.source.actor === "factory" ? SOURCE[i.source.kind] : i.source.actor === "maraokafor" ? "You" : i.source.actor)}</span>
           <span role="cell">${ago(i.created_at)}</span><span role="cell" class="r">${usd(i.cost)}</span></a>`).join("") || `<p class="empty-row">No requests match. <button class="link" type="button" data-act="req-filter" data-v="all">Show all</button></p>`}
@@ -291,6 +292,32 @@
       <div class="who"><span>${t.who === "factory" ? "The factory" : t.by || "You"}</span><span>${opts.when || clock(t.at)}</span></div>
       <div class="text">${esc(t.text)}</div></div>`;
   }
+  /* The frame turn: the factory teaching the words for the request. The one
+     turn that is not a chat bubble, still in the thread, still the factory's,
+     and it ends on an ordinary question that is as easy to find as any other.
+     Labels take a clause or a noun phrase, because the factory writes both. */
+  const WORD = ["no", "one", "two", "three", "four", "five", "six"];
+  const sentence = (t) => (/[.!?:)\u201d]$/.test(t.trim()) ? t.trim() : t.trim() + ".");
+  function frameTurn(t, opts = {}) {
+    const f = B.frame, shown = f.terms.slice(0, 4), more = f.terms.length - shown.length;
+    return `<div class="turn f frame ${opts.latest ? "latest" : ""}" data-frame>
+      <div class="who"><span>The factory</span><span>${opts.when || clock(t.at)}</span><span>The words for this</span></div>
+      <div class="frame-body">
+        <p class="frame-named">${esc(f.named)}</p>
+        <h3 class="frame-h">The ${WORD[shown.length] || shown.length} words that change what gets built</h3>
+        <ol class="frame-terms">${shown.map((x) => `<li><b>${esc(x.term)}</b><span>${esc(sentence(x.means))}</span>
+          <dl><dt>From what you wrote</dt><dd>${esc(sentence(x.names))}</dd><dt>Lets you ask for</dt><dd>${esc(sentence(x.unlocks))}</dd>${x.prior_art ? `<dt>Used this way in</dt><dd>${esc(sentence(x.prior_art))} <span class="unchecked">not yet checked</span></dd>` : ""}</dl></li>`).join("")}</ol>
+        ${more ? `<p class="muted small">${more} more are in the notes the spec is written from.</p>` : ""}
+        <h3 class="frame-h">Where this has been solved before</h3>
+        <ul class="frame-near">${f.neighbors.slice(0, 2).map((n) => `<li><b>${esc(n.field)}</b><span>${esc(sentence(n.carries_over))}</span><span class="limit">Where it stops being the same problem: ${esc(sentence(n.breaks_down))}</span></li>`).join("")}</ul>
+        <h3 class="frame-h">What you didn't mention that will decide something</h3>
+        <ul class="frame-unsaid">${f.unmentioned.slice(0, 3).map((u) => `<li>${esc(sentence(u))}</li>`).join("")}</ul>
+        <p class="frame-note">None of this was looked up. The spec stage checks each word and drops what it can't confirm.</p>
+      </div>
+      <div class="text">${esc(t.text)}</div></div>`;
+  }
+  const named = () => `<p class="named"><span>What it is</span>${esc(B.frame.named)}</p>`;
+  const say = (t, opts = {}) => (t.kind === "frame" ? frameTurn(t, opts) : turn(t, opts));
   const LIVE = `<span class="pulse" aria-hidden="true"></span><span>Listening. Replies come back in a few seconds.</span>`;
   const COLD = `<span class="cold-dot" aria-hidden="true"></span><span>Gone quiet since yesterday. Send anyway: your answer wakes the factory, and the next question takes a few minutes.</span>`;
 
@@ -304,14 +331,15 @@
     const cold = S.talk === "cold";
     let turns = "", placeholder = "Answer the question", hint = "Posts to #214 as you. Answers typed on GitHub show up here too.";
     if (S.talk === "first") turns = turn(B.turns[0], { latest: true, when: "just now" });
+    else if (S.talk === "frame") turns = B.turns.slice(0, 3).map((t, i) => say(t, { latest: i === 2 })).join("");
     else if (S.talk === "understood") {
       const all = [...B.turns, B.reply, B.next, { at: "2026-11-25T13:33:20Z", who: "person", text: "Each instalment on its own date." }];
-      turns = `<button class="btn quiet" type="button" data-act="show-earlier" style="align-self:flex-start">Show the ${all.length - 3} earlier messages</button>${all.slice(-3).map((t) => turn(t)).join("")}
+      turns = `<button class="btn quiet" type="button" data-act="show-earlier" style="align-self:flex-start">Show the ${all.length - 3} earlier messages</button>${all.slice(-3).map((t) => say(t)).join("")}
         <section class="played" aria-labelledby="played-h"><h2 id="played-h">Here's what I'll build</h2><p class="voice">${esc(B.understood)}</p>
         <div class="acts"><button class="btn go" type="button" data-act="agree">That's right, build it</button><button class="btn" type="button" data-act="focus-compose">Correct something</button></div></section>`;
       placeholder = "Correct anything that's wrong";
       hint = "If this is right, you don't need to reply. Next you'll see a pull request with a recording of it working.";
-    } else turns = B.turns.map((t, i) => turn(t, { latest: i === B.turns.length - 1, when: cold ? "yesterday " + clock(t.at) : undefined })).join("");
+    } else turns = B.turns.map((t, i) => say(t, { latest: i === B.turns.length - 1, when: cold ? "yesterday " + clock(t.at) : undefined })).join("");
     return `<div class="talk-col"><div class="thread" aria-live="polite">${turns}</div>
       <div class="dock"><div class="status" data-status>${cold ? COLD : LIVE}</div>
         <form class="compose" data-act-submit="talk"><textarea rows="1" aria-label="Your answer" placeholder="${placeholder}"></textarea><button class="btn go" type="submit">Send</button></form>
@@ -423,6 +451,7 @@
         <dt>Opened</dt><dd>${new Date(it.created_at).toLocaleString("en-US", { weekday: "short", hour: "numeric", minute: "2-digit", timeZone: "America/New_York" })}</dd>
         ${it.merged_at ? `<dt>Merged</dt><dd>${clock(it.merged_at)}</dd>` : ""}${it.closed_at ? `<dt>Closed</dt><dd>${clock(it.closed_at)}</dd>` : ""}
         <dt>Spent</dt><dd>${usd(it.cost)} over ${it.runs.length} ${it.runs.length === 1 ? "run" : "runs"}</dd>
+        ${it.issue === 214 ? `<dt>How it read the request</dt><dd>${esc(B.frame.reading_taken)}<small>The other reading: ${esc(B.frame.readings[1].problem.toLowerCase())}, which would mean ${esc(B.frame.readings[1].tells_it_apart)}.</small></dd>` : ""}
         ${it.goal ? `<dt>What it's for</dt><dd>${esc(it.goal)}</dd>` : ""}
         ${it.success_check ? `<dt>How you'll know</dt><dd>${esc(it.success_check)}</dd>` : ""}
         ${it.pr ? `<dt>Pull request</dt><dd><a href="#r-${key(it)}-pr" data-go="r-${key(it)}-pr">#${it.pr}</a></dd>` : ""}
@@ -439,11 +468,11 @@
   }
 
   function request(route) {
-    const m = route.match(/^r-([a-z0-9]+)(?:-(talk|pr|runs|activity|first|live|cold|understood))?$/);
+    const m = route.match(/^r-([a-z0-9]+)(?:-(talk|pr|runs|activity|first|frame|live|cold|understood))?$/);
     const it = m && itemBy(m[1]);
     if (!it) return notFound();
     let tab = m[2];
-    if (["first", "live", "cold", "understood"].includes(tab)) { S.talk = tab; tab = "talk"; }
+    if (["first", "frame", "live", "cold", "understood"].includes(tab)) { S.talk = tab; tab = "talk"; }
     const tabs = [];
     if (it.issue === 214 || it.issue === 203 || (!it.issue && it.status === "needs_info")) tabs.push(["talk", "Conversation"]);
     if (it.pr) tabs.push(["pr", "Pull request"]);
@@ -456,14 +485,14 @@
     if (tab === "talk") return `<main class="wrap talking">
       <a class="back" href="#requests" data-go="requests">All requests</a>
       <header class="req-head"><div class="where">${badge(it.status)}<span>${it.issue ? "#" + it.issue : "no issue yet"}</span><span>${PIPE[it.pipeline]}</span><span>${usd(it.cost)} spent</span></div>
-        <h1>${esc(it.title)}</h1>${it.issue === 214 ? `<p class="asked">${esc(B.request)}</p>` : ""}</header>
+        <h1>${esc(it.title)}</h1>${it.issue === 214 ? `${named()}<p class="asked">${esc(B.request)}</p>` : ""}</header>
       <div class="tabs-row">${tabRow}<button class="btn quiet small" type="button" data-act="details" data-k="${key(it)}">Details</button></div>
       <div class="req-main" data-tab="talk">${callout(it)}${pane}</div>
     </main>`;
     return `<main class="wrap">
       <a class="back" href="#requests" data-go="requests">All requests</a>
       <header class="req-head"><div class="where">${badge(it.status)}<span>${it.issue ? "#" + it.issue : "no issue yet"}</span><span>${PIPE[it.pipeline]}</span>${it.pr ? `<span>PR #${it.pr}</span>` : ""}</div>
-        <h1>${esc(it.title)}</h1>${it.issue === 214 ? `<p class="asked">${esc(B.request)}</p>` : ""}</header>
+        <h1>${esc(it.title)}</h1>${it.issue === 214 ? `${named()}<p class="asked">${esc(B.request)}</p>` : ""}</header>
       ${tabRow}
       <div class="req-cols"><details class="m-details"><summary>Details: ${STATUS[it.status]}, ${PIPE[it.pipeline].toLowerCase()}, ${usd(it.cost)} spent</summary>${details(it)}</details><div class="req-main" data-tab="${tab}">${callout(it)}${pane}</div>${details(it)}</div>
     </main>`;
@@ -701,7 +730,7 @@ exit: ok`;
     if (drawer && S.drawer) drawer.innerHTML = drawerHtml();
     if (keepScroll) window.scrollTo(0, y);
     else if (route.startsWith("factory-")) { const el = document.getElementById("f-" + route.slice(8)); if (el) el.scrollIntoView(); }
-    else if (route === "r-214" || /^r-214-(talk|first|live|cold|understood)$/.test(route)) requestAnimationFrame(() => window.scrollTo(0, document.body.scrollHeight));
+    else if (route === "r-214" || /^r-214-(talk|first|frame|live|cold|understood)$/.test(route)) requestAnimationFrame(() => window.scrollTo(0, document.body.scrollHeight));
     else window.scrollTo(0, 0);
   }
   const go = (route) => window.showScreen(route);
@@ -971,7 +1000,7 @@ exit: ok`;
   const SCENARIOS = [
     ["home", "Briefing: things need you"], ["quiet", "Briefing: nothing needs you"], ["empty", "Briefing: before the first run"],
     ["r-203", "Request with a pull request and proof"], ["r-221", "Request with a run in flight"], ["run-01jd9ee0", "A run, live"],
-    ["r-214-first", "Conversation: first question"], ["r-214-live", "Conversation: live"], ["r-214-cold", "Conversation: gone cold"], ["r-214-understood", "Conversation: the playback"], ["r-n000a", "Conversation: no issue to answer on"],
+    ["r-214-first", "Conversation: first question"], ["r-214-frame", "Conversation: the words for it"], ["r-214-live", "Conversation: live"], ["r-214-cold", "Conversation: gone cold"], ["r-214-understood", "Conversation: the playback"], ["r-n000a", "Conversation: no issue to answer on"],
     ["r-207", "Request stuck after three tries"], ["r-222", "Request from someone new"], ["r-220", "Request closed as a duplicate"],
     ["requests", "All requests"], ["runs", "All runs"], ["guardrails", "Guardrails"], ["spend", "Spend and automation"], ["factory", "Factory: settings and more"],
     ["signin", "Sign in"], ["signin-pick", "Sign in: pick a repository"],
@@ -980,7 +1009,7 @@ exit: ok`;
     let r = e.detail;
     const scen = { quiet: "quiet", empty: "empty", home: "busy" };
     if (scen[r]) { S.mode = scen[r]; r = "home"; }
-    if (r === "r-214" || r === "r-214-talk") S.talk = S.talk === "understood" || S.talk === "first" ? "live" : S.talk;
+    if (r === "r-214" || r === "r-214-talk") S.talk = ["understood", "first", "frame"].includes(S.talk) ? "live" : S.talk;
     render(r);
     if (r === "r-214-live" && !new URLSearchParams(location.search).has("still")) setTimeout(() => sendTalk(B.reply.text), 700);
   });
@@ -989,6 +1018,6 @@ exit: ok`;
   cold.type = "button"; cold.textContent = "Let it go cold"; cold.className = "sc-cold";
   cold.addEventListener("click", () => { const s = $("[data-status]"); if (s) { S.talk = "cold"; s.innerHTML = COLD; } });
   document.querySelector(".sketch-chrome").appendChild(cold);
-  const syncCold = () => (cold.hidden = !/^r-214(-live|-first|-talk)?$/.test(current));
+  const syncCold = () => (cold.hidden = !/^r-214(-live|-first|-frame|-talk)?$/.test(current));
   window.addEventListener("screen", syncCold); syncCold();
 })();

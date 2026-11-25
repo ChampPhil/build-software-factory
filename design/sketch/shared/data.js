@@ -195,14 +195,43 @@ window.FACTORY = {
     turns: [
       { at: "2026-11-25T13:24:10Z", who: "factory", text: "Thanks, this is clear on the why. One question to start: who decides that an invoice is split — you when you send it, or the client when they pay?" },
       { at: "2026-11-25T13:26:02Z", who: "person", text: "Me, when I send it. Clients shouldn't be able to choose on their own." },
-      { at: "2026-11-25T13:26:14Z", who: "factory", text: "Got it. After the first instalment is paid, what should the invoice say — Partially paid, or stay as Sent until it's paid in full?" },
+      { at: "2026-11-25T13:26:14Z", who: "factory", kind: "frame", text: "After the first instalment is paid, what should the invoice say: Partially paid with the balance due, or Sent until it's paid in full?" },
       { at: "2026-11-25T13:28:40Z", who: "person", text: "Partially paid, and show what's still owed." },
       { at: "2026-11-25T13:28:52Z", who: "factory", text: "Should the second instalment have its own due date, or a fixed number of days after the first?" },
     ],
     reply: { at: "2026-11-25T13:31:05Z", who: "person", text: "Its own date. Usually 30 days later, but I want to pick." },
     next: { at: "2026-11-25T13:31:11Z", who: "factory", text: "Last one. Do reminders go out per instalment, on each one's own due date, or once for the invoice as a whole?" },
     open: ["Do reminders follow each instalment, or the invoice as a whole?"],
-    understood: "When you send an invoice, you can split it into two instalments, each with its own amount and due date; the second defaults to 30 days after the first and you can change it. Clients pay each instalment separately and can't change the split. Once the first is paid, the invoice shows Partially paid with the amount still owed. Each instalment gets its own reminders on its own due date. Invoices you don't split behave exactly as they do today, and your revenue report counts each instalment in the month it's paid.",
+    understood: "When you send an invoice, you can give it a payment schedule of two instalments, each with its own amount and due date; the second defaults to 30 days after the first and you can change it. It stays one invoice with one number. Clients pay each instalment separately and can't change the schedule. Once the first is paid, the invoice shows Partially paid with the balance due. Dunning follows each instalment, on its own due date. Invoices without a schedule behave exactly as they do today, and because your reports are on a cash basis, each instalment counts in the month it's paid.",
+    /* The words the conversation taught, ranked by how much each changes what
+       gets built. Unverified: the conversation has no web access, and the spec
+       stage confirms or cuts each one. Seven here, four on screen. */
+    frame: {
+      named: "A payment schedule: one invoice whose total falls due in two parts, each with its own date.",
+      terms: [
+        { term: "Payment schedule", means: "One invoice whose total is due in parts, each part with its own amount and due date", names: "\u201chalf up front and half later\u201d", unlocks: "one invoice with two due dates, instead of two invoices that split your reports", prior_art: "Stripe Invoicing and Xero, which both use the name" },
+        { term: "Balance due", means: "What is still owed after part of an invoice has been paid", names: "the weeks between the two payments, when the invoice is neither unpaid nor paid", unlocks: "a Partially paid state that shows the amount still outstanding" },
+        { term: "Cash basis", means: "Counting income in the month the money arrives, not the month it was invoiced", names: "\u201cit messes up my reports\u201d", unlocks: "choosing which month each instalment counts in, which is what your revenue report will show", prior_art: "small-business bookkeeping, as opposed to the accrual basis" },
+        { term: "Dunning", means: "The sequence of reminders sent while an amount is overdue", names: "nothing yet. It is what reminders become once one invoice has two due dates", unlocks: "reminders per instalment rather than per invoice" },
+        { term: "Deposit", means: "An amount paid before work starts, usually credited against a later invoice", names: "the first half, if it is paid before the work rather than for it", unlocks: "a different design: a deposit invoice and a final invoice, if that is what you mean" },
+        { term: "Credit note", means: "A document that reduces what a client owes on an invoice already sent", names: "what a refund on a split invoice would need", unlocks: "refunding part of a scheduled invoice without breaking its schedule" },
+        { term: "Ageing report", means: "Outstanding amounts grouped by how long they have been overdue", names: "where an unpaid second instalment would show up", unlocks: "seeing late instalments next to late invoices" },
+      ],
+      neighbors: [
+        { field: "Buy now, pay later (Klarna, Afterpay)", carries_over: "One purchase split into scheduled parts, each tracked and reminded on its own", breaks_down: "There a lender pays the merchant in full and carries the risk; here you are owed the second half yourself, so a missed instalment is your loss", terms: ["instalment plan", "missed payment"] },
+        { field: "Progress billing in construction", carries_over: "One contract billed in stages, with what has been paid and what is left always visible", breaks_down: "Stages there fall due when work is finished; your instalments fall due on dates, whatever happens to the work", terms: ["retainage"] },
+      ],
+      unmentioned: [
+        "What happens when a client pays both instalments at once",
+        "Whether tax is split across the instalments or charged on the first",
+        "What a partial refund does to an instalment that has not been paid yet",
+      ],
+      readings: [
+        { problem: "One invoice paid in two parts", term: "payment schedule", tells_it_apart: "one invoice number, one total, two due dates" },
+        { problem: "A deposit, then a final invoice", term: "deposit invoice", tells_it_apart: "two invoice numbers, the second reduced by the first" },
+      ],
+      reading_taken: "One invoice in two parts, because you said the trouble is that two invoices mess up your reports.",
+    },
     holder: "run_01JDB9Y73MY63FCH26W14WMCHW",
   },
 

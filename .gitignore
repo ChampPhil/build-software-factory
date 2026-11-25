@@ -7,3 +7,7 @@ runner/dist/
 .bsf-rule-check/
 dashboard/.next/
 dashboard/out/
+
+# Python bytecode
+__pycache__/
+*.pyc

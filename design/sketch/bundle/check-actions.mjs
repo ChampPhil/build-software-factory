@@ -90,6 +90,8 @@ const DATA = [
   ["Duplicate and triage reason", "r-220", null, ["duplicate of", "Same request as #203"]],
   ["Conversation: first question, live, cold, playback, no issue", "r-214-first", null, ["who decides that an invoice is split", "Listening. Replies come back"]],
   ["Conversation gone cold", "r-214-cold", null, ["Gone quiet since yesterday"]],
+  ["Conversation: the frame, taught as a turn and ending on a question", "r-214-frame", null, ["A payment schedule: one invoice", "words that change what gets built", "Balance due", "From what you wrote", "Lets you ask for", "not yet checked", "Where this has been solved before", "Where it stops being the same problem", "didn't mention", "None of this was looked up", "what should the invoice say"]],
+  ["The frame's one-sentence name beside the request", "r-214", null, ["What it is", "A payment schedule"]],
   ["Conversation details in a drawer", "r-214", async (p) => { await p.click(".tabs-row [data-act=details]"); }, ["Details", "Chosen by the chief of staff", "What it's for", "factory:feature"]],
   ["Conversation playback", "r-214-understood", null, ["Here's what I'll build", "That's right, build it", "Correct something"]],
   ["Conversation with nowhere to answer", "r-n000a", null, ["nowhere to answer it yet", "Open an issue for it"]],

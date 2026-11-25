@@ -7,6 +7,7 @@ import { useSearchParams } from "next/navigation";
 import { useBrainstorm, useIssueComments, useRunFiles, useWorkItems } from "@/lib/data";
 import { canMove, MOVABLE } from "@/lib/routing";
 import { questionFrom } from "@/lib/questions";
+import { sentence } from "@/lib/frame";
 import {
   CLOSED_STATUSES, OPEN_STATUSES, SOURCE, ago, clock, issueOf, pipeName, requestIds, requestsFrom, runsFor, statusName, titleOf, usd, type Request,
 } from "@/lib/view";
@@ -97,7 +98,12 @@ function OneRequest() {
         {spent > 0 && <span>{usd(spent)} spent</span>}
       </div>
       <h1>{r.title}</h1>
-      {named !== undefined && named.trim() !== "" && named !== r.title && <p className="asked">The factory calls it: {named}</p>}
+      {named !== undefined && named.trim() !== "" && named !== r.title && (
+        <p className="named">
+          <span>What it is</span>
+          {sentence(named)}
+        </p>
+      )}
     </header>
   );
 
@@ -320,6 +326,9 @@ function ReopenButton({ issue }: { issue: number }) {
 
 function Details({ request: r, spent, runs }: { request: Request; spent: number; runs: number }) {
   const { client, act, ask, issues, repo } = useApp();
+  const convo = useBrainstorm(client, r.id);
+  const frame = convo.state === "ready" ? convo.data?.frame : undefined;
+  const other = frame?.readings?.find((x) => !(frame.reading_taken ?? "").toLowerCase().includes(x.term.toLowerCase()));
   const doc = r.doc;
   const issue = r.issue === null || issues.state !== "ready" ? undefined : issues.data.find((i) => i.number === r.issue);
   const movable = canMove(r.status);
@@ -414,6 +423,15 @@ function Details({ request: r, spent, runs }: { request: Request; spent: number;
         <dd>
           {usd(spent)} over {runs} {runs === 1 ? "run" : "runs"}
         </dd>
+        {frame?.reading_taken !== undefined && (
+          <>
+            <dt>How it read the request</dt>
+            <dd>
+              {sentence(frame.reading_taken)}
+              {other !== undefined && <small>The other reading: {other.problem.charAt(0).toLowerCase() + other.problem.slice(1)}, which would mean {sentence(other.tells_it_apart)}</small>}
+            </dd>
+          </>
+        )}
         {doc?.goal !== undefined && (
           <>
             <dt>What it&rsquo;s for</dt>

@@ -207,6 +207,7 @@ The Briefing, chosen from three sketches in `design/sketch/`. The page is writte
 - **One dark, wide thing.** Finished work waiting to merge is the only dark card on the page, in both themes, because it is the thing a person came to do.
 - **Status carries the color.** One blue for what is yours to do, green for done, red for stuck; everything else is ink on paper.
 - **The conversation is the page.** While a request is being talked through, the chat takes the page's full width, the factory on the left and the person on the right, with details in a drawer.
+- **The frame is taught, not filed.** When the conversation works out the words for a request (`brainstorm.frame`), it appears as its own turn in the thread: what the request is, the top terms with where each came from and what it lets you ask for, neighbouring fields with where each stops applying, and what was not mentioned, ending on the next ordinary question. Nothing in it was looked up, and it says so; a credit is marked not yet checked. `frame.named` also shows beside the request's title. It is lighter than the playback, which is where the person agrees to the job.
 - **Everything in place.** Merge, request changes, answer, retry, drop, accept, adopt, add a rule, change a setting: each is a button where the thing is, says what it did, and never sends the person to GitHub to press it.
 - **Light, dark and phone,** following the system or the person's choice in the account menu. No inline styles: every look is a class in `styles/globals.css`.
 
