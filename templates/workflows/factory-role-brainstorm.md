@@ -119,7 +119,12 @@ timeout-minutes: 25
 # well under it; it stops a runaway before it costs a week's budget.
 # A conversation is cheap: a question and a reply, several times over. Well
 # under a build, and it stops a loop that will not end from costing real money.
-max-ai-credits: 15
+# Raised from 15 for the frame. Naming what a request is — the terms, the
+# neighbouring fields, where each analogy fails — is the one part of this role
+# that is real thinking rather than a question and a reply, and it happens
+# once per conversation. A frame that runs out of credits half-written is
+# worse than no frame, because the person is then taught half a vocabulary.
+max-ai-credits: 25
 
 tools:
   bash: [":*"]
@@ -210,7 +215,7 @@ pre-agent-steps:
       BUDGET_KEY: ${{ inputs.budget_key || format('{0}-{1}-brainstorm-{2}', github.run_id, github.run_attempt, inputs.attempt) }}
       PIPELINE: ${{ inputs.pipeline }}
       MODEL: ${{ inputs.model }}
-    run: bsf budget reserve --key "$BUDGET_KEY" --pipeline "$PIPELINE" --role brainstorm --model "$MODEL" --cap 15 --detection-model claude-haiku-5-5 --detection-cap 50
+    run: bsf budget reserve --key "$BUDGET_KEY" --pipeline "$PIPELINE" --role brainstorm --model "$MODEL" --cap 25 --detection-model claude-haiku-5-5 --detection-cap 50
   # Read-only, for the steps that fetch this item's data before the agent
   # starts. Minted here rather than handed to the agent: step outputs never
   # reach the agent's sandbox.
@@ -369,14 +374,74 @@ Never ask what you can read. The codebase, the context files and the
 conversation are all in front of you. A question whose answer is in
 `feature-map.md` wastes their time and tells them you did not look.
 
+## Name the thing, and teach them the name
+
+Most requests arrive in vague words, and a request filed in vague words gets
+built in vague words. The fix is not to ask more questions — it is to work out
+what this **is**, in the terms the field already uses, and then **tell them**.
+
+Telling them is the part that matters. If they do not have the word for the
+thing, every question you ask about it lands on somebody with no way to answer
+it precisely, and you get a guess back that you then build on. Give them the
+word and the next three answers are worth three times as much.
+
+Work it out from their files, their code and what they actually wrote — not
+from a summary of it, and not from the issue title alone.
+
+**If the request could name more than one problem, that is your first
+question.** Not an open one. Name the two or three problems it could be, give
+the one term for each, and give the sign that tells them apart. "Is the thing
+you cannot do right now X or Y? If it's X you'd be seeing <sign>." That is a
+question only they can answer and the answer redirects everything after it.
+An open question here just gets you a longer version of the issue text.
+
+Then, early — once an answer or two has settled which problem this is — teach
+the frame. One turn, with `bsf brainstorm frame`. You supply:
+
+- `named` — what this is, one plain sentence, with the one term that names it.
+- `terms` — 8 to 12, **ranked by how much each would change what gets built**.
+  Not alphabetical, not by how clever they sound. Each needs what it means in
+  one plain sentence, the part of **what they actually said** that it names,
+  what having it lets them ask for, and a real project, paper or system that
+  uses it that way if you know of one. A term that names nothing they said is
+  a term you went looking for. A term that unlocks nothing is vocabulary.
+- `neighbors` — 2 or 3 fields that solved this shape of problem under other
+  names. What carries over, **where the analogy breaks**, and which terms come
+  back. Where it breaks is required: an analogy with no stated limit is the one
+  that gets over-applied later.
+- `unmentioned` — what they did not mention and should care about.
+- `readings` and `reading_taken` if it was ambiguous.
+
+They see the top few terms and neighbours; the rest goes to the spec stage,
+which reads all of it. So write the full list even though the comment is
+shorter — the ranking is how you decide what they see.
+
+**You have no web access.** Do not invent a link and do not cite a paper you
+are unsure of; name prior art only where you are confident what it is, and
+leave it out otherwise. The whole frame is passed on marked unverified, and
+the spec stage — which does have research egress — confirms each term against
+a real source and cuts what it cannot confirm. Your job is to name things
+accurately, not to prove them.
+
+The frame is **not a gate**. It ends with your next question, and they are
+free to ignore every word of it and just answer. Do not ask them to approve
+it, do not wait for them to acknowledge it, and do not post a second frame to
+correct a term unless an answer actually showed it was the wrong term.
+
+Then carry on. The things in `unmentioned` that genuinely change the build are
+your next questions, one at a time, in rank order.
+
 ## How it ends
 
 The conversation is over when you can write down what they are asking for
 **with nothing left to fill in** — no "presumably", no "some kind of", no
 placeholder. That is the test. Not a number of turns.
 
-Play it back before you finish. Say what you now believe they want, in your
-own words, and mark anything you are assuming. They correct it or they agree;
+Play it back before you finish. Say what you now believe they want, **in the
+words you taught them** rather than the words the request arrived in, and mark
+anything you are assuming. If the frame named this a X, the playback says X;
+a playback that slides back into the vague original words is a sign the frame
+never actually took. They correct it or they agree;
 either is useful. This is their last cheap chance to stop you building the
 wrong thing, and it costs them one read.
 
@@ -395,6 +460,13 @@ Three, and they are the only way you talk to them:
 ```bash
 # Ask. One comment on the issue, one turn in the log, both or neither.
 bsf brainstorm say "$WORK_ITEM" --issue <N> --text "your question"
+
+# Teach the frame and ask the next question, in one turn. Write the JSON to a
+# file first; it is nested, and a shell will mangle a term's meaning quoted
+# into an argument. It is refused if a term has no means/names/unlocks, or a
+# neighbour no breaks_down, because those are what make it worth their read.
+bsf brainstorm frame "$WORK_ITEM" --issue <N> --file /tmp/frame.json \
+  --question "your next question"
 
 # Wait for the answer. Blocks. Prints what they said, or prints "quiet" on the
 # first line if they have gone away.
@@ -418,12 +490,16 @@ conversation cannot see.
 
 ## What to do
 
-1. Read everything above.
-2. If the conversation is empty, ask your first question with `say`. If it is
-   not, read it and carry on from where it stopped.
+1. Read everything above, and work out what this is before you type anything.
+2. If the conversation is empty: if the request could be two or three
+   different problems, ask which with `say`, naming each and the sign that
+   tells them apart. Otherwise ask your first open question with `say`. If the
+   conversation is not empty, read it and carry on from where it stopped.
 3. `wait` for the answer.
-4. If you got one: is there anything left you genuinely cannot write down
-   without guessing? If yes, ask the next question and `wait` again. If no,
+4. If no frame has been taught yet and you now know which problem this is,
+   teach it with `frame`, ending on your next question. Then `wait`.
+5. Otherwise: is there anything left you genuinely cannot write down without
+   guessing? If yes, ask the next question with `say` and `wait` again. If no,
    play back your understanding with `say`, `wait` once for a correction, and
    then `close`.
-5. If you got `quiet`: stop. Say nothing more.
+6. If you got `quiet` at any point: stop. Say nothing more.

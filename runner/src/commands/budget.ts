@@ -372,7 +372,7 @@ export const ROLE_CAPS: Readonly<Record<string, number>> = {
   // A conversation is a question and a reply, several times over: cheap beside
   // any step that writes code, and capped low so a loop that will not end
   // cannot cost real money.
-  brainstorm: 15,
+  brainstorm: 25,
   spec: 300,
   builder: 400,
   verifier: 200,

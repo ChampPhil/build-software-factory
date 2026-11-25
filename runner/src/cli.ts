@@ -186,6 +186,7 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
   bsf brainstorm WORK_ITEM [--out PATH]
       The conversation held with the author so far, for a role to read.
   bsf brainstorm say WORK_ITEM --issue N --text TEXT [--understood TEXT]
+  bsf brainstorm frame WORK_ITEM --issue N --file FRAME.json --question TEXT
       Ask the author something: one comment on the issue, one turn in the log.
   bsf brainstorm wait WORK_ITEM --issue N [--idle SECONDS] [--poll SECONDS]
       Block until the author answers, then print what they said. Exits 0 with
@@ -2077,7 +2078,7 @@ async function brainstormCommand(second: string | undefined, rest: readonly stri
   // `bsf brainstorm say|wait|close WORK_ITEM ...` holds the conversation;
   // `bsf brainstorm WORK_ITEM` reads it. The verbs are checked first, so a
   // work item is never mistaken for one.
-  if (second === "say" || second === "wait" || second === "close") {
+  if (second === "say" || second === "wait" || second === "close" || second === "frame") {
     return brainstormTurnCommand(second, rest[0], args);
   }
   const id = second;
@@ -2101,7 +2102,7 @@ async function brainstormCommand(second: string | undefined, rest: readonly stri
  * context, so a fourth question knows what the first three settled without
  * anything being re-read or re-primed.
  */
-async function brainstormTurnCommand(sub: "say" | "wait" | "close", workItem: string | undefined, args: Args): Promise<number> {
+async function brainstormTurnCommand(sub: "say" | "wait" | "close" | "frame", workItem: string | undefined, args: Args): Promise<number> {
   if (workItem === undefined || workItem === "") die(`usage: bsf brainstorm ${sub} WORK_ITEM ...`);
   const gh = new GitHub({ repo: requireRepo() });
   const bs = await import("./commands/brainstorm.js");
@@ -2128,6 +2129,34 @@ async function brainstormTurnCommand(sub: "say" | "wait" | "close", workItem: st
       ...(typeof args["understood"] === "string" ? { understood: args["understood"] } : {}),
     });
     process.stdout.write(`asked on #${issue} (comment ${r.commentId})\n`);
+    return 0;
+  }
+
+  if (sub === "frame") {
+    // Structure in a file rather than a dozen flags: the frame is nested, and
+    // a shell quoting a term's meaning into an argument is how one of them
+    // ends up truncated at an apostrophe.
+    const file = typeof args["file"] === "string" ? args["file"] : "";
+    const question = typeof args["question"] === "string" ? args["question"].trim() : "";
+    if (file === "" || question === "") {
+      die("usage: bsf brainstorm frame WORK_ITEM --issue N --file FRAME.json --question TEXT");
+    }
+    let raw: unknown;
+    try {
+      raw = JSON.parse(readFileSync(file, "utf8"));
+    } catch (e) {
+      die(`cannot read the frame at ${file}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    const frame = bs.parseFrame(raw);
+    const r = await bs.sayFrame(gh, {
+      workItem,
+      issue,
+      frame,
+      question,
+      now: nowIso(),
+      ...(Array.isArray(args["open"]) ? { open: (args["open"] as string[]) } : {}),
+    });
+    process.stdout.write(`framed and asked on #${issue} (comment ${r.commentId})\n`);
     return 0;
   }
 
