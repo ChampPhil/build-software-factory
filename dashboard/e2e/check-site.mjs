@@ -213,7 +213,7 @@ try {
     // A stranger sent the bare link is told what this is before being asked
     // to sign in to it.
     await page.goto(`${base}/`);
-    await page.getByText(/Wake up to a pull request/).waitFor();
+    await page.getByRole("heading", { name: /Set up your automated software factory/ }).waitFor();
     ok("a stranger gets the landing page, not a sign-in form");
     check((await page.getByPlaceholder("owner/name").count()) === 0, "the landing does not demand a repository up front");
 
