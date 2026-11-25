@@ -536,6 +536,35 @@ details.token summary { cursor: pointer; width: fit-content; }
 @keyframes rise { from { opacity: 0; translate: 0 8px; } }
 .sc-cold { font: inherit; }
 
+/* The frame turn: the factory teaching the words for the request. A longer,
+   structured turn in the thread, quieter than the playback, ending on an
+   ordinary question set exactly like every other. */
+.turn.frame { max-width: 50rem; }
+.frame-body { border-left: 2px solid var(--rule); padding: .2rem 0 .2rem 1.25rem; margin: .35rem 0 1rem; display: grid; gap: .85rem; color: var(--ink-2); font-size: 1rem; max-width: 46rem; }
+.frame-named { font-family: var(--voice); font-optical-sizing: auto; font-size: 1.3rem; line-height: 1.4; color: var(--ink); margin: 0; text-wrap: pretty; }
+.frame-h { font-size: .95rem; font-weight: 650; color: var(--ink); margin: .5rem 0 0; }
+.frame-terms { margin: 0; padding-left: 1.3rem; display: grid; gap: .9rem; }
+.frame-terms li::marker { color: var(--ink-3); font-weight: 600; }
+.frame-terms li > b, .frame-near li > b { display: block; color: var(--ink); font-weight: 650; }
+.frame-terms dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: .2rem .9rem; margin: .4rem 0 0; font-size: .93rem; }
+.frame-terms dt { color: var(--ink-3); }
+.frame-terms dd { margin: 0; }
+.unchecked { font-size: .78rem; font-weight: 600; color: var(--ink-3); border: 1px solid var(--rule); border-radius: 999px; padding: 0 .45rem; white-space: nowrap; }
+.frame-near, .frame-unsaid { margin: 0; padding-left: 1.1rem; display: grid; gap: .6rem; }
+.frame-near span { display: block; }
+.frame-near .limit { color: var(--ink-3); font-size: .93rem; }
+.frame-note { margin: 0; color: var(--ink-3); font-size: .88rem; }
+.thread .turn.frame .text { padding-top: .1rem; }
+.named { margin: .6rem 0 0; color: var(--ink-2); font-size: 1rem; max-width: var(--measure); }
+.named span { display: block; font-size: .82rem; font-weight: 600; color: var(--ink-3); }
+.req-head .named { font-size: 1.1rem; }
+.item.ask .named { margin: .5rem 0 0; }
+@media (max-width: 760px) {
+  .frame-body { padding-left: .9rem; }
+  .frame-terms dl { grid-template-columns: 1fr; gap: 0; }
+  .frame-terms dt { margin-top: .3rem; }
+}
+
 /* ---------- Narrower screens ---------- */
 @media (max-width: 1180px) {
   .search { min-width: 0; }

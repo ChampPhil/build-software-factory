@@ -62,6 +62,7 @@ link in the place you'd look for it.
 | --- | --- |
 | Every work item, in all ten statuses, with source, routing and its reason, priority, labels, goal, success check, parent, related, previous PRs, triage reason, cost, timestamps, id | Requests (filters by state, kind, text); request page details |
 | The conversation: turns, open questions, the playback, live or cold, and requests with nowhere to answer | Briefing; Conversation tab |
+| The frame (`brainstorm.frame`): what the request is in one sentence, the top four terms with what each means, where it came from in the request and what it lets you ask for, unverified credits marked, two neighbouring fields with where each stops applying, what was not mentioned, and the question it ends on. `named` also shows under the title on the briefing, the requests list and the request page | Conversation tab, as its own turn; `named` beside the title |
 | Every run, in all eight outcomes plus running, with steps (role, model, attempt, time, tokens, cost, exit), gates (attempt, commit, result, failures, coverage), artifacts kept, people's interactions, transcript | Runs; run page; request Runs tab |
 | What's running this second: step, attempt, time and cost so far | Briefing rail; run page (ticks live) |
 | The pull request report: three-line summary, proof blocks in order with captions, diagram, where to look, read-more documents | Briefing screening; Pull request tab |
