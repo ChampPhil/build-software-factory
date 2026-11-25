@@ -159,6 +159,7 @@
         "type": "object",
         "properties": [
           "closed_at",
+          "frame",
           "heartbeat_at",
           "holder",
           "last_comment_id",
@@ -232,6 +233,127 @@
       },
       "/properties/last_comment_id": {
         "type": "integer"
+      },
+      "/properties/frame": {
+        "type": "object",
+        "properties": [
+          "named",
+          "neighbors",
+          "reading_taken",
+          "readings",
+          "terms",
+          "unmentioned"
+        ],
+        "additionalProperties": false
+      },
+      "/properties/frame/properties/readings": {
+        "type": "array",
+        "maxItems": 3
+      },
+      "/properties/frame/properties/readings/items": {
+        "type": "object",
+        "properties": [
+          "problem",
+          "tells_it_apart",
+          "term"
+        ],
+        "required": [
+          "problem",
+          "tells_it_apart",
+          "term"
+        ],
+        "additionalProperties": false
+      },
+      "/properties/frame/properties/readings/items/properties/problem": {
+        "type": "string"
+      },
+      "/properties/frame/properties/readings/items/properties/term": {
+        "type": "string"
+      },
+      "/properties/frame/properties/readings/items/properties/tells_it_apart": {
+        "type": "string"
+      },
+      "/properties/frame/properties/reading_taken": {
+        "type": "string"
+      },
+      "/properties/frame/properties/named": {
+        "type": "string"
+      },
+      "/properties/frame/properties/terms": {
+        "type": "array",
+        "maxItems": 12
+      },
+      "/properties/frame/properties/terms/items": {
+        "type": "object",
+        "properties": [
+          "means",
+          "names",
+          "prior_art",
+          "term",
+          "unlocks"
+        ],
+        "required": [
+          "means",
+          "names",
+          "term",
+          "unlocks"
+        ],
+        "additionalProperties": false
+      },
+      "/properties/frame/properties/terms/items/properties/term": {
+        "type": "string"
+      },
+      "/properties/frame/properties/terms/items/properties/means": {
+        "type": "string"
+      },
+      "/properties/frame/properties/terms/items/properties/names": {
+        "type": "string"
+      },
+      "/properties/frame/properties/terms/items/properties/prior_art": {
+        "type": "string"
+      },
+      "/properties/frame/properties/terms/items/properties/unlocks": {
+        "type": "string"
+      },
+      "/properties/frame/properties/neighbors": {
+        "type": "array",
+        "maxItems": 3
+      },
+      "/properties/frame/properties/neighbors/items": {
+        "type": "object",
+        "properties": [
+          "breaks_down",
+          "carries_over",
+          "field",
+          "terms"
+        ],
+        "required": [
+          "breaks_down",
+          "carries_over",
+          "field"
+        ],
+        "additionalProperties": false
+      },
+      "/properties/frame/properties/neighbors/items/properties/field": {
+        "type": "string"
+      },
+      "/properties/frame/properties/neighbors/items/properties/carries_over": {
+        "type": "string"
+      },
+      "/properties/frame/properties/neighbors/items/properties/breaks_down": {
+        "type": "string"
+      },
+      "/properties/frame/properties/neighbors/items/properties/terms": {
+        "type": "array"
+      },
+      "/properties/frame/properties/neighbors/items/properties/terms/items": {
+        "type": "string"
+      },
+      "/properties/frame/properties/unmentioned": {
+        "type": "array"
+      },
+      "/properties/frame/properties/unmentioned/items": {
+        "type": "string"
       }
     },
     "candidates.json": {

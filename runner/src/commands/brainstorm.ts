@@ -39,6 +39,69 @@ export interface BrainstormTurn {
   readonly text: string;
 }
 
+/**
+ * A reading of an ambiguous request: the problem it might be, the word for
+ * that problem, and the sign that separates it from the other readings.
+ *
+ * Recorded because "which of these is it?" is a better opening question than
+ * any open one. It is the one question only the person can answer, the answer
+ * redirects everything downstream, and it costs them a glance rather than an
+ * essay.
+ */
+export interface Reading {
+  readonly problem: string;
+  readonly term: string;
+  readonly tells_it_apart: string;
+}
+
+/** One expert word, and what having it lets somebody ask for. */
+export interface FrameTerm {
+  readonly term: string;
+  readonly means: string;
+  /** The part of what they actually said that this word names. */
+  readonly names: string;
+  /** A project, paper or system that uses it this way. Unverified. */
+  readonly prior_art?: string;
+  /** What this word lets someone ask for that they could not before. */
+  readonly unlocks: string;
+}
+
+/** A field that solved this shape of problem under other names. */
+export interface Neighbor {
+  readonly field: string;
+  readonly carries_over: string;
+  /** Where the analogy fails. Required: one with no stated limit gets over-applied. */
+  readonly breaks_down: string;
+  readonly terms?: readonly string[];
+}
+
+/**
+ * The expert words for what is being asked.
+ *
+ * A request filed in vague words gets built in vague words, and the one thing
+ * that reliably changes that is naming it. So the conversation works out what
+ * this *is* before it starts asking about details.
+ *
+ * This is taught to the person, not kept from them. The naming has to reach
+ * whoever filed the request, or every later question lands on somebody with no
+ * word for the thing being asked about, and their answers are guesses — which
+ * is the failure the frame exists to prevent. It is posted as a turn and never
+ * as a gate: they take the vocabulary or they just answer the question at the
+ * end of it.
+ *
+ * The spec stage reads it too, and is the only stage that *can* confirm any of
+ * it: the conversation has no research egress. Everything here is the
+ * conversation's unverified claim until that stage checks it.
+ */
+export interface Frame {
+  readonly readings?: readonly Reading[];
+  readonly reading_taken?: string;
+  readonly named?: string;
+  readonly terms?: readonly FrameTerm[];
+  readonly neighbors?: readonly Neighbor[];
+  readonly unmentioned?: readonly string[];
+}
+
 export interface Brainstorm {
   readonly schema: "brainstorm/1";
   readonly work_item: string;
@@ -53,6 +116,8 @@ export interface Brainstorm {
   readonly understood: string | null;
   /** Questions the factory still has. Empty is what "enough" looks like. */
   readonly open: readonly string[];
+  /** The expert words for what is being asked. See {@link Frame}. */
+  readonly frame?: Frame;
   readonly closed_at?: string;
   /**
    * The run holding this conversation open, and when it last said so.
@@ -159,6 +224,43 @@ export function render(b: Brainstorm | null): string {
     for (const q of b.open) lines.push(`  - ${q}`);
     lines.push("");
   }
+  if (b.frame !== undefined) {
+    const f = b.frame;
+    lines.push("The words the conversation settled on, and taught them.");
+    lines.push(
+      "Unverified: the conversation has no web access, so none of this was checked against a",
+    );
+    lines.push(
+      "source. Confirm each term and each attribution before you build on it, and cut what you",
+    );
+    lines.push("cannot confirm. Do not repeat an attribution you have not read.");
+    lines.push("");
+    if (f.named !== undefined) lines.push(`What this is: ${f.named}`);
+    if (f.reading_taken !== undefined) lines.push(`Read as: ${f.reading_taken}`);
+    if (f.readings !== undefined && f.readings.length > 0) {
+      lines.push("It could have been read as:");
+      for (const r of f.readings) lines.push(`  - ${r.term}: ${r.problem} (told apart by: ${r.tells_it_apart})`);
+    }
+    if (f.terms !== undefined && f.terms.length > 0) {
+      lines.push("Terms, most load-bearing first:");
+      for (const t of f.terms) {
+        const art = t.prior_art === undefined ? "" : ` [claimed prior art: ${t.prior_art}]`;
+        lines.push(`  - ${t.term}: ${t.means} Names: ${t.names} Unlocks: ${t.unlocks}${art}`);
+      }
+    }
+    if (f.neighbors !== undefined && f.neighbors.length > 0) {
+      lines.push("Neighbouring fields, as research anchors:");
+      for (const n of f.neighbors) {
+        const w = n.terms === undefined || n.terms.length === 0 ? "" : ` Terms: ${n.terms.join(", ")}.`;
+        lines.push(`  - ${n.field}: carries over: ${n.carries_over} Breaks down: ${n.breaks_down}${w}`);
+      }
+    }
+    if (f.unmentioned !== undefined && f.unmentioned.length > 0) {
+      lines.push("Raised with them as things they had not mentioned:");
+      for (const u of f.unmentioned) lines.push(`  - ${u}`);
+    }
+    lines.push("");
+  }
   return lines.join("\n");
 }
 
@@ -246,13 +348,205 @@ export const QUESTION_LIMIT = 1200;
  * markers, because those are how its surfaces tell their own comments apart —
  * a question that could forge `bsf:triage` could forge a verdict.
  */
-export function saneComment(text: string): string {
+export function saneComment(text: string, limit: number = QUESTION_LIMIT): string {
   return redact(text)
     .replace(/<!--\s*bsf:[\s\S]*?-->/gi, "")
     // Keeps the word, drops the notification: @philip reads as philip.
     .replace(/(^|[^\w`])@([A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?)\b/g, "$1$2")
     .trim()
-    .slice(0, QUESTION_LIMIT);
+    .slice(0, limit);
+}
+
+/**
+ * What a frame turn may run to.
+ *
+ * Longer than a question, and deliberately: a question should be one sentence
+ * on a phone, while teaching somebody the words for their own problem cannot
+ * be. It earns the extra room because trusted code renders it from validated
+ * fields — the agent supplies structure, not three thousand free characters.
+ */
+export const FRAME_LIMIT = 3000;
+
+/** How much of the frame the person is shown. The rest is in the log for spec. */
+export const FRAME_TERMS_SHOWN = 4;
+export const FRAME_NEIGHBORS_SHOWN = 2;
+export const FRAME_UNMENTIONED_SHOWN = 3;
+
+const str = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
+
+/**
+ * Read a frame the agent wrote, and refuse one that teaches nothing.
+ *
+ * The required fields are the ones that make a term worth a person's
+ * attention: what it means, which part of *their own words* it names, and what
+ * having it lets them ask for. A term with no `names` is one the conversation
+ * went looking for rather than found, and a term with no `unlocks` is
+ * vocabulary for its own sake — both are how this turn would decay into a
+ * glossary nobody reads.
+ */
+export function parseFrame(raw: unknown): Frame {
+  if (raw === null || typeof raw !== "object") throw new Error("the frame must be a JSON object");
+  const o = raw as Record<string, unknown>;
+  const list = (v: unknown): readonly unknown[] => (Array.isArray(v) ? v : []);
+
+  const terms = list(o["terms"]).map((t, i) => {
+    const e = (t ?? {}) as Record<string, unknown>;
+    const term = str(e["term"]);
+    if (term === "") throw new Error(`terms[${i}]: no term`);
+    for (const k of ["means", "names", "unlocks"] as const) {
+      if (str(e[k]) === "") {
+        throw new Error(
+          `terms[${i}] (${term}): no ${k}. Every term needs what it means, the part of ` +
+            `what they said that it names, and what having it lets them ask for. A term ` +
+            `missing any of those is a glossary entry, not a word they can use.`,
+        );
+      }
+    }
+    const art = str(e["prior_art"]);
+    return {
+      term,
+      means: str(e["means"]),
+      names: str(e["names"]),
+      unlocks: str(e["unlocks"]),
+      ...(art === "" ? {} : { prior_art: art }),
+    };
+  });
+
+  const neighbors = list(o["neighbors"]).map((n, i) => {
+    const e = (n ?? {}) as Record<string, unknown>;
+    const field = str(e["field"]);
+    if (field === "") throw new Error(`neighbors[${i}]: no field`);
+    const breaks = str(e["breaks_down"]);
+    if (breaks === "") {
+      throw new Error(
+        `neighbors[${i}] (${field}): no breaks_down. An analogy with no stated limit is ` +
+          `the one that gets over-applied, so where it fails is required.`,
+      );
+    }
+    const terms_ = list(e["terms"]).map(str).filter((x) => x !== "");
+    return {
+      field,
+      carries_over: str(e["carries_over"]),
+      breaks_down: breaks,
+      ...(terms_.length === 0 ? {} : { terms: terms_ }),
+    };
+  });
+
+  const readings = list(o["readings"]).map((r, i) => {
+    const e = (r ?? {}) as Record<string, unknown>;
+    for (const k of ["problem", "term", "tells_it_apart"] as const) {
+      if (str(e[k]) === "") throw new Error(`readings[${i}]: no ${k}`);
+    }
+    return { problem: str(e["problem"]), term: str(e["term"]), tells_it_apart: str(e["tells_it_apart"]) };
+  });
+
+  const named = str(o["named"]);
+  const taken = str(o["reading_taken"]);
+  const unmentioned = list(o["unmentioned"]).map(str).filter((x) => x !== "");
+
+  if (named === "" && terms.length === 0 && readings.length === 0) {
+    throw new Error("an empty frame: give at least `named`, or some `terms`, or the `readings` to choose between");
+  }
+
+  return {
+    ...(readings.length === 0 ? {} : { readings }),
+    ...(taken === "" ? {} : { reading_taken: taken }),
+    ...(named === "" ? {} : { named }),
+    ...(terms.length === 0 ? {} : { terms }),
+    ...(neighbors.length === 0 ? {} : { neighbors }),
+    ...(unmentioned.length === 0 ? {} : { unmentioned }),
+  };
+}
+
+/**
+ * The frame as the person reads it.
+ *
+ * Shaped here rather than by the agent so that every factory words this the
+ * same way and so that the length stays somebody's decision rather than a
+ * model's. It shows the top few terms and neighbours — the ranking is the
+ * agent's — and leaves the rest in the log, because the person needs the words
+ * that change what gets built and the spec stage needs all of them.
+ *
+ * It ends on the question. That is what keeps this a turn in a conversation
+ * rather than a document to approve: they can take the vocabulary or ignore it
+ * and just answer.
+ */
+export function renderFrameTurn(frame: Frame, question: string): string {
+  const out: string[] = [];
+  if (frame.named !== undefined) out.push(`Before I ask anything else — **${frame.named}**`);
+
+  const terms = (frame.terms ?? []).slice(0, FRAME_TERMS_SHOWN);
+  if (terms.length > 0) {
+    out.push(
+      terms.length === 1
+        ? "The word that matters most here:"
+        : `The ${terms.length} words that change what gets built here:`,
+    );
+    for (const t of terms) {
+      const art = t.prior_art === undefined ? "" : ` Used this way in ${t.prior_art}.`;
+      out.push(`- **${t.term}** — ${t.means} Names the part where ${t.names}. Lets you ask for ${t.unlocks}.${art}`);
+    }
+  }
+
+  const near = (frame.neighbors ?? []).slice(0, FRAME_NEIGHBORS_SHOWN);
+  if (near.length > 0) {
+    out.push(near.length === 1 ? "Where this has been solved before:" : "Where this has been solved before, under other names:");
+    for (const n of near) {
+      const carry = n.carries_over === "" ? "" : ` ${n.carries_over}`;
+      const words = n.terms === undefined || n.terms.length === 0 ? "" : ` Worth borrowing: ${n.terms.join(", ")}.`;
+      out.push(`- **${n.field}** —${carry} Where it stops being the same problem: ${n.breaks_down}.${words}`);
+    }
+  }
+
+  const unsaid = (frame.unmentioned ?? []).slice(0, FRAME_UNMENTIONED_SHOWN);
+  if (unsaid.length > 0) {
+    out.push("Things you did not mention that will decide something:");
+    for (const u of unsaid) out.push(`- ${u}`);
+  }
+
+  out.push(question);
+  return out.join("\n\n");
+}
+
+/**
+ * Teach the frame and ask the next question, in one turn.
+ *
+ * One call rather than two because a frame with no question is a document, and
+ * the person is owed a conversation. The structure goes in the log for the spec
+ * stage; the prose goes on the issue for them.
+ */
+export async function sayFrame(
+  gh: GitHub,
+  opts: {
+    readonly workItem: string;
+    readonly issue: number;
+    readonly frame: Frame;
+    readonly question: string;
+    readonly now: string;
+    readonly open?: readonly string[];
+  },
+): Promise<{ readonly commentId: number }> {
+  const question = saneComment(opts.question);
+  if (question === "") throw new Error("a frame needs a question after it, or it is a document rather than a turn");
+  const text = saneComment(renderFrameTurn(opts.frame, question), FRAME_LIMIT);
+  const posted = await gh.send<{ id: number }>(`POST`, `repos/${gh.repo}/issues/${opts.issue}/comments`, {
+    body: `${text}\n\n${FACTORY_MARKER}`,
+  });
+  const store = new FactoryStore(gh);
+  const current = (await store.get<Brainstorm>(brainstormPath(opts.workItem), "brainstorm")) ?? empty(opts.workItem);
+  const next: Brainstorm = {
+    ...current,
+    turns: [...current.turns, { at: opts.now, who: "factory", text }],
+    frame: opts.frame,
+    ...(opts.open === undefined ? {} : { open: opts.open }),
+    heartbeat_at: opts.now,
+    last_comment_id: posted.id,
+  };
+  await store.put(
+    [{ path: brainstormPath(opts.workItem), content: `${JSON.stringify(next, null, 2)}\n` }],
+    `brainstorm: ${opts.workItem} framed`,
+  );
+  return { commentId: posted.id };
 }
 
 /**

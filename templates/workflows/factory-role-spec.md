@@ -323,6 +323,26 @@ again or second-guess it. Where it marks something as the factory's own
 assumption that they did not correct, it is still an assumption, and the spec
 says so rather than stating it as fact.
 
+**The words the conversation settled on are your research anchors, and they are
+unverified.** If the log has a section of terms and neighbouring fields, that
+is the conversation naming what this is in the terms the field uses — and it
+had no web access, so nothing in it was checked. Two jobs follow from that:
+
+- **Use them.** Searching for the issue title finds nothing; searching for the
+  term that names the problem, and for how the neighbouring field solved the
+  same shape of problem, finds the prior art you are supposed to be reading.
+  This is the cheapest research lead you will get.
+- **Confirm or cut.** Open what you can for each term and each claimed piece of
+  prior art, and check it is used that way. Cut anything you cannot confirm,
+  and never repeat an attribution you have not read. A wrong term here is worse
+  than no term, because it is now in the person's vocabulary too: they were
+  taught it. If a term turns out to be wrong, say so in the spec in a line —
+  that correction is worth more than quietly dropping it.
+
+Where a neighbouring field is marked with where the analogy breaks down, treat
+that limit as binding. It is there to stop the pattern being carried further
+than it holds.
+
 They are not going to read your spec. They had their say in the conversation.
 This is for the roles that build and verify.
 

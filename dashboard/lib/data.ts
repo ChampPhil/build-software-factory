@@ -280,6 +280,34 @@ export interface BrainstormFile {
   /** The run holding the conversation open, and when it last said so. */
   readonly holder?: string;
   readonly heartbeat_at?: string;
+  /**
+   * The words the conversation settled on and taught the person.
+   *
+   * `named` is the useful one for a surface: "what the factory thinks this is",
+   * in one sentence, which is a far better line to show beside a request than
+   * its issue title. The rest is there for anyone who wants to show the
+   * vocabulary itself. All of it is the conversation's unverified claim — it
+   * had no web access — so do not present a term as established fact.
+   */
+  readonly frame?: {
+    readonly named?: string;
+    readonly reading_taken?: string;
+    readonly readings?: readonly { readonly problem: string; readonly term: string; readonly tells_it_apart: string }[];
+    readonly terms?: readonly {
+      readonly term: string;
+      readonly means: string;
+      readonly names: string;
+      readonly prior_art?: string;
+      readonly unlocks: string;
+    }[];
+    readonly neighbors?: readonly {
+      readonly field: string;
+      readonly carries_over: string;
+      readonly breaks_down: string;
+      readonly terms?: readonly string[];
+    }[];
+    readonly unmentioned?: readonly string[];
+  };
 }
 
 /**

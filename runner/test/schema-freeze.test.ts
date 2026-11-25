@@ -191,7 +191,25 @@ describe("the frozen 1.0 surface", () => {
 
   it("matches the live schemas exactly, so a re-freeze is never silently needed", () => {
     const drift = compareSurface(readFrozen(frozenPath).surface, surfaceForDirectory(SCHEMA_DIR));
-    expect(drift).toEqual([]);
+    // The message matters more than the assertion here. This test compares the
+    // repo's own schema/ against schema/SURFACE.json, and the obvious way to
+    // re-freeze does not touch either: `skill/runner/bsf` carries its own copy
+    // of the schemas, so a freeze through it rewrites that copy and the
+    // following `--check` then compares the bundle against itself and passes.
+    // Someone who re-froze and still sees this needs to know why, or they
+    // re-freeze the same wrong thing again.
+    expect(
+      drift,
+      drift.length === 0
+        ? ""
+        : `the frozen surface is behind the schemas:\n` +
+            `${drift.map((d) => `  ${d.kind}  ${d.file}${d.pointer} ${d.what}`).join("\n")}\n` +
+            `Re-freeze from the repo, not through the bundle:\n` +
+            `  npm -w @bsf/runner run build && node runner/dist/cli.js schema-surface --freeze\n` +
+            `\`skill/runner/bsf schema-surface --freeze\` will not fix this: it freezes the ` +
+            `schemas bundled inside skill/runner, leaves schema/SURFACE.json untouched, and its ` +
+            `own --check passes afterwards. Rebundle after freezing so the two agree.`,
+    ).toEqual([]);
   });
 
   it("covers every schema file, SURFACE.json itself excluded", () => {

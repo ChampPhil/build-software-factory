@@ -349,3 +349,183 @@ describe("waiting for an answer", async () => {
     expect(outcome.kind).toBe("quiet");
   });
 });
+
+describe("the frame — the words the conversation teaches", async () => {
+  const bs = await import("../src/commands/brainstorm.js");
+
+  const term = (over: Record<string, unknown> = {}) => ({
+    term: "write-ahead log",
+    means: "a file the system appends to before it changes anything.",
+    names: 'you said "it should not lose work if it dies mid-run"',
+    unlocks: "replay after a crash instead of a best guess at what happened",
+    ...over,
+  });
+
+  describe("what it refuses", () => {
+    it("refuses a term with no meaning, no anchor in what they said, or nothing it unlocks", () => {
+      // These three fields are what separate a word somebody can use from a
+      // glossary entry. Without them the turn decays into trivia and the
+      // person stops reading the one thing that was meant to help them.
+      for (const missing of ["means", "names", "unlocks"] as const) {
+        expect(() => bs.parseFrame({ terms: [term({ [missing]: "" })] })).toThrow(missing);
+      }
+    });
+
+    it("names the offending term when it refuses, so a retry can fix that one", () => {
+      expect(() => bs.parseFrame({ terms: [term(), term({ term: "compaction", unlocks: "  " })] })).toThrow(
+        /compaction/,
+      );
+    });
+
+    it("refuses a neighbouring field with no stated limit", () => {
+      // An analogy with no edge is the one that gets carried further than it
+      // holds, by the spec stage that reads it a run later and has only the
+      // words to go on.
+      expect(() =>
+        bs.parseFrame({ neighbors: [{ field: "database recovery", carries_over: "the log shape" }] }),
+      ).toThrow(/breaks_down/);
+    });
+
+    it("refuses an empty frame rather than posting a turn that teaches nothing", () => {
+      expect(() => bs.parseFrame({})).toThrow(/empty frame/);
+      expect(() => bs.parseFrame({ terms: [], neighbors: [] })).toThrow(/empty frame/);
+    });
+
+    it("refuses anything that is not an object", () => {
+      for (const bad of [null, "frame", 7, [1]]) {
+        expect(() => bs.parseFrame(bad)).toThrow();
+      }
+    });
+  });
+
+  describe("what it keeps", () => {
+    it("keeps the agent's ranking rather than sorting, because the ranking is the judgement", () => {
+      const f = bs.parseFrame({ terms: [term({ term: "zebra" }), term({ term: "apple" })] });
+      expect(f.terms?.map((t) => t.term)).toEqual(["zebra", "apple"]);
+    });
+
+    it("drops prior art that is blank instead of recording an empty claim", () => {
+      expect(bs.parseFrame({ terms: [term({ prior_art: "   " })] }).terms?.[0]?.prior_art).toBeUndefined();
+      expect(bs.parseFrame({ terms: [term({ prior_art: "SQLite" })] }).terms?.[0]?.prior_art).toBe("SQLite");
+    });
+
+    it("keeps the readings and which one was taken, so spec knows a choice was made", () => {
+      const f = bs.parseFrame({
+        named: "a durable job queue",
+        readings: [
+          { problem: "work is lost on restart", term: "durability", tells_it_apart: "work vanishes after a crash" },
+          { problem: "work runs twice", term: "idempotency", tells_it_apart: "duplicate side effects" },
+        ],
+        reading_taken: "durability — they described losing work, not repeating it",
+      });
+      expect(f.readings).toHaveLength(2);
+      expect(f.reading_taken).toContain("durability");
+    });
+  });
+
+  describe("what the person reads", () => {
+    const full = bs.parseFrame({
+      named: "what you are describing is a write-ahead log",
+      terms: [term(), term({ term: "compaction" }), term({ term: "fsync" }), term({ term: "checkpoint" }), term({ term: "fifth" })],
+      neighbors: [
+        { field: "database recovery", carries_over: "the append-then-apply order.", breaks_down: "a database owns its storage and you do not" },
+        { field: "print spoolers", carries_over: "jobs survive the process.", breaks_down: "a spooler never has to merge two queues" },
+        { field: "third", carries_over: "x.", breaks_down: "y" },
+      ],
+      unmentioned: ["whether a half-written run should resume or restart", "b", "c", "d"],
+    });
+
+    it("ends on the question, so it stays a turn in a conversation", () => {
+      const text = bs.renderFrameTurn(full, "Should a half-written run resume where it stopped?");
+      expect(text.trimEnd().endsWith("Should a half-written run resume where it stopped?")).toBe(true);
+    });
+
+    it("shows the top few and leaves the rest for the spec stage", () => {
+      // The person needs the words that change what gets built; the spec stage
+      // needs all of them. Showing twelve terms on a phone is how the turn
+      // gets skipped, and a skipped frame teaches nobody anything.
+      const text = bs.renderFrameTurn(full, "Q?");
+      expect(text).toContain("write-ahead log");
+      expect(text).not.toContain("fifth");
+      expect(text).toContain("print spoolers");
+      expect(text).not.toContain("third");
+      expect(full.terms).toHaveLength(5);
+      expect(full.neighbors).toHaveLength(3);
+    });
+
+    it("always says where a neighbouring analogy breaks down", () => {
+      expect(bs.renderFrameTurn(full, "Q?")).toContain("a database owns its storage and you do not");
+    });
+
+    it("reads as prose rather than a form, even with one term and no neighbours", () => {
+      const thin = bs.parseFrame({ named: "a retry policy", terms: [term()] });
+      const text = bs.renderFrameTurn(thin, "How many times should it retry?");
+      expect(text).toContain("The word that matters most here:");
+      expect(text).not.toContain("undefined");
+      expect(text).not.toContain("Where this has been solved");
+    });
+
+    it("has room to teach, where a question has room to be read on a phone", () => {
+      // A question is one sentence; teaching somebody the words for their own
+      // problem is not, and capping both at 1200 would truncate the frame
+      // mid-term. The larger cap is earned by this text being rendered from
+      // validated fields rather than written freehand by the agent.
+      expect(bs.FRAME_LIMIT).toBeGreaterThan(bs.QUESTION_LIMIT);
+      const long = bs.parseFrame({
+        named: "x".repeat(400),
+        terms: [term({ means: "y".repeat(900) }), term({ term: "two", means: "z".repeat(900) })],
+      });
+      const text = bs.saneComment(bs.renderFrameTurn(long, "Q?"), bs.FRAME_LIMIT);
+      expect(text.length).toBeLessThanOrEqual(bs.FRAME_LIMIT);
+      expect(text.length).toBeGreaterThan(bs.QUESTION_LIMIT);
+    });
+
+    it("redacts and defuses mentions in the frame as it does in a question", () => {
+      // The frame is agent-written text on a public issue like any other turn.
+      const f = bs.parseFrame({ named: "ask @philip about it", terms: [term()] });
+      const text = bs.saneComment(bs.renderFrameTurn(f, "Q?"), bs.FRAME_LIMIT);
+      expect(text).toContain("philip");
+      expect(text).not.toContain("@philip");
+    });
+  });
+
+  describe("what the spec stage reads", () => {
+    it("hands over the whole frame, marked unverified, with the limits attached", () => {
+      // The conversation has no web access, so every term in here is a claim.
+      // The spec stage is the first stage that can check one, and it only
+      // knows to check if the handover says so.
+      const text = bs.render({
+        schema: "brainstorm/1",
+        work_item: "wi-1",
+        turns: [{ at: "2026-11-25T00:00:00Z", who: "factory", text: "Which is it?" }],
+        understood: null,
+        open: [],
+        frame: bs.parseFrame({
+          named: "a write-ahead log",
+          terms: [term({ prior_art: "SQLite" }), term({ term: "fifth-term" })],
+          neighbors: [{ field: "database recovery", carries_over: "order.", breaks_down: "you do not own the storage" }],
+          unmentioned: ["resume or restart"],
+        }),
+      });
+      expect(text).toContain("Unverified");
+      expect(text).toContain("cut what you");
+      // Everything, not just what the person was shown.
+      expect(text).toContain("fifth-term");
+      expect(text).toContain("claimed prior art: SQLite");
+      expect(text).toContain("database recovery");
+      expect(text).toContain("resume or restart");
+    });
+
+    it("says nothing about a frame when there is none, so an old log reads as before", () => {
+      const text = bs.render({
+        schema: "brainstorm/1",
+        work_item: "wi-1",
+        turns: [{ at: "2026-11-25T00:00:00Z", who: "person", text: "make it faster" }],
+        understood: null,
+        open: [],
+      });
+      expect(text).not.toContain("Unverified");
+      expect(text).not.toContain("undefined");
+    });
+  });
+});
