@@ -24,19 +24,18 @@ Sources: [Warp factory dashboard docs](https://docs.warp.dev/factories/factory-d
 
 ## Page map
 
-Nine pages in a left sidebar, with a repo switcher at the top; every page works for one repo at a time.
+Six pages in a top bar, with the repository at the left and search on `/` or Ctrl-K; every page works for one repo at a time.
 
 | Page | Route | Answers |
 | --- | --- | --- |
-| **Home** | `/` | What's waiting on me? |
-| **Dashboard** | `/dashboard` | How is the factory doing? |
-| **Live** | `/live` | What's running right now? |
-| **Work items** | `/work` | Where is each request? |
-| **Runs** | `/runs`, `/run?id=` | What exactly did a run do, and what did it cost? |
-| **Guardrails** | `/guardrails` | How strict is the codebase, and how is cleanup going? |
-| **Improvement** | `/improvement` | What did the last review find, and which configuration is best? |
-| **Factory** | `/factory` | How is the factory configured? (toggles, models, budget, schedules) |
-| **Sessions** | `/sessions` | What happened in captured local agent sessions? |
+| **Briefing** | `/` | What needs me, what is happening, and what landed while I was away? Everything that needs a person can be dealt with here: answer a question, merge a change with its proof, retry or drop a stuck request, let a stranger's request start, adopt a practice, add a rule. |
+| **Requests** | `/requests`, `/request?id=` | Where is each request? One request has its conversation (the whole page while it runs), its pull request (summary, proof, checks, diff with line comments, merge bar), its runs and its activity. |
+| **Runs** | `/runs`, `/runs?id=` | What exactly did a run do, and what did it cost? Also the factory's workflow runs on GitHub Actions, with cancel and re-run. |
+| **Guardrails** | `/guardrails` | Which rules could it add, which are installed, what did its self-review find, and which corrections did it learn from? |
+| **Spend** | `/spend` | What does it spend against the budget and each share, and how often does its work merge without edits? |
+| **Factory** | `/factory` | Settings, standing goals, workflows (run now, re-run, cancel), people, health and installation. |
+
+The old addresses (`/dashboard`, `/live`, `/work`, `/improvement`, `/sessions`) move to the page that now holds what they showed.
 
 A **New request** button sits at the top of every page; it opens a short form (kind, title, what you want, and the goal: what should be true when it is done) that creates a GitHub issue shaped like the repo's issue forms, labelled for hardening or tidying where that is the kind, which the factory picks up like any other request and acknowledges with a comment. On a factory that has done nothing yet, Home offers one suggested first request, written by setup from the repo into `.factory/first-request.json`.
 
@@ -202,17 +201,14 @@ The dashboard waits for the `factory/policy` check that ran after the label was 
 
 ## Design direction
 
-A calm control room: dense with information, but quiet until something needs attention.
+The Briefing, chosen from three sketches in `design/sketch/`. The page is written, not tiled: it answers its questions in sentences.
 
-- **Light and dark themes,** following the system setting.
-- **Status carries the color, nothing else does.** Neutral grays for structure; one accent for the user's own actions; green pass, amber waiting, red fail or escalated. Pipelines get small colored tags, not colored panels.
-- **Typography:** a clean sans for UI, a monospace for IDs, paths, commands and costs. Numbers use tabular figures so columns line up.
-- **Evidence first.** Wherever a human judges work, screenshots and clips come before text and diffs.
-- **Live without noise.** Changes animate in briefly (a card sliding to the next column, a number ticking up); nothing blinks or loops.
-- **Every number is a door.** Tiles, chart points and table rows link to the runs behind them.
-- **Keyboard first:** `g h` Home, `g l` Live, `g r` Runs, `/` search, `a` approve in review view.
-- **Empty states teach.** A fresh factory shows what will appear and how to trigger the first work, not blank panels.
-- **Responsive:** Home, Live and PR review work on a phone for quick approvals; the other pages are desktop-first. Below 560px a row stacks to one column and its action becomes a full-width target: these rows set their column template inline per page, so at 390px a five-column row pushed the Approve button — the whole point of opening it on a phone — off the right edge.
+- **Two voices.** Schibsted Grotesk for the interface; Newsreader for everything the factory itself says (its questions, summaries, playbacks), so a person can tell the two apart at a glance. Both are bundled from npm.
+- **One dark, wide thing.** Finished work waiting to merge is the only dark card on the page, in both themes, because it is the thing a person came to do.
+- **Status carries the color.** One blue for what is yours to do, green for done, red for stuck; everything else is ink on paper.
+- **The conversation is the page.** While a request is being talked through, the chat takes the page's full width, the factory on the left and the person on the right, with details in a drawer.
+- **Everything in place.** Merge, request changes, answer, retry, drop, accept, adopt, add a rule, change a setting: each is a button where the thing is, says what it did, and never sends the person to GitHub to press it.
+- **Light, dark and phone,** following the system or the person's choice in the account menu. No inline styles: every look is a class in `styles/globals.css`.
 
 ## One shared site
 

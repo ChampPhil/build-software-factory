@@ -6,7 +6,8 @@ import { FACTORY_YAML } from "./settings";
 import { questionFrom, type Waiting } from "./questions";
 import { readFirstRequest, type FirstRequest } from "./request";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { GitHubClient, GitHubHttpError, type Auth } from "./github";
+import { GitHubClient, GitHubHttpError, type Auth, type PullSummary, type IssueSummary, type PullDetail, type PullFile, type CheckRunSummary, type WorkflowSummary, type WorkflowRunSummary } from "./github";
+import type { IssueComment } from "./questions";
 import { demoFetch, isDemo } from "./demo";
 import { overlayDecisions, correctionCandidates, correctionsOf } from "./corrections";
 import type {
@@ -343,4 +344,100 @@ export function useBrainstorm(client: GitHubClient | null, workItem: string | nu
   // sitting there waiting for a reply, and thirty seconds of nothing reads as
   // broken even when the answer arrived in five.
   return usePolled(load, 5_000, [client?.repo, workItem, version]);
+}
+
+
+/* ------------------------------------------------------------------ GitHub's side of the factory */
+
+/** Open pull requests. Bump `version` after an action to read again straight away. */
+export function usePulls(client: GitHubClient | null, version = 0): Loaded<readonly PullSummary[]> {
+  const load = client === null ? null : () => client.pulls("open");
+  return usePolled(load, 30_000, [client?.repo, version]);
+}
+
+/** Open issues, without the pull requests GitHub lists among them. */
+export function useIssues(client: GitHubClient | null, version = 0): Loaded<readonly IssueSummary[]> {
+  const load = client === null ? null : async () => (await client.issues()).filter((i) => i.pull_request === undefined);
+  return usePolled(load, 30_000, [client?.repo, version]);
+}
+
+export function usePull(client: GitHubClient | null, n: number | null, version = 0): Loaded<PullDetail | null> {
+  const load =
+    client === null || n === null
+      ? null
+      : async () => {
+          try { return await client.pull(n); } catch (e) { if (e instanceof GitHubHttpError && e.status === 404) return null; throw e; }
+        };
+  return usePolled(load, 30_000, [client?.repo, n, version]);
+}
+
+export function usePullFiles(client: GitHubClient | null, n: number | null, version = 0): Loaded<readonly PullFile[]> {
+  const load = client === null || n === null ? null : () => client.pullFiles(n);
+  return usePolled(load, 120_000, [client?.repo, n, version]);
+}
+
+/** The checks on a commit. Empty rather than an error when the token cannot read checks. */
+export function useCheckRuns(client: GitHubClient | null, sha: string | null): Loaded<readonly CheckRunSummary[]> {
+  const load =
+    client === null || sha === null
+      ? null
+      : async () => {
+          try { return await client.checkRuns(sha); } catch { return []; }
+        };
+  return usePolled(load, 30_000, [client?.repo, sha]);
+}
+
+/** The comments on an issue or pull request, oldest first. */
+export function useIssueComments(client: GitHubClient | null, n: number | null, version = 0): Loaded<readonly IssueComment[]> {
+  const load = client === null || n === null ? null : () => client.issueComments(n);
+  return usePolled(load, 20_000, [client?.repo, n, version]);
+}
+
+/** The work item files for a set of ids, keyed by id. A missing file is simply absent. */
+export function useWorkItems(client: GitHubClient | null, ids: readonly string[]): Loaded<Readonly<Record<string, WorkItemDoc>>> {
+  const key = ids.join(",");
+  const load =
+    client === null
+      ? null
+      : async () => {
+          const docs = await Promise.all(ids.map((id) => client.fileFromRef<WorkItemDoc>(`work-items/${id}.json`).catch(() => null)));
+          return Object.fromEntries(docs.flatMap((d) => (d === null ? [] : [[d.id, d] as const])));
+        };
+  return usePolled(load, 60_000, [client?.repo, key]);
+}
+
+/** Run files for a set of ids, in the order given. */
+export function useRunFiles(client: GitHubClient | null, ids: readonly string[]): Loaded<readonly RunFile[]> {
+  const key = ids.join(",");
+  const load =
+    client === null
+      ? null
+      : async () => {
+          const runs = await Promise.all(ids.map((id) => client.fileFromRef<RunFile>(`runs/${id}.json`).catch(() => null)));
+          return runs.filter((r): r is RunFile => r !== null);
+        };
+  return usePolled(load, 60_000, [client?.repo, key]);
+}
+
+/**
+ * The factory's workflows and their recent runs on GitHub Actions. Null when
+ * the token cannot read Actions, which is a thing to say once on the Factory
+ * page rather than an error on every page.
+ */
+export function useActions(client: GitHubClient | null, version = 0): Loaded<{
+  readonly workflows: readonly WorkflowSummary[];
+  readonly runs: readonly WorkflowRunSummary[];
+} | null> {
+  const load =
+    client === null
+      ? null
+      : async () => {
+          try {
+            const [workflows, runs] = await Promise.all([client.workflows(), client.workflowRuns()]);
+            return { workflows: workflows.filter((w) => /factory-/.test(w.path)), runs };
+          } catch {
+            return null;
+          }
+        };
+  return usePolled(load, 30_000, [client?.repo, version]);
 }

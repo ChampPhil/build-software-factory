@@ -2,7 +2,7 @@
 # sign-in token on GitHub's API: the page may only connect to itself and to
 # api.github.com, so even a bug could not send it anywhere else.
 /*
-  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob: https://avatars.githubusercontent.com; media-src 'self' blob:; connect-src 'self' https://api.github.com; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; object-src 'none'
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: blob: https://avatars.githubusercontent.com; media-src 'self' blob:; connect-src 'self' https://api.github.com; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; object-src 'none'
   Referrer-Policy: no-referrer
   X-Content-Type-Options: nosniff
   X-Frame-Options: DENY

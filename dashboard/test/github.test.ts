@@ -187,3 +187,68 @@ describe("decodeBase64", () => {
     expect(decodeBase64(Buffer.from(text, "utf8").toString("base64"))).toBe(text);
   });
 });
+
+describe("the client's pull request and Actions additions", () => {
+  it("closes a pull request without merging it", async () => {
+    const { fetch, calls } = stubFetch({ "pulls/7": { body: {} } });
+    await new GitHubClient(auth, fetch).closePull(7);
+    expect(calls[0]?.url).toContain("repos/owner/name/pulls/7");
+    expect(calls[0]?.init?.method).toBe("PATCH");
+    expect(JSON.parse(bodyOf(calls[0]))).toEqual({ state: "closed" });
+  });
+
+  it("comments on one line of the diff, anchored to the commit it was written about", async () => {
+    const { fetch, calls } = stubFetch({ "pulls/7/comments": { status: 201, body: {} } });
+    await new GitHubClient(auth, fetch).createReviewComment(7, { body: "Use the formatter.", commit: "abc123", path: "src/a.ts", line: 19, side: "RIGHT" });
+    expect(calls[0]?.init?.method).toBe("POST");
+    expect(JSON.parse(bodyOf(calls[0]))).toEqual({ body: "Use the formatter.", commit_id: "abc123", path: "src/a.ts", line: 19, side: "RIGHT" });
+  });
+
+  it("cancels a workflow run", async () => {
+    const { fetch, calls } = stubFetch({ "actions/runs/99/cancel": { status: 202, body: {} } });
+    await new GitHubClient(auth, fetch).cancelWorkflowRun(99);
+    expect(calls[0]?.url).toContain("repos/owner/name/actions/runs/99/cancel");
+    expect(calls[0]?.init?.method).toBe("POST");
+  });
+
+  it("reads check runs, workflows and workflow runs out of GitHub's wrappers", async () => {
+    const { fetch } = stubFetch({
+      "check-runs": { body: { total_count: 1, check_runs: [{ id: 1, name: "ci", status: "completed", conclusion: "success" }] } },
+      "actions/workflows": { body: { total_count: 1, workflows: [{ id: 2, name: "Gates", path: ".github/workflows/factory-gates.yml", state: "active" }] } },
+      "actions/runs": { body: { total_count: 1, workflow_runs: [{ id: 3, name: "Gates", workflow_id: 2, status: "completed", conclusion: "failure", created_at: "", updated_at: "", html_url: "", event: "push" }] } },
+    });
+    const c = new GitHubClient(auth, fetch);
+    expect((await c.checkRuns("abc"))[0]?.conclusion).toBe("success");
+    expect((await c.workflows())[0]?.path).toBe(".github/workflows/factory-gates.yml");
+    expect((await c.workflowRuns())[0]?.conclusion).toBe("failure");
+  });
+
+  it("reads a pull request in full", async () => {
+    const { fetch } = stubFetch({ "pulls/7": { body: { number: 7, body: "Adds export.", mergeable_state: "clean" } } });
+    const pr = await new GitHubClient(auth, fetch).pull(7);
+    expect(pr.body).toBe("Adds export.");
+    expect(pr.mergeable_state).toBe("clean");
+  });
+
+  it("drops requests through the drop workflow, with the reason", async () => {
+    const { fetch, calls } = stubFetch({
+      "repos/owner/name": { body: { default_branch: "trunk" } },
+      "factory-drop.yml/dispatches": { status: 204 },
+    });
+    await new GitHubClient(auth, fetch).dropRequests(["wi-1", "wi-2"], "Not needed any more");
+    const call = calls.find((c) => c.url.includes("factory-drop.yml"));
+    expect(JSON.parse(bodyOf(call))).toEqual({ ref: "trunk", inputs: { work_items: "wi-1,wi-2", why: "Not needed any more" } });
+  });
+
+  it("runs the review now with force, and other workflows with no inputs", async () => {
+    const { fetch, calls } = stubFetch({
+      "repos/owner/name": { body: { default_branch: "main" } },
+      "dispatches": { status: 204 },
+    });
+    const c = new GitHubClient(auth, fetch);
+    await c.runWorkflowNow("factory-review.yml");
+    await c.runWorkflowNow("factory-garden.yml");
+    const bodies = calls.filter((x) => x.url.includes("dispatches")).map((x) => JSON.parse(bodyOf(x)) as unknown);
+    expect(bodies).toEqual([{ ref: "main", inputs: { force: "true" } }, { ref: "main", inputs: {} }]);
+  });
+});

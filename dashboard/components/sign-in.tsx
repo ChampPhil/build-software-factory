@@ -5,6 +5,8 @@ import { GitHubClient } from "@/lib/github";
 import { fetchAuthConfig, startGithubLogin, type AuthConfig } from "@/lib/github-login";
 import { PERMISSIONS, levelWords, tokenLink } from "@/lib/permissions";
 import { looksLikeToken, repoFromAddress, startDemo, validRepo, writeSession, type Session } from "@/lib/session";
+import { Mark, Out } from "@/components/ui";
+import { BrandCredit } from "@/components/brand-credit";
 
 /**
  * Signing in.
@@ -174,48 +176,40 @@ export function SignIn({
   }
 
   const tokenForm = (
-    <div style={{ display: "grid", gap: 20 }}>
-      <div style={{ display: "grid", gap: 8 }}>
-        <div className="field" style={{ display: "grid", gap: 8 }}>
-          Make a token
-          {repoOk ? (
-            <a
-              className="btn"
-              href={tokenLink(repo.trim())}
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{ justifySelf: "start", textDecoration: "none" }}
-            >
-              Open GitHub's token form, filled in
-            </a>
-          ) : (
-            <span style={{ color: "var(--ink-faint)", fontSize: 12 }}>Enter the repository first.</span>
-          )}
-          <span style={{ color: "var(--ink-faint)", fontSize: 12, maxWidth: "62ch" }}>
-            The form opens with the name, the lifetime and every permission already chosen. Under
-            Repository access, pick Only select repositories and choose{" "}
-            <b>{repoOk ? repo.trim() : "your repository"}</b>. Then press Generate token and copy it.
-          </span>
-        </div>
-        <details style={{ fontSize: 12, color: "var(--ink-dim)" }}>
-          <summary style={{ cursor: "pointer" }}>What the token is allowed to do</summary>
-          <ul style={{ margin: "8px 0 0", paddingLeft: 18, display: "grid", gap: 4 }}>
+    <div className="fallback">
+      <div className="step">
+        <b>1. Make a token</b>
+        {repoOk ? (
+          <a className="btn" href={tokenLink(repo.trim())} target="_blank" rel="noopener noreferrer">
+            Open GitHub&rsquo;s token form, filled in
+          </a>
+        ) : (
+          <span className="muted small">Enter the repository first.</span>
+        )}
+        <span className="muted small">
+          The form opens with the name, the lifetime and every permission already chosen. Under Repository access,
+          pick Only select repositories and choose <b>{repoOk ? repo.trim() : "your repository"}</b>. Then press
+          Generate token and copy it.
+        </span>
+        <details className="perms">
+          <summary>What the token is allowed to do</summary>
+          <ul className="plain-list">
             {PERMISSIONS.map((p) => (
               <li key={p.key}>
                 <b>{p.label}</b>, {levelWords(p.level).toLowerCase()}: {p.why}.
               </li>
             ))}
             <li>
-              For a repository an organization owns, the organization may need to allow tokens like
-              this, or approve this one, before it works.
+              For a repository an organization owns, the organization may need to allow tokens like this, or approve
+              this one, before it works.
             </li>
           </ul>
         </details>
       </div>
-
-      <label className="field">
-        Paste the token
+      <label className="step">
+        <b>2. Paste the token</b>
         <input
+          className="field"
           type="password"
           value={token}
           placeholder="github_pat_…"
@@ -224,144 +218,160 @@ export function SignIn({
           onChange={(e) => setToken(e.target.value)}
         />
       </label>
-
       <div>
-        <button className="btn" onClick={() => void withToken()} disabled={busy}>
+        <button className="btn go" type="button" onClick={() => void withToken()} disabled={busy}>
           {busy ? "Checking…" : "Connect with this token"}
         </button>
       </div>
     </div>
   );
 
+  const rememberBox = (
+    <label className="check-line">
+      <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
+      Remember on this device
+    </label>
+  );
+
   return (
-    <div style={{ paddingTop: 64 }}>
-      <h1 style={{ fontSize: 26, fontWeight: 700, letterSpacing: "-0.025em", margin: "0 0 8px" }}>
-        Connect your repository
-      </h1>
-      <p style={{ color: "var(--ink-dim)", margin: "0 0 24px", maxWidth: "58ch" }}>
-        This page talks to GitHub straight from your browser. Nothing is stored on a server, and the
-        sign-in is kept for this tab only unless you ask otherwise.
-      </p>
+    <div className="signin">
+      <main className="l">
+        <span className="brand">
+          <Mark />
+          Software Factory
+        </span>
+        <div className="grow">
+          <h1>Connect your repository</h1>
+          <p>
+            This page talks to GitHub straight from your browser. Nothing is stored on a server, and the sign-in is
+            kept for this tab only unless you ask otherwise.
+          </p>
 
-      {notice !== null && (
-        <div className="note" style={{ marginBottom: 16 }}>
-          {notice}
-        </div>
-      )}
+          {notice !== null && <p className="note">{notice}</p>}
 
-      <div style={{ display: "grid", gap: 20 }}>
-        {picking !== null && choices !== null && choices.length > 1 && (
-          <div style={{ display: "grid", gap: 10 }}>
-            <span className="field">Which repository?</span>
-            <div style={{ display: "grid", gap: 6 }}>
-              {choices.map((name) => (
-                <button
-                  key={name}
-                  className="btn"
-                  disabled={busy}
-                  style={{ justifyContent: "flex-start", textAlign: "left" }}
-                  onClick={() => {
-                    setPicking(null);
-                    void accept({ ...picking, repo: name });
-                  }}
-                >
-                  <span className="mono">{name}</span>
-                </button>
-              ))}
+          {picking !== null && choices !== null && choices.length > 1 && (
+            <div className="pick-block">
+              <b>Which repository?</b>
+              <div className="pick">
+                {choices.map((name) => (
+                  <button
+                    key={name}
+                    type="button"
+                    disabled={busy}
+                    onClick={() => {
+                      setPicking(null);
+                      void accept({ ...picking, repo: name });
+                    }}
+                  >
+                    {name}
+                    <span>Open</span>
+                  </button>
+                ))}
+              </div>
+              <span className="muted small">These are the repositories the Software Factory app is installed on.</span>
             </div>
-            <span style={{ color: "var(--ink-faint)", fontSize: 12 }}>
-              These are the repositories the Software Factory app is installed on.
-            </span>
-          </div>
-        )}
+          )}
 
-        {picking !== null && choices === null && (
-          <span style={{ color: "var(--ink-faint)", fontSize: 13 }}>Finding your repositories…</span>
-        )}
+          {picking !== null && choices === null && <p className="muted">Finding your repositories…</p>}
 
-        {picking === null && (
-          <label className="field">
-            Which repository?
-            <input
-              type="text"
-              value={repo}
-              placeholder="owner/name — or leave this and sign in to pick from a list"
-              autoComplete="off"
-              spellCheck={false}
-              onChange={(e) => setRepo(e.target.value)}
-            />
-          </label>
-        )}
+          {picking === null && (
+            <label className="step">
+              <b>Which repository?</b>
+              <input
+                className="field"
+                type="text"
+                value={repo}
+                placeholder="owner/name"
+                aria-describedby="repo-hint"
+                autoComplete="off"
+                spellCheck={false}
+                onChange={(e) => setRepo(e.target.value)}
+              />
+              <span id="repo-hint" className="muted small">
+                {sso ? "Or leave it empty and pick from a list after signing in." : "As owner/name, the way it appears on GitHub."}
+              </span>
+            </label>
+          )}
 
-        {waiting !== null && (
-          <div className="note" style={{ display: "grid", gap: 10 }}>
-            <span>
-              You are signed in to GitHub, but the Software Factory app cannot see{" "}
-              <b className="mono">{waiting.repo}</b> yet. Install it on that repository, then check
-              again.
-            </span>
-            <span style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-              {auth?.installUrl != null && (
-                <a className="btn" href={auth.installUrl} target="_blank" rel="noopener noreferrer" style={{ textDecoration: "none" }}>
-                  Install the app
-                </a>
-              )}
-              <button className="btn primary" onClick={() => void accept(waiting)} disabled={busy}>
-                {busy ? "Checking…" : "Check again"}
-              </button>
-            </span>
-          </div>
-        )}
+          {waiting !== null && (
+            <div className="callout">
+              <p>
+                You are signed in to GitHub, but the Software Factory app cannot see <b>{waiting.repo}</b> yet.
+                Install it on that repository, then check again.
+              </p>
+              <div className="acts">
+                {auth?.installUrl != null && (
+                  <a className="btn" href={auth.installUrl} target="_blank" rel="noopener noreferrer">
+                    Install the app
+                  </a>
+                )}
+                <button className="btn go" type="button" onClick={() => void accept(waiting)} disabled={busy}>
+                  {busy ? "Checking…" : "Check again"}
+                </button>
+              </div>
+            </div>
+          )}
 
-        {auth === undefined && <span style={{ color: "var(--ink-faint)", fontSize: 13 }}>One moment…</span>}
+          {auth === undefined && <p className="muted">One moment…</p>}
 
-        {sso && (
-          <div style={{ display: "grid", gap: 12 }}>
-            <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-              <button className="btn primary" onClick={() => void withGithub()} disabled={busy || waiting !== null || picking !== null}>
+          {sso && (
+            <div className="sso">
+              <button className="btn gh-btn" type="button" onClick={() => void withGithub()} disabled={busy || waiting !== null || picking !== null}>
+                <GitHubMark />
                 {busy && waiting === null ? "Opening GitHub…" : "Sign in with GitHub"}
               </button>
-              <span style={{ color: "var(--ink-faint)", fontSize: 13 }}>or</span>
-              <button className="btn" onClick={() => onSignedIn(startDemo())}>
-                Look around with a demo
-              </button>
+              {rememberBox}
+              <span className="muted small">
+                GitHub will ask you to approve the Software Factory app. It can only reach the repositories you install
+                it on.
+              </span>
             </div>
-            <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13, color: "var(--ink-dim)" }}>
-              <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
-              Remember on this device
-            </label>
-            <span style={{ color: "var(--ink-faint)", fontSize: 12, maxWidth: "62ch" }}>
-              GitHub will ask you to approve the Software Factory app. It can only reach the
-              repositories you install it on.
-            </span>
-          </div>
-        )}
+          )}
 
-        {problem !== null && <div className="note bad">{problem}</div>}
-        {warning !== null && <div className="note">{warning}</div>}
+          {problem !== null && <p className="callout stop" role="alert">{problem}</p>}
+          {warning !== null && <p className="callout">{warning}</p>}
 
-        {auth !== undefined && (
-          <details open={!sso} style={{ display: "grid", gap: 12 }}>
-            <summary style={{ cursor: "pointer", fontSize: 13, color: "var(--ink-dim)" }}>
-              {sso ? "Use a token instead" : "Sign in with a token"}
-            </summary>
-            <div style={{ marginTop: 16, display: "grid", gap: 16 }}>{tokenForm}</div>
-          </details>
-        )}
+          {auth !== undefined && (
+            <details className="token" open={!sso}>
+              <summary>{sso ? "Use a token instead" : "Sign in with a token"}</summary>
+              {tokenForm}
+            </details>
+          )}
 
-        {auth === null && (
-          <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-            <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13, color: "var(--ink-dim)" }}>
-              <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
-              Remember on this device
-            </label>
-            <span style={{ color: "var(--ink-faint)", fontSize: 13 }}>or</span>
-            <button className="btn" onClick={() => onSignedIn(startDemo())}>
+          <div className="acts">
+            {auth === null && rememberBox}
+            <button className="btn quiet" type="button" onClick={() => onSignedIn(startDemo())}>
               Look around with a demo
             </button>
           </div>
-        )}
-      </div>
+        </div>
+        <BrandCredit />
+      </main>
+      <aside className="r" aria-label="What happens next">
+        <p>
+          Once you&rsquo;re in, this is where you&rsquo;ll answer the factory&rsquo;s questions, watch the recording of
+          each change working, and merge it, without opening GitHub.
+        </p>
+        <ol className="how dark">
+          <li><b>It asks.</b> One question at a time, until it can say back what it&rsquo;s about to build.</li>
+          <li><b>It builds and proves.</b> In your own GitHub Actions, inside the budget you set.</li>
+          <li><b>You merge.</b> From the briefing, with the proof beside the button.</li>
+        </ol>
+        <small>
+          Open source, Apache 2.0. <Out href="https://github.com/ChampPhil/build-software-factory">Read the code</Out>
+        </small>
+      </aside>
     </div>
+  );
+}
+
+function GitHubMark() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 16 16" aria-hidden="true">
+      <path
+        fill="currentColor"
+        d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"
+      />
+    </svg>
   );
 }

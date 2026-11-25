@@ -1,172 +1,219 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { readSession } from "@/lib/session";
-import { useClient, useFactorySettings, useIndex, useStandingGoals, useWriters } from "@/lib/data";
-import { AskFactory, SettingsPanel, WhoCanStart } from "@/components/settings";
-import { StandingGoals } from "@/components/routing";
-import { PageHead, Section, Dot, AsOf } from "@/components/primitives";
+import { useActions, useStandingGoals, useWriters } from "@/lib/data";
+import { ago, clock, day } from "@/lib/view";
+import { useApp } from "@/components/app";
+import { AskFactory, Goals, SettingsForm } from "@/components/settings";
+import { WorkflowState } from "@/components/run-view";
+import { Check, Cross, Loading, Out } from "@/components/ui";
 import { EmptyFactoryNote } from "@/components/empty-factory";
 
-/**
- * How the factory is configured, and where a person changes it.
- *
- * Every setting a person may change has a control here. Saving opens a pull
- * request and merges it as the signed-in person, so there is still a commit
- * saying who changed what, without anyone opening a file. What a control
- * cannot do yet goes through "Ask the factory".
- */
-export default function Factory() {
-  const session = useMemo(() => readSession(), []);
-  const auth = session === null ? null : { token: session.token, repo: session.repo };
-  const client = useClient(auth);
-  const index = useIndex(client);
-  const goals = useStandingGoals(client);
-  const [version, setVersion] = useState(0);
-  const settings = useFactorySettings(client, version);
-  const writers = useWriters(client);
+const SECTIONS = [
+  ["settings", "Settings"],
+  ["goals", "Standing goals"],
+  ["workflows", "Workflows"],
+  ["people", "People"],
+  ["health", "Health"],
+  ["install", "Installation"],
+  ["ask", "Ask for a change"],
+] as const;
 
+/** Workflows that can be started by hand with no input. The rest start from a request or an event. */
+const RUNNABLE = new Set(["factory-audit.yml", "factory-conflicts.yml", "factory-garden.yml", "factory-merge.yml", "factory-recompile.yml", "factory-review.yml", "factory-rollup.yml", "factory-sync.yml"]);
+const WHAT: Readonly<Record<string, string>> = {
+  "factory-audit.yml": "Checks merges that skipped the gates",
+  "factory-budget-settle.yml": "Settles what each run spent",
+  "factory-conflicts.yml": "Rebuilds pull requests that conflict with main",
+  "factory-drop.yml": "Drops requests you stop",
+  "factory-garden.yml": "Nightly tidying",
+  "factory-gates.yml": "The static and verification gates",
+  "factory-intake.yml": "Reads new requests and decisions",
+  "factory-merge.yml": "Merges what may merge itself",
+  "factory-policy.yml": "Stops changes to protected files",
+  "factory-recompile.yml": "Recompiles the agent workflows",
+  "factory-review.yml": "The factory's self-review",
+  "factory-rollup.yml": "Writes the figures this dashboard reads",
+  "factory-run.yml": "Builds a request",
+  "factory-setup.yml": "Setup",
+  "factory-sync.yml": "Keeps the factory's copy of main current",
+};
+
+/** How the factory runs here: what it may spend, what merges itself, what it is focused on, and what it runs on. */
+export default function Factory() {
+  const { client, index, settings, installed, act, repo, version } = useApp();
+  const goals = useStandingGoals(client);
+  const writers = useWriters(client);
+  const actions = useActions(client, version);
   const data = index.state === "ready" ? index.data : null;
   const health = data?.health;
-  const repo = session?.repo;
+  const name = repo.split("/")[1] ?? repo;
 
   return (
-    <>
-      <PageHead
-        title="Factory"
-        lede="How this factory is set up. Change a setting here and it is saved in one step; every change is still a commit with your name on it."
-      />
+    <main className="wrap">
+      <header className="page-head">
+        <h1>Factory</h1>
+        <p className="rest">How the factory runs on {name}: what it may spend, what it merges by itself, what it&rsquo;s focused on, and what it runs on.</p>
+      </header>
+      <div className="fac">
+        <nav className="subnav" aria-label="Factory sections">
+          {SECTIONS.map(([id, label]) => (
+            <a key={id} href={`#${id}`}>
+              {label}
+            </a>
+          ))}
+        </nav>
+        <div className="fac-main">
+          {index.state === "ready" && data === null && <EmptyFactoryNote installed={installed} />}
 
-      <AsOf at={data?.updated_at} />
+          <section id="settings">
+            <h2 className="sect">Settings</h2>
+            {settings.state === "loading" && <Loading what="the settings" />}
+            {settings.state === "ready" && settings.data === null && <p className="muted">There&rsquo;s no settings file yet. Setup writes it.</p>}
+            {settings.state === "ready" && settings.data !== null && <SettingsForm yaml={settings.data} enforcement={health?.enforcement ?? null} />}
+          </section>
 
-      {data === null && index.state === "ready" && (
-        <EmptyFactoryNote installed={settings.state === "ready" ? settings.data !== null : null} />
-      )}
+          <section id="goals">
+            <h2 className="sect">Standing goals</h2>
+            <p className="muted">A focus the factory holds for a while. It breaks ties toward it when it chooses what to do next; it never overrides a request.</p>
+            <Goals file={goals.state === "ready" ? goals.data : null} />
+          </section>
 
-      {data !== null && (
-        <>
-          <Section title="Version">
-            <div className="rows">
-              <Row label="Runner" value={data.factory.runner} />
-              <Row label="Harness" value={data.factory.harness} />
-              {data.factory.setup_completed_at !== undefined && (
-                <Row label="Set up" value={new Date(data.factory.setup_completed_at).toLocaleDateString()} />
-              )}
-            </div>
-          </Section>
+          <section id="workflows">
+            <h2 className="sect">Workflows</h2>
+            <p className="muted">The GitHub Actions workflows the factory installed. Run any that can start by hand, or re-run one whose last run failed.</p>
+            {actions.state === "loading" && <Loading what="the workflows" />}
+            {actions.state === "ready" && actions.data === null && <p className="muted">This sign-in can&rsquo;t read GitHub Actions, so the workflows aren&rsquo;t shown. <Out href={`https://github.com/${repo}/actions`}>See them on GitHub</Out></p>}
+            {actions.state === "ready" && actions.data !== null && actions.data.workflows.length === 0 && <p className="muted">No factory workflows on this repository yet.</p>}
+            {actions.state === "ready" && actions.data !== null && actions.data.workflows.length > 0 && (
+              <div className="table wf-t" role="table" aria-label="Workflows">
+                {actions.data.workflows.map((w) => {
+                  const file = w.path.split("/").pop() ?? w.path;
+                  const last = actions.data!.runs.find((r) => r.workflow_id === w.id);
+                  return (
+                    <div className="tr" role="row" key={w.id}>
+                      <span role="cell" className="t">
+                        <b>{WHAT[file] ?? w.name}</b>
+                        <small>
+                          <code>{file}</code>
+                          {w.state !== "active" ? `, ${w.state.replace(/_/g, " ")}` : ""}
+                        </small>
+                      </span>
+                      <span role="cell" className="wf-state">
+                        {last === undefined ? <span className="muted">No recent run</span> : <><WorkflowState run={last} /><small>{ago(last.created_at)}</small></>}
+                      </span>
+                      <span role="cell" className="r">
+                        {last?.conclusion === "failure" && (
+                          <button className="btn small" type="button" onClick={() => void act(() => client.rerunFailedJobs(last.id), "Re-running the failed jobs.")}>
+                            Re-run failed jobs
+                          </button>
+                        )}
+                        {last !== undefined && last.status !== "completed" && (
+                          <button className="btn small" type="button" onClick={() => void act(() => client.cancelWorkflowRun(last.id), "Cancelling.")}>
+                            Cancel
+                          </button>
+                        )}
+                        {RUNNABLE.has(file) ? (
+                          <button className="btn small" type="button" onClick={() => void act(() => client.runWorkflowNow(file), `Started ${file}.`)}>
+                            Run now
+                          </button>
+                        ) : (
+                          <small className="muted">Starts by itself</small>
+                        )}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </section>
 
-          <Section
-            title="Health"
-            lede="What has to be true for the factory to run. Anything wrong here stops work rather than producing bad work."
-          >
-            <div className="rows">
-              <HealthRow
-                label="Lock files"
-                ok={health?.lock_files_current !== false}
-                good="Current"
-                bad="Need recompiling — role workflows will not start"
-              />
-              <HealthRow
-                label="Nightly gardening"
-                ok={health?.gardening_schedule_active !== false}
-                good="Scheduled"
-                bad="Disabled by GitHub after 60 days without activity"
-              />
-              <Row
-                label="Enforcement"
-                value={
-                  health?.enforcement === "audit"
-                    ? "Audit mode — a merge that skipped the gates gets a revert pull request"
-                    : health?.enforcement === "branch_protection"
-                      ? "Branch protection — the gates are required checks"
-                      : "Not recorded"
-                }
-              />
-              {health?.sandbox_profile !== undefined && (
-                <Row
-                  label="Sandbox"
-                  value={
-                    health.sandbox_profile === "docker-sudo-iptables"
-                      ? "docker-sudo-iptables — needed for this app's sidecar services, and a weaker isolation level than the default"
-                      : health.sandbox_profile
-                  }
-                />
-              )}
-            </div>
-          </Section>
-
-          {client !== null && (
-            <Section
-              title="Standing goals"
-              lede="What to lean toward for a while. They break ties when the chief of staff and the gardener choose; they never override a request. You can also write /focus followed by a goal in any issue comment."
-            >
-              <StandingGoals client={client} file={goals.state === "ready" ? goals.data : null} />
-            </Section>
-          )}
-
-          <Section
-            title="Autonomy"
-            lede="Every toggle starts off, so a person approves each draft pull request. Turn one on when its revert rate and scorer results give you reason to."
-          >
-            <div className="rows">
-              {["product_work", "gardening", "hardening"].map((p) => {
-                const metrics = data.metrics.by_pipeline?.[p];
-                return (
-                  <div className="row" key={p} style={{ gridTemplateColumns: "1fr auto auto auto" }}>
-                    <span className="row-title">{p.replace(/_/g, " ")}</span>
-                    <span className="row-meta">
-                      {metrics?.runs === undefined ? "no runs yet" : `${metrics.runs} runs`}
+          <section id="people">
+            <h2 className="sect">People</h2>
+            <p className="muted">Anyone with write access can start work. Requests from anyone else wait for one of you to let them start.</p>
+            {writers.state === "ready" && writers.data === null && <p className="muted">This sign-in can&rsquo;t list who has access.</p>}
+            {writers.state === "ready" && writers.data !== null && (
+              <ul className="goals">
+                {writers.data.map((w) => (
+                  <li key={w.login}>
+                    <span>
+                      <b>{w.login}</b>
+                      <small>{w.role === "admin" ? "Admin" : w.role === "maintain" ? "Maintain" : "Write"} access</small>
                     </span>
-                    <span className="row-meta">
-                      {metrics?.revert_rate === undefined
-                        ? "no revert data"
-                        : `${(metrics.revert_rate * 100).toFixed(1)}% reverted`}
-                    </span>
-                    <span className="row-meta">{metrics?.paused === true ? "paused — budget" : "—"}</span>
-                  </div>
-                );
-              })}
-            </div>
-          </Section>
-        </>
-      )}
+                  </li>
+                ))}
+              </ul>
+            )}
+            <Out href={`https://github.com/${repo}/settings/access`}>Add or remove people on GitHub</Out>
+          </section>
 
-          {client !== null && settings.state === "ready" && settings.data !== null && (
-            <Section title="Settings" lede="Changes save in one step, as you. The factory's own check still has to pass.">
-              <SettingsPanel client={client} yaml={settings.data} onApplied={() => setVersion((v) => v + 1)} enforcement={health?.enforcement ?? null} />
-            </Section>
-          )}
+          <section id="health">
+            <h2 className="sect">Health</h2>
+            {health === undefined ? (
+              <p className="muted">Nothing recorded yet. The first run writes it.</p>
+            ) : (
+              <ul className="plain-list ok-list">
+                <li>
+                  {health.gardening_schedule_active === false ? <Cross /> : <Check />}
+                  {health.gardening_schedule_active === false ? "Nightly gardening is off: GitHub turns schedules off after 60 days without activity. Run it once to turn it back on." : "Nightly gardening is scheduled."}
+                </li>
+                <li>
+                  {health.lock_files_current === false ? <Cross /> : <Check />}
+                  {health.lock_files_current === false ? "The workflow lock files are out of date, so agent workflows won't start. Run recompile." : "Workflow lock files match their sources."}
+                </li>
+                <li>
+                  <Check />
+                  {health.enforcement === "audit"
+                    ? "Audit mode: a merge that skipped the gates gets a revert pull request."
+                    : "Branch protection requires the factory's checks on main."}
+                </li>
+                {health.sandbox_profile !== undefined && (
+                  <li>
+                    <Check />
+                    The sandbox runs as <code>{health.sandbox_profile}</code>
+                    {health.sandbox_profile === "docker-sudo-iptables" ? ", which this app's services need; it isolates less than the default." : "."}
+                  </li>
+                )}
+                {health.last_review !== undefined && (
+                  <li>
+                    <Check />
+                    Last self-review {ago(health.last_review)}.
+                  </li>
+                )}
+              </ul>
+            )}
+          </section>
 
-          {client !== null && repo !== undefined && (
-            <Section title="Who can start work" lede="The factory acts on requests from people with write access to this repository.">
-              <WhoCanStart repo={repo} writers={writers.state === "ready" ? writers.data : null} />
-            </Section>
-          )}
+          <section id="install">
+            <h2 className="sect">Installation</h2>
+            {data === null ? (
+              <p className="muted">Not set up yet.</p>
+            ) : (
+              <dl className="kv wide">
+                <dt>Runner</dt>
+                <dd>
+                  {data.factory.runner}
+                  {data.factory.setup_completed_at !== undefined ? `, set up ${day(data.factory.setup_completed_at)}` : ""}
+                </dd>
+                <dt>Agent</dt>
+                <dd>{data.factory.harness.replace(/-/g, " ")}</dd>
+                <dt>Records</dt>
+                <dd>
+                  Kept in this repository under <code>refs/factory/data</code>, last written {clock(data.updated_at)}.
+                </dd>
+              </dl>
+            )}
+            <p className="muted small">
+              To remove the factory, run <code>/setup-my-software-factory uninstall</code> from your coding agent in this repository.
+            </p>
+          </section>
 
-          {client !== null && (
-            <Section title="Ask the factory" lede="For a change that has no control above. Say what you want in your own words; it is filed as a request and answered on the issue.">
-              <AskFactory client={client} />
-            </Section>
-          )}
-    </>
-  );
-}
-
-function Row({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="row" style={{ gridTemplateColumns: "180px 1fr" }}>
-      <span className="row-meta">{label}</span>
-      <span>{value}</span>
-    </div>
-  );
-}
-
-function HealthRow({ label, ok, good, bad }: { label: string; ok: boolean; good: string; bad: string }) {
-  return (
-    <div className="row" style={{ gridTemplateColumns: "180px auto 1fr" }}>
-      <span className="row-meta">{label}</span>
-      <Dot tone={ok ? "pass" : "fail"} />
-      <span>{ok ? good : bad}</span>
-    </div>
+          <section id="ask">
+            <h2 className="sect">Ask for a change</h2>
+            <p className="muted">For something there&rsquo;s no control for here. Say it in your own words; it&rsquo;s filed as a request and answered on the issue.</p>
+            <AskFactory />
+          </section>
+        </div>
+      </div>
+    </main>
   );
 }
