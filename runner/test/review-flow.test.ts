@@ -16,6 +16,8 @@ const run = (id: string, pipeline: string, startDay: number): Run => ({
 
 let runs: Run[] = [];
 let reviews: string[] = [];
+/** The review records on the ref, by path, for the tests that read them back. */
+let reviewDocs: Record<string, unknown> = {};
 const written: { path: string; content: string | null }[] = [];
 
 vi.mock("../src/commands/rollup-run.js", () => ({ readAll: async () => ({ runs, workItems: [] }) }));
@@ -31,8 +33,8 @@ vi.mock("../src/lib/store.js", async (orig) => {
           const r = runs.find((x) => x.id === m[1]);
           return r === undefined ? null : { pipeline: r.pipeline };
         }
-        const rv = /^reviews\//.test(p) ? { at: iso(0) } : null;
-        return rv;
+        if (/^reviews\//.test(p)) return reviewDocs[p] ?? { at: iso(0) };
+        return null;
       },
     };
     get = async () => null;
@@ -52,6 +54,7 @@ vi.mock("../src/lib/store.js", async (orig) => {
 beforeEach(() => {
   runs = [];
   reviews = [];
+  reviewDocs = {};
   written.length = 0;
 });
 
@@ -103,16 +106,17 @@ describe("runReviewRoute and hardening runs", () => {
 
   it("files hardening for a failing product-work run, and only records one from a hardening run", async () => {
     const { runReviewRoute } = await import("../src/commands/review.js");
-    runs = [run(RUN("P"), "product_work", 0), run(RUN("H"), "hardening", 1)];
+    // Two product-work sightings, because one is watched rather than hardened.
+    runs = [run(RUN("P"), "product_work", 0), run(RUN("Q"), "product_work", 0), run(RUN("H"), "hardening", 1)];
     const dispatched: string[] = [];
     const r = await runReviewRoute({
       gh: gh(dispatched),
       now: iso(4),
-      failures: [failure(RUN("P")), failure(RUN("H"))],
+      failures: [failure(RUN("P")), failure(RUN("Q")), failure(RUN("H"))],
     });
-    // One problem, from the product-work run; the hardening run's failure is shown, not routed.
+    // One problem, from the product-work runs; the hardening run's failure is shown, not routed.
     expect(r.problems).toHaveLength(1);
-    expect(r.problems[0]?.runs).toEqual([RUN("P")]);
+    expect(r.problems[0]?.runs).toEqual([RUN("P"), RUN("Q")]);
     expect(r.filed).toHaveLength(1);
     expect(dispatched).toHaveLength(1);
     expect(r.unrouted.map((u) => u.run)).toEqual([RUN("H")]);
@@ -137,9 +141,48 @@ describe("runReviewRoute and hardening runs", () => {
 
   it("a review with no unrouted failures records none", async () => {
     const { runReviewRoute } = await import("../src/commands/review.js");
-    runs = [run(RUN("P"), "gardening", 0)];
-    await runReviewRoute({ gh: gh(), now: iso(4), failures: [failure(RUN("P"))] });
+    // Two sightings, so nothing is set aside as seen once either.
+    runs = [run(RUN("P"), "gardening", 0), run(RUN("Q"), "gardening", 0)];
+    await runReviewRoute({ gh: gh(), now: iso(4), failures: [failure(RUN("P")), failure(RUN("Q"))] });
     const rec = JSON.parse(written.find((c) => c.path.startsWith("reviews/"))!.content!) as Record<string, unknown>;
     expect(rec).not.toHaveProperty("unrouted");
+  });
+
+  it("records a single sighting and files nothing for it", async () => {
+    // The autonomous path: every problem the review found used to become a
+    // guardrail, and a problem can be one scored failure in one run.
+    const { runReviewRoute } = await import("../src/commands/review.js");
+    runs = [run(RUN("P"), "product_work", 0)];
+    const dispatched: string[] = [];
+    const r = await runReviewRoute({ gh: gh(dispatched), now: iso(4), failures: [failure(RUN("P"))] });
+    expect(r.filed).toEqual([]);
+    expect(dispatched).toEqual([]);
+    expect(r.unrouted.map((u) => u.reason)).toEqual([expect.stringContaining("seen once")]);
+    expect(written.some((c) => c.path === "ledger.json")).toBe(false);
+  });
+
+  it("files it when an earlier review saw the same problem once", async () => {
+    const { runReviewRoute, groupAndRoute } = await import("../src/commands/review.js");
+    // The earlier review's own record, on the ref where this one reads it.
+    const earlier = groupAndRoute([failure(RUN("Z"))]);
+    reviews = ["reviews/2026-11-11.json"];
+    reviewDocs["reviews/2026-11-11.json"] = { at: iso(0), unrouted: earlier.unrouted };
+    runs = [run(RUN("P"), "product_work", 0)];
+    const dispatched: string[] = [];
+    const r = await runReviewRoute({ gh: gh(dispatched), now: iso(4), failures: [failure(RUN("P"))] });
+    expect(r.filed).toHaveLength(1);
+    expect(dispatched).toHaveLength(1);
+  });
+
+  it("does not file it when the earlier review's sighting was a different problem", async () => {
+    const { runReviewRoute, groupAndRoute } = await import("../src/commands/review.js");
+    const other = groupAndRoute([{ ...failure(RUN("Z")), tag: "something_else" }]);
+    reviews = ["reviews/2026-11-11.json"];
+    reviewDocs["reviews/2026-11-11.json"] = { at: iso(0), unrouted: other.unrouted };
+    runs = [run(RUN("P"), "product_work", 0)];
+    const dispatched: string[] = [];
+    const r = await runReviewRoute({ gh: gh(dispatched), now: iso(4), failures: [failure(RUN("P"))] });
+    expect(r.filed).toEqual([]);
+    expect(dispatched).toEqual([]);
   });
 });

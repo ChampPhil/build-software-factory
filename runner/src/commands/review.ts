@@ -119,6 +119,11 @@ export interface Unrouted {
   readonly tag: string;
   readonly reason: string;
   readonly detail?: string;
+  /**
+   * The stable problem id, so the next review can tell whether a thing it has
+   * just seen once is the same thing the last one saw once.
+   */
+  readonly problem?: string;
 }
 
 export interface Routing {
@@ -128,6 +133,9 @@ export interface Routing {
 
 export const HARDENING_RUN_REASON =
   "found in a hardening run: shown to a person, never hardened again, so hardening cannot feed itself";
+
+export const SEEN_ONCE_REASON =
+  "seen once: recorded and watched, and hardened if it happens again, because one occurrence is an incident";
 
 /**
  * Every problem the review finds goes to hardening: the codebase, a static
@@ -142,7 +150,14 @@ export const HARDENING_RUN_REASON =
  */
 export function groupAndRoute(
   failures: readonly ScoredFailure[],
-  opts: { readonly pipelineOf?: (run: string) => string | undefined } = {},
+  opts: {
+    readonly pipelineOf?: (run: string) => string | undefined;
+    /**
+     * Problem ids an earlier review already saw once. A problem in here is
+     * routed on its second sighting even though this window holds one.
+     */
+    readonly seenBefore?: ReadonlySet<string>;
+  } = {},
 ): Routing {
   const unrouted: Unrouted[] = [];
   const routable: ScoredFailure[] = [];
@@ -166,7 +181,7 @@ export function groupAndRoute(
     else list.push(f);
   }
 
-  const problems = [...groups.entries()]
+  const grouped = [...groups.entries()]
     .sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]))
     .map(([key, list]) => {
       const first = list[0]!;
@@ -180,7 +195,45 @@ export function groupAndRoute(
         why: `${first.tag} is something a check can catch, which is cheaper and permanent`,
       };
     });
+
+  /**
+   * A problem seen once is watched, not hardened.
+   *
+   * Every problem the review found used to become a guardrail, and a problem
+   * can be one scored failure in one run. So a single bad afternoon — a flaky
+   * dependency, an odd issue, a model having a bad time — could install a rule
+   * that every future change is judged against forever, and the rule outlives
+   * whatever caused it by years. Nobody is asked, because this path is the
+   * autonomous one.
+   *
+   * Twice is the bar, and it is not a delay: the sighting is recorded, and if
+   * the thing is real it recurs and the next review routes it. What is lost is
+   * only the rules that should never have existed.
+   */
+  const problems = grouped.filter((p) => p.occurrences > 1 || (opts.seenBefore?.has(p.id) ?? false));
+  const routed = new Set(problems.map((p) => p.id));
+  for (const p of grouped) {
+    if (routed.has(p.id)) continue;
+    unrouted.push({
+      run: p.runs[0] ?? "",
+      tag: p.tag,
+      reason: SEEN_ONCE_REASON,
+      problem: p.id,
+      ...(p.area === "" ? {} : { detail: `in ${p.area}` }),
+    });
+  }
   return { problems, unrouted };
+}
+
+/** Problem ids earlier reviews recorded as seen once. */
+export function seenOnceIds(reviews: readonly { readonly unrouted?: readonly Unrouted[] }[]): ReadonlySet<string> {
+  const ids = new Set<string>();
+  for (const r of reviews) {
+    for (const u of r.unrouted ?? []) {
+      if (u.reason === SEEN_ONCE_REASON && u.problem !== undefined) ids.add(u.problem);
+    }
+  }
+  return ids;
 }
 
 /* ------------------------------------------------------------------- command */
@@ -243,6 +296,20 @@ export interface RouteReport {
   readonly dispatched: readonly string[];
 }
 
+/** The most recent review records, newest last. */
+async function recentReviews(
+  store: FactoryStore,
+  howMany: number,
+): Promise<readonly { readonly unrouted?: readonly Unrouted[] }[]> {
+  const paths = (await store.data.list("reviews/").catch(() => [])).filter((p) => p.endsWith(".json")).sort();
+  const out: { unrouted?: readonly Unrouted[] }[] = [];
+  for (const path of paths.slice(-howMany)) {
+    const doc = await store.data.readJson<{ unrouted?: readonly Unrouted[] }>(path).catch(() => null);
+    if (doc !== null) out.push(doc);
+  }
+  return out;
+}
+
 /** Turn the scored failures into work items, one per problem. */
 export async function runReviewRoute(
   opts: ReviewOptions & {
@@ -260,7 +327,16 @@ export async function runReviewRoute(
     const doc = await store.data.readJson<{ pipeline?: string }>(`runs/${id}.json`).catch(() => null);
     if (doc?.pipeline !== undefined) pipelines.set(id, doc.pipeline);
   }
-  const { problems, unrouted } = groupAndRoute(opts.failures, { pipelineOf: (run) => pipelines.get(run) });
+  // What earlier reviews saw once. A problem this window saw once is routed
+  // only if one of them saw it too — twice is the bar for installing a rule
+  // nobody was asked about. The last few reviews are enough: a thing that has
+  // not recurred in that long is not a problem class.
+  const seenBefore = seenOnceIds(await recentReviews(store, 4));
+
+  const { problems, unrouted } = groupAndRoute(opts.failures, {
+    pipelineOf: (run) => pipelines.get(run),
+    seenBefore,
+  });
 
   const changes: Change[] = [];
   const filed: { work_item: string; destination: string }[] = [];

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runIntake, type IncomingEvent, type IntakeContext } from "../src/commands/intake.js";
@@ -239,3 +239,76 @@ describe("corrections said to an agent on someone's machine", () => {
   });
 });
 
+
+/**
+ * The hook reads what somebody types at an agent in their own session and
+ * turns it into a work item in a repository. The record of what it sent held
+ * sha256 hashes and nothing else — enough to stop the same correction going
+ * twice, no use at all to the person whose words went out, who could only find
+ * out by going and reading the repository's issues.
+ */
+describe("what left this machine", async () => {
+  const { readSent, renderSent, markSent, alreadySent } = await import("../src/commands/local-hook.js");
+  const fresh = (): string => join(mkdtempSync(join(tmpdir(), "bsf-sent-")), "sent.json");
+
+  it("records when, where and what", () => {
+    const path = fresh();
+    markSent("k1", path, { at: "2026-11-25T10:00:00Z", title: "stop using fetch directly", repo: "o/r" });
+    expect(readSent(path)).toEqual([
+      { key: "k1", at: "2026-11-25T10:00:00Z", title: "stop using fetch directly", repo: "o/r" },
+    ]);
+  });
+
+  it("still stops the same correction going twice", () => {
+    const path = fresh();
+    markSent("k1", path, { at: "t", title: "a", repo: "o/r" });
+    expect(alreadySent("k1", path)).toBe(true);
+    expect(alreadySent("k2", path)).toBe(false);
+  });
+
+  it("reads the old bare-array file, so an existing install keeps its dedupe", () => {
+    const path = fresh();
+    writeFileSync(path, JSON.stringify(["old1", "old2"]));
+    expect(alreadySent("old1", path)).toBe(true);
+    // Nothing is known about them beyond the hash, and it does not pretend
+    // otherwise.
+    expect(readSent(path).map((r) => r.title)).toEqual(["", ""]);
+  });
+
+  it("upgrades the old file in place on the next send, keeping what was there", () => {
+    const path = fresh();
+    writeFileSync(path, JSON.stringify(["old1"]));
+    markSent("new1", path, { at: "t", title: "a correction", repo: "o/r" });
+    expect(alreadySent("old1", path)).toBe(true);
+    expect(alreadySent("new1", path)).toBe(true);
+    expect(readSent(path)).toHaveLength(2);
+  });
+
+  it("treats a missing or unreadable file as nothing sent", () => {
+    expect(readSent(join(tmpdir(), "bsf-definitely-not-here", "sent.json"))).toEqual([]);
+    const path = fresh();
+    writeFileSync(path, "not json at all");
+    expect(readSent(path)).toEqual([]);
+    expect(alreadySent("k", path)).toBe(false);
+  });
+
+  it("prints what was sent, oldest first", () => {
+    const text = renderSent([
+      { key: "k1", at: "2026-11-01T00:00:00Z", title: "first", repo: "o/r" },
+      { key: "k2", at: "2026-11-02T00:00:00Z", title: "second", repo: "o/r" },
+    ]);
+    expect(text.indexOf("first")).toBeLessThan(text.indexOf("second"));
+    expect(text).toContain("o/r");
+    expect(text).toMatch(/2 correction\(s\)/);
+  });
+
+  it("says plainly when nothing has been sent, and how to turn the hook off", () => {
+    const text = renderSent([]);
+    expect(text).toMatch(/Nothing has been sent/i);
+    expect(text).toContain("bsf local-hook --uninstall");
+  });
+
+  it("marks a record from before the log existed rather than inventing a time", () => {
+    expect(renderSent([{ key: "k", at: "", title: "", repo: "" }])).toMatch(/before this was recorded/i);
+  });
+});

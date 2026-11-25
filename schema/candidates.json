@@ -129,6 +129,14 @@
               "null"
             ],
             "description": "The GitHub login of the teammate who submitted this candidate with `bsf contribute-corrections`, or null for one mined by setup from the repository itself. A reviewer needs to know a candidate came from someone's own machine: the quote is from their private session, and they are the person to ask about it."
+          },
+          "target": {
+            "type": "string",
+            "enum": [
+              "repo",
+              "factory"
+            ],
+            "description": "Whether the correction is about this repository's conventions or about the factory's own behaviour. A factory defect hardened locally is a private patch for a bug every other factory has; sent upstream it is fixed once for everyone. Nothing routes on this yet \u2014 it is recorded so history need not be re-mined, and so a person can see which guardrails are really factory bugs. Absent means unclassified."
           }
         }
       }

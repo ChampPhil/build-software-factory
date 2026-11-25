@@ -14,6 +14,15 @@ name: factory-conflicts
 on:
   push:
     branches: [main, master]
+  # One rebuild goes out per scan, and the queue normally drains on the push a
+  # landing rebuild makes. A rebuild that fails or escalates makes no push, so
+  # the queue would wait for one that never comes; a run finishing is when the
+  # queue can move, so that is the second trigger rather than a timer. An idle
+  # factory runs nothing extra this way, where an hourly scan would spend a
+  # fifth of a month's free Actions minutes finding nothing.
+  workflow_run:
+    workflows: ["factory-run"]
+    types: [completed]
   workflow_dispatch:
   check_run:
     types: [requested_action]

@@ -198,6 +198,9 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
       Turn the hook on or off for this checkout, in .claude/settings.local.json
       (yours alone, not the team's). A public repository is refused unless
       --allow-public, because what you correct is then visible there.
+  bsf local-hook --sent
+      What this machine has sent, with when and to which repository. Kept in
+      your own cache, never anywhere else.
 
   bsf schema-surface [--check] [--freeze]
       Compare the schemas against the frozen shape in schema/SURFACE.json.
@@ -1840,6 +1843,14 @@ async function conflictsCommand(args: Args, second?: string, third?: string): Pr
   process.stdout.write(
     `${report.conflicting.length} conflicting, ${report.clean.length} clean, ${report.unknown.length} undetermined\n`,
   );
+  if (report.dispatched.length > 0) {
+    process.stdout.write(`  rebuilding: ${report.dispatched.join(", ")}\n`);
+  }
+  if (report.queued.length > 0) {
+    // One rebuild at a time: the rest start when this one lands, or at the
+    // next scheduled scan if it never does.
+    process.stdout.write(`  queued behind it: ${report.queued.join(", ")}\n`);
+  }
   if (report.unknown.length > 0) {
     // Not reported as clean: GitHub had not finished computing mergeability.
     process.stdout.write(`  still unknown after retries: ${report.unknown.map((p) => `#${p}`).join(", ")}\n`);
@@ -2557,6 +2568,14 @@ async function localHookCommand(args: Args): Promise<number> {
     return 0;
   }
 
+  // What this machine has sent. The hook reads what someone types at an agent
+  // and turns it into a work item in a repository, so this is how they answer
+  // "what left my machine" without going and reading that repository.
+  if (args["sent"] === true) {
+    process.stdout.write(`${lh.renderSent(lh.readSent())}\n`);
+    return 0;
+  }
+
   // Hook mode. Nothing here may print or fail: the harness can feed a hook's
   // output to the agent, and a broken hook must never break a session.
   try {
@@ -2572,7 +2591,7 @@ async function localHookCommand(args: Args): Promise<number> {
       title: capture.title,
       body: capture.body,
     });
-    lh.markSent(capture.key);
+    lh.markSent(capture.key, undefined, { at: nowIso(), title: capture.title, repo });
   } catch {
     // Silent by design.
   }

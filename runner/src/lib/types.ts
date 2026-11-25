@@ -165,6 +165,13 @@ export interface Candidate {
   readonly sources: readonly CandidateSource[];
   readonly proposed_fix: "api_change" | "static_rule" | "verification" | "context";
   readonly status: "pending" | "accepted" | "rejected" | "installed";
+  /**
+   * Whether this is about the repository or about the factory itself. Nothing
+   * routes on it yet; it is recorded so the question can be asked of history
+   * rather than re-mined, and so a person can see which of their guardrails
+   * are really factory bugs wearing a local disguise.
+   */
+  readonly target?: "repo" | "factory";
   readonly installed_as?: string | null;
   readonly critical_logic?: boolean;
   /** Who submitted it with `bsf contribute-corrections`; absent if setup mined it. */

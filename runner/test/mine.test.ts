@@ -432,3 +432,46 @@ describe("consent before reading", () => {
     expect(r.corrections).toHaveLength(1);
   });
 });
+
+/**
+ * Two different things wear the same clothes. "Use the api client, not fetch"
+ * is this codebase's convention and a guardrail here is right. "Stop attaching
+ * a screenshot of the title page and calling it proof" is not about this
+ * codebase at all — it is a defect in how the factory works, and a local
+ * guardrail for it is a private patch for a bug every other factory has.
+ *
+ * Nothing routes on this yet. Recording it means the question can be asked of
+ * history later instead of re-mining it.
+ */
+describe("whether a correction is about the repo or about the factory", async () => {
+  const { correctionTarget } = await import("../src/commands/mine.js");
+  const t = (text: string): string => correctionTarget(text).target;
+
+  it("reads a convention as the repo's", () => {
+    expect(t("use the api client, not fetch directly")).toBe("repo");
+    expect(t("no, put that in src/lib and export it from the index")).toBe("repo");
+    expect(t("we say members, not users")).toBe("repo");
+    expect(t("stop using any, write the type out")).toBe("repo");
+  });
+
+  it("reads a complaint about the machinery as the factory's", () => {
+    expect(t("the proof is just a screenshot of the title page again")).toBe("factory");
+    expect(t("the verifier should actually click through the app")).toBe("factory");
+    expect(t("stop opening PRs with no tests")).toBe("factory");
+    expect(t("why did the factory file three items for one issue")).toBe("factory");
+    expect(t("the gate passed on console output, which is useless")).toBe("factory");
+  });
+
+  it("defaults to the repo, because that is the safe way to be wrong", () => {
+    // Misread as a factory defect, a real convention would go unenforced here
+    // once anything routes on this.
+    expect(t("")).toBe("repo");
+    expect(t("that is not what I asked for")).toBe("repo");
+  });
+
+  it("says which words decided it, so a person can check the call", () => {
+    const { signals, target } = correctionTarget("the hardener keeps writing rules nobody runs");
+    expect(target).toBe("factory");
+    expect(signals.length).toBeGreaterThan(0);
+  });
+});
