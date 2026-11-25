@@ -529,3 +529,71 @@ describe("the frame — the words the conversation teaches", async () => {
     });
   });
 });
+
+describe("the frame reads like prose, whichever way the agent phrased it", async () => {
+  const bs = await import("../src/commands/brainstorm.js");
+
+  // Found by rendering a realistic frame and reading it, which no assertion
+  // in the suite above would have caught: the fields are the agent's own
+  // sentences and it writes a clause one time and a noun phrase the next.
+  it("reads correctly whether a field is a clause or a noun phrase", () => {
+    const text = bs.renderFrameTurn(
+      bs.parseFrame({
+        named: "a write-ahead log",
+        terms: [
+          {
+            term: "write-ahead log",
+            means: "a file the run appends to before it changes anything.",
+            names: 'you said it "shouldn\'t lose work if it dies halfway"',
+            unlocks: "a resume from the last good step",
+          },
+          {
+            term: "checkpoint",
+            means: "a point the run can be resumed from.",
+            names: "the part about the long step in the middle",
+            unlocks: "deciding what a resume actually costs",
+          },
+        ],
+      }),
+      "Q?",
+    );
+    // The old wording glued these into "Names the part where X" and "Lets you
+    // ask for X", which read as "Names the part where the part about…".
+    expect(text).not.toContain("Names the part where");
+    expect(text).toContain("From what you wrote: the part about the long step in the middle.");
+    expect(text).toContain("Lets you ask for: deciding what a resume actually costs.");
+  });
+
+  it("ends every fragment, so two of the agent's sentences never run together", () => {
+    const text = bs.renderFrameTurn(
+      bs.parseFrame({
+        terms: [{ term: "t", means: "no full stop here", names: "nor here", unlocks: "nor here either" }],
+        neighbors: [{ field: "f", carries_over: "no stop", breaks_down: "none here" }],
+        unmentioned: ["nothing terminates this"],
+      }),
+      "Q?",
+    );
+    for (const frag of ["no full stop here.", "nor here.", "nor here either.", "no stop.", "none here.", "nothing terminates this."]) {
+      expect(text).toContain(frag);
+    }
+    expect(text).not.toContain("..");
+  });
+
+  it("spells small counts, because 'The 3 words' looks machine-written", () => {
+    const term = (t: string) => ({ term: t, means: "m", names: "n", unlocks: "u" });
+    expect(bs.renderFrameTurn(bs.parseFrame({ terms: [term("a"), term("b"), term("c")] }), "Q?")).toContain(
+      "The three words",
+    );
+    expect(bs.renderFrameTurn(bs.parseFrame({ terms: [term("a")] }), "Q?")).toContain("The word that matters most");
+  });
+
+  it("keeps each entry's lines together, so a bullet is one item and not three", () => {
+    const text = bs.renderFrameTurn(
+      bs.parseFrame({ terms: [{ term: "t", means: "m.", names: "n.", unlocks: "u." }] }),
+      "Q?",
+    );
+    // Continuation lines are indented under their bullet rather than separated
+    // by a blank line, which would render them as loose paragraphs.
+    expect(text).toContain("- **t** — m.\n  From what you wrote: n.\n  Lets you ask for: u.");
+  });
+});
