@@ -105,6 +105,9 @@ export interface IntakeDecision {
     | "ignored_bot"
     | "context_for_open_item"
     | "answers_open_item"
+    // A comment on an item whose conversation is being held open. Recorded,
+    // and deliberately not dispatched: the held job answers it.
+    | "conversation_in_progress"
     | "admits_open_item"
     | "retries_open_item"
     | "ignored_untrusted_retry"
@@ -153,6 +156,16 @@ export interface IntakeContext {
   /** Highest event id already processed. Events at or below it are skipped. */
   readonly cursor: number;
   readonly openItems: readonly LedgerOpenItem[];
+  /**
+   * Work items with a conversation already being held open.
+   *
+   * A held job is blocked on `bsf brainstorm wait` and will pick the next
+   * comment up itself, within seconds. Requeuing the item as well would start
+   * a second conversation that asks the person the same question again — the
+   * one way this can go visibly wrong for them. Absent, nothing is held and
+   * intake behaves as it always did.
+   */
+  readonly liveConversations?: readonly string[];
   /** Items merged recently, for the follow-up rule. */
   readonly recentlyMerged?: readonly { readonly work_item: string; readonly fingerprint?: string; readonly pr?: number }[];
   /**
@@ -397,6 +410,17 @@ function decide(incoming: IncomingEvent, ctx: IntakeContext): IntakeDecision {
     const open = ctx.openItems.find((o) => o.source_ref === event.ref);
     if (open !== undefined) {
       if (event.kind === "issue_comment" && open.status === "needs_info" && trusted) {
+        // Somebody is already listening. The held job sees this comment on its
+        // next poll, a second or two from now, and answers it in the session
+        // that asked the question — so it knows what the first three answers
+        // settled. Starting a run here would ask them the same thing twice.
+        if ((ctx.liveConversations ?? []).includes(open.work_item)) {
+          return {
+            event, workItem: null, outcome: "conversation_in_progress", openItem: open.work_item,
+            reason: `a conversation is open on ${open.work_item} and will pick this up itself`,
+            duplicateShortlist: [],
+          };
+        }
         return {
           event, workItem: null, outcome: "answers_open_item", openItem: open.work_item,
           reason: `${event.actor} answered the question on ${open.work_item}, so it goes back in the queue`,

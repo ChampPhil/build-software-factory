@@ -187,6 +187,12 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       proceed: ${{ steps.status.outputs.proceed }}
+      # A request triage could not pin down used to end the run. Now it starts
+      # a conversation, in this same run: the person answers in seconds and the
+      # run carries straight on to spec, instead of the whole thing being
+      # dispatched again for every turn.
+      wants_conversation: ${{ steps.status.outputs.wants_conversation }}
+      understood: ${{ steps.status.outputs.understood }}
     steps:
       - name: Fetch the factory runner from the default branch
         uses: actions/checkout@v4
@@ -214,6 +220,96 @@ jobs:
           owner: ${{ github.repository_owner }}
           repositories: ${{ github.event.repository.name }}
       - name: Read what triage decided
+        id: status
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          WORK_ITEM: ${{ inputs.work_item }}
+        run: bsf run status "$WORK_ITEM"
+
+  # The conversation, held open as one job.
+  #
+  # A turn used to be a whole workflow run: a comment woke intake, intake
+  # requeued the item, a role started from scratch and built a sandbox it never
+  # used in order to ask one question. Three to five minutes a turn, which is
+  # correspondence rather than conversation. Here the agent blocks on
+  # `bsf brainstorm wait` between questions, so a turn costs the model call and
+  # nothing else — and it is cheaper, because a held job is billed as one job
+  # where a run per turn is billed per job and each one rounds up to a minute.
+  #
+  # It is its own role rather than part of triage because triage starts the
+  # sandbox to reproduce bugs, and that needs FACTORY_SANDBOX_ENV. A role whose
+  # whole job is talking to somebody should never be handed the app's secrets.
+  brainstorm:
+    needs: [plan, triage, triaged, triage-budget]
+    if: >-
+      always() && needs.plan.outputs.proceed == 'true' &&
+      needs.triaged.outputs.wants_conversation == 'true'
+    # What the compiled role's own jobs request. A caller must grant at
+    # least this, or GitHub refuses to start the run.
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+      id-token: write
+      issues: write
+      pull-requests: write
+    uses: ./.github/workflows/factory-role-brainstorm.lock.yml
+    with:
+      budget_key: ${{ github.run_id }}-${{ github.run_attempt }}-brainstorm
+      model: ${{ needs.plan.outputs.model_triage }}
+      work_item: ${{ inputs.work_item }}
+      pipeline: ${{ needs.plan.outputs.pipeline }}
+      attempt: ${{ fromJSON(inputs.attempt) }}
+    secrets: inherit
+
+  # Charge the conversation's budget hold with what gh-aw measured.
+  brainstorm-budget:
+    needs: brainstorm
+    if: always() && needs.brainstorm.result != 'skipped'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/factory-budget-settle.yml
+    with:
+      key: ${{ github.run_id }}-${{ github.run_attempt }}-brainstorm
+    secrets:
+      FACTORY_APP_PRIVATE_KEY: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
+
+  # Did the conversation settle? Only then does the run go on to spec. A
+  # conversation that ended because the person walked away leaves the item
+  # where it was, and their next comment picks it up from there.
+  brainstormed:
+    needs: [brainstorm, brainstorm-budget]
+    if: always() && needs.brainstorm.result == 'success'
+    runs-on: ubuntu-latest
+    outputs:
+      understood: ${{ steps.status.outputs.understood }}
+    steps:
+      - name: Fetch the factory runner from the default branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: .factory-trusted
+          sparse-checkout: |
+            .factory/bin
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Put the trusted runner on PATH
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/bsf"
+          cp -R .factory-trusted/.factory/bin/. "$RUNNER_TEMP/bsf/"
+          rm -rf .factory-trusted
+          echo "$RUNNER_TEMP/bsf" >> "$GITHUB_PATH"
+      - name: Mint a token for reading the work item
+        id: token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.FACTORY_APP_CLIENT_ID }}
+          private-key: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
+          permission-contents: read
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+      - name: Read what the conversation settled
         id: status
         env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
@@ -260,10 +356,12 @@ jobs:
       FACTORY_APP_PRIVATE_KEY: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
 
   spec:
-    needs: [plan, triage, triaged, hardener, triage-budget, hardener-budget]
+    needs: [plan, triage, triaged, brainstorm, brainstormed, hardener, triage-budget, brainstorm-budget, hardener-budget]
     if: >-
       always() && needs.plan.outputs.proceed == 'true' && needs.plan.outputs.needs_spec == 'true' &&
-      (needs.triage.result == 'skipped' || needs.triaged.outputs.proceed == 'true') &&
+      (needs.triage.result == 'skipped' || needs.triaged.outputs.proceed == 'true' ||
+       needs.brainstormed.outputs.understood == 'true') &&
+      (needs.brainstorm.result == 'skipped' || needs.brainstorm.result == 'success') &&
       (needs.hardener.result == 'success' || needs.hardener.result == 'skipped') &&
       needs.hardener.outputs.created_pr_number == ''
     # What the compiled role's own jobs request. A caller must grant at
@@ -514,6 +612,9 @@ jobs:
       - triage
       - triage-budget
       - triaged
+      - brainstorm
+      - brainstorm-budget
+      - brainstormed
       - hardener
       - hardener-budget
       - spec

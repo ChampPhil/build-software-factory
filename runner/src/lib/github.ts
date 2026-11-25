@@ -97,6 +97,63 @@ export class GitHubError extends Error {
   }
 }
 
+export interface ConditionalResponse<T> {
+  /** 200 with a body, or 304 when nothing changed. */
+  readonly status: number;
+  /** Pass back on the next call. Absent when the response carried none. */
+  readonly etag?: string;
+  /**
+   * Seconds GitHub asks you to wait before polling this endpoint again, from
+   * its `x-poll-interval` header. Honour it: it is how GitHub asks for room
+   * without returning an error.
+   */
+  readonly pollAfter?: number;
+  /** Absent on a 304 — there is nothing new, so the caller keeps what it had. */
+  readonly body?: T;
+}
+
+/**
+ * Split `gh api -i` output into headers and body.
+ *
+ * The CLI prints the status line, then headers, then a blank line, then the
+ * body. A 304 ends at the blank line.
+ */
+export function parseConditional<T>(raw: string): ConditionalResponse<T> {
+  const text = raw.replace(/\r\n/g, "\n");
+  const split = text.indexOf("\n\n");
+  const head = split < 0 ? text : text.slice(0, split);
+  const body = split < 0 ? "" : text.slice(split + 2).trim();
+  const lines = head.split("\n");
+
+  const status = Number(/\s(\d{3})\s?/.exec(lines[0] ?? "")?.[1] ?? 0);
+  const header = (name: string): string | undefined => {
+    const want = `${name.toLowerCase()}:`;
+    for (const l of lines.slice(1)) {
+      if (l.toLowerCase().startsWith(want)) return l.slice(want.length).trim();
+    }
+    return undefined;
+  };
+
+  const etag = header("etag");
+  const poll = Number(header("x-poll-interval") ?? NaN);
+  return {
+    status,
+    ...(etag === undefined ? {} : { etag }),
+    ...(Number.isFinite(poll) && poll > 0 ? { pollAfter: poll } : {}),
+    // A 304 has no body, and a 200 whose body will not parse is a response we
+    // cannot use — treat it as nothing new rather than crashing the loop.
+    ...(status === 200 && body !== ""
+      ? (() => {
+          try {
+            return { body: JSON.parse(body) as T };
+          } catch {
+            return {};
+          }
+        })()
+      : {}),
+  };
+}
+
 export class GitHub {
   constructor(private readonly opts: GitHubOptions) {}
 
@@ -128,6 +185,36 @@ export class GitHub {
         return (parsed as unknown[]).flat() as T;
       }
       return parsed as T;
+    } catch (err) {
+      throw new GitHubError(path, errText(err));
+    }
+  }
+
+  /**
+   * GET with an ETag, so an unchanged resource costs nothing.
+   *
+   * GitHub's own guidance: "Making a conditional request does not count
+   * against your primary rate limit if a 304 response is returned." That is
+   * what makes watching a conversation viable. Polling an issue's comments
+   * every two seconds would be 1,800 requests an hour against a 1,000-an-hour
+   * budget; conditionally, only the polls that find a new comment cost
+   * anything, and each of those is a real turn. The cost becomes proportional
+   * to what happened rather than to how closely you watched.
+   *
+   * `gh api -i` prints the response headers before the body, which is the only
+   * way to read an ETag back through the CLI. A 304 has no body.
+   */
+  async getConditional<T>(path: string, etag?: string): Promise<ConditionalResponse<T>> {
+    const args = ["api", "-i", path];
+    if (etag !== undefined && etag !== "") args.push("-H", `If-None-Match: ${etag}`);
+    try {
+      const { stdout } = await execWithInput("gh", args, {
+        env: this.env(),
+        input: "",
+        maxBuffer: 64 * 1024 * 1024,
+        ...(this.opts.timeoutMs === undefined ? {} : { timeoutMs: this.opts.timeoutMs }),
+      });
+      return parseConditional<T>(String(stdout));
     } catch (err) {
       throw new GitHubError(path, errText(err));
     }

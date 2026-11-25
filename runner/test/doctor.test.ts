@@ -30,7 +30,7 @@ async function install(dir: string): Promise<void> {
     computeFrontmatterHash(p: string, o: object): Promise<string>;
     computeBodyHash(p: string, o: object): Promise<string>;
   };
-  for (const role of ["triage", "spec", "builder", "verifier", "gardener", "hardener", "scorer", "builder-host", "verifier-host"]) {
+  for (const role of ["triage", "brainstorm", "spec", "builder", "verifier", "gardener", "hardener", "scorer", "builder-host", "verifier-host"]) {
     const md = join(dir, `.github/workflows/factory-role-${role}.md`);
     if (!existsSync(md)) continue;
     const fm = await hashes.computeFrontmatterHash(md, {});

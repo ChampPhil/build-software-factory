@@ -6,7 +6,7 @@ import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { effectiveAssociation, type GitHub } from "../lib/github.js";
 import { FactoryStore, CURSOR, INCOMING, LEDGER, json, workItemPath, runPath } from "../lib/store.js";
-import { appendTurn } from "./brainstorm.js";
+import { appendTurn, readBrainstorm, heldLive } from "./brainstorm.js";
 import type { CorrectionRecord } from "./corrections.js";
 import { decideCandidate, candidateRequest } from "./candidate-decisions.js";
 import type { Change } from "../lib/dataref.js";
@@ -420,12 +420,24 @@ export async function runIntakeCommand(opts: IntakeRunOptions): Promise<IntakeRu
 
   const prItems = await prItemsFor(store, ledger, queued.filter((e) => e.id > cursor));
 
+  // Which conversations have a job holding them open. Only the items that
+  // could be answered are read, which is almost always none or one: a held
+  // job answers its own comments within seconds, and requeuing the item as
+  // well would start a second conversation asking the same question again.
+  const liveConversations: string[] = [];
+  for (const o of openItems) {
+    if (o.status !== "needs_info") continue;
+    const convo = await readBrainstorm(opts.gh, o.work_item).catch(() => null);
+    if (heldLive(convo, new Date(opts.now))) liveConversations.push(o.work_item);
+  }
+
   const result = runIntake(queued, {
     prItems,
     policy: opts.policy,
     triggers: opts.triggers,
     cursor,
     openItems,
+    liveConversations,
     recentlyMerged: ledger.recent
       .filter((r) => r.merged_at !== undefined)
       .map((r) => ({

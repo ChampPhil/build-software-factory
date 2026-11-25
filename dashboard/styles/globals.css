@@ -1265,6 +1265,24 @@ textarea {
   color: var(--quiet);
   font-style: italic;
 }
+/*
+ * Whether a job is listening. Live carries the running accent, because that is
+ * what it is: work happening now. Not listening is uncoloured and quiet — it
+ * is not a fault and it needs nothing from anybody, it only sets an
+ * expectation about how long a reply will take.
+ */
+.turn.listening,
+.turn.not-listening {
+  border-top: 1px dashed var(--rule-firm);
+  padding-top: 10px;
+}
+.turn.listening .turn-who {
+  color: var(--secondary);
+}
+.turn.listening p,
+.turn.not-listening p {
+  color: var(--quiet);
+}
 .thread-more {
   font-size: var(--t-12);
   color: var(--quiet);

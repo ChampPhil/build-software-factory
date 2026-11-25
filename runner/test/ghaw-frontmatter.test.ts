@@ -39,7 +39,7 @@ const WORKFLOWS = join(ROOT, "templates/workflows");
 const SCHEMA = join(ROOT, "runner/vendor/ghaw-main-workflow-schema.json");
 
 const ROLES = [
-  "triage", "spec", "builder", "verifier", "gardener", "hardener", "scorer",
+  "triage", "brainstorm", "spec", "builder", "verifier", "gardener", "hardener", "scorer",
   // The host-access variants (runner/scripts/host-variants.mjs) are compiled too, so they validate too.
   "builder-host", "verifier-host",
 ] as const;

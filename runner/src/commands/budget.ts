@@ -369,6 +369,10 @@ export function detectionUsd(dir: string, model: string, log: (line: string) => 
  */
 export const ROLE_CAPS: Readonly<Record<string, number>> = {
   triage: 30,
+  // A conversation is a question and a reply, several times over: cheap beside
+  // any step that writes code, and capped low so a loop that will not end
+  // cannot cost real money.
+  brainstorm: 15,
   spec: 300,
   builder: 400,
   verifier: 200,
@@ -381,6 +385,11 @@ export const DETECTION = { model: "claude-haiku-5-5", capCredits: 50 } as const;
 
 /** The agent steps a run of each pipeline holds, one at a time. */
 const PIPELINE_ROLES: Readonly<Record<string, readonly string[]>> = {
+  // The conversation is not here on purpose. It holds its own budget at run
+  // time with ROLE_CAPS.brainstorm, and this list is only the pre-flight check
+  // that a run's *largest* step fits what is left — which a 15-credit
+  // conversation never is beside a 400-credit build. Listing it would make
+  // every factory name a model for it before any run could start.
   product_work: ["triage", "spec", "builder", "verifier"],
   gardening: ["builder", "verifier"],
   hardening: ["hardener", "spec", "builder", "verifier"],
