@@ -36,6 +36,7 @@
     theme: "system",
     mode: "busy",          // busy | quiet | empty
     prefill: "",
+    drawer: null,
   };
   const key = (it) => (it.issue ? String(it.issue) : it.id.slice(-5).toLowerCase());
   const itemBy = (k) => S.items.find((i) => key(i) === String(k));
@@ -450,11 +451,20 @@
     tabs.push(["activity", "Activity"]);
     if (!tab) tab = it.status === "needs_info" ? "talk" : it.pr ? "pr" : ["running", "escalated"].includes(it.status) ? "runs" : "activity";
     const pane = tab === "talk" ? talkPane(it) : tab === "pr" ? prPane(it) : tab === "runs" ? runsPane(it) : activityPane(it);
+    const tabRow = `<div class="tabs" role="tablist" aria-label="Request">${tabs.map(([id, label]) => `<a role="tab" href="#r-${key(it)}-${id}" data-go="r-${key(it)}-${id}" aria-selected="${tab === id}">${label}</a>`).join("")}</div>`;
+    /* In conversation the chat is the page: one centred column, details in a drawer. */
+    if (tab === "talk") return `<main class="wrap talking">
+      <a class="back" href="#requests" data-go="requests">All requests</a>
+      <header class="req-head"><div class="where">${badge(it.status)}<span>${it.issue ? "#" + it.issue : "no issue yet"}</span><span>${PIPE[it.pipeline]}</span><span>${usd(it.cost)} spent</span></div>
+        <h1>${esc(it.title)}</h1>${it.issue === 214 ? `<p class="asked">${esc(B.request)}</p>` : ""}</header>
+      <div class="tabs-row">${tabRow}<button class="btn quiet small" type="button" data-act="details" data-k="${key(it)}">Details</button></div>
+      <div class="req-main" data-tab="talk">${callout(it)}${pane}</div>
+    </main>`;
     return `<main class="wrap">
       <a class="back" href="#requests" data-go="requests">All requests</a>
       <header class="req-head"><div class="where">${badge(it.status)}<span>${it.issue ? "#" + it.issue : "no issue yet"}</span><span>${PIPE[it.pipeline]}</span>${it.pr ? `<span>PR #${it.pr}</span>` : ""}</div>
         <h1>${esc(it.title)}</h1>${it.issue === 214 ? `<p class="asked">${esc(B.request)}</p>` : ""}</header>
-      <div class="tabs" role="tablist" aria-label="Request">${tabs.map(([id, label]) => `<a role="tab" href="#r-${key(it)}-${id}" data-go="r-${key(it)}-${id}" aria-selected="${tab === id}">${label}</a>`).join("")}</div>
+      ${tabRow}
       <div class="req-cols"><details class="m-details"><summary>Details: ${STATUS[it.status]}, ${PIPE[it.pipeline].toLowerCase()}, ${usd(it.cost)} spent</summary>${details(it)}</details><div class="req-main" data-tab="${tab}">${callout(it)}${pane}</div>${details(it)}</div>
     </main>`;
   }
@@ -687,6 +697,8 @@ exit: ok`;
     current = route;
     root.innerHTML = `<div data-screen="${route}">${page(route)}</div>`;
     wire(root);
+    const drawer = layer.querySelector(".dialog.drawer");
+    if (drawer && S.drawer) drawer.innerHTML = drawerHtml();
     if (keepScroll) window.scrollTo(0, y);
     else if (route.startsWith("factory-")) { const el = document.getElementById("f-" + route.slice(8)); if (el) el.scrollIntoView(); }
     else if (route === "r-214" || /^r-214-(talk|first|live|cold|understood)$/.test(route)) requestAnimationFrame(() => window.scrollTo(0, document.body.scrollHeight));
@@ -733,7 +745,8 @@ exit: ok`;
     const first = layer.querySelector("[data-autofocus], input:not([type=radio]), textarea, select, button");
     if (first) first.focus();
   }
-  function closeDialog() { if (!layer.innerHTML) return; layer.innerHTML = ""; if (lastFocus && lastFocus.isConnected) lastFocus.focus(); }
+  function closeDialog() { if (!layer.innerHTML) return; layer.innerHTML = ""; S.drawer = null; if (lastFocus && lastFocus.isConnected) lastFocus.focus(); }
+  const drawerHtml = () => `<div class="drawer-head"><h2>Details</h2><button class="btn quiet small" type="button" data-close>Close</button></div>${details(itemBy(S.drawer))}`;
   function toast(text, opts = {}) {
     const t = document.createElement("div");
     t.className = "toast";
@@ -810,6 +823,10 @@ exit: ok`;
   const issueOf = (el) => byIssue(+el.dataset.n);
   const actions = {
     palette,
+    details: (el) => {
+      S.drawer = el.dataset.k;
+      openDialog(drawerHtml(), { cls: "drawer", label: "Request details" });
+    },
     "new-request": (el) => {
       openDialog(`<h2>New request</h2>${requestForm({ kind: el.dataset.kind })}`, { cls: "sheet", label: "New request" });
       const t = layer.querySelector("#nr-title");
