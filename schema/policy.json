@@ -246,6 +246,28 @@
         }
       }
     },
+    "prose": {
+      "type": "object",
+      "description": "The repository's own prose — the conventions its owners write down for agents. Absent, the factory resolves the names agents already read (AGENTS.md, CLAUDE.md and friends) on every run. These files are the primary statement of house style; .factory/definition/context/ supplements them.",
+      "additionalProperties": false,
+      "properties": {
+        "targets": {
+          "description": "Extra paths this repo keeps its conventions in, beyond the conventional names. Also the list hardening may write a practice into. A file or a directory. .factory/, .github/workflows/ and .git/ are never eligible, however they are declared: that text governs the roles, and a role that may rewrite it can edit its own constraints.",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "not": {
+              "pattern": "^/?\\.(factory|github/workflows|git)(/|$)"
+            }
+          }
+        },
+        "budget_bytes": {
+          "description": "The most any one always-loaded prose file may be. Always-loaded prose is in every run's context, so a file that grows without limit is a cost paid on every run forever; past this, hardening must consolidate or replace rather than append. Default 16384.",
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
     "sandbox_repairs": {
       "description": "What happens to an amendment of the sandbox that a role's report started. automatic (the default): it merges itself when it changes only .factory/sandbox/, reaches no new host and needs no new secret, and its trial proves at least what main's sandbox did; otherwise it waits for a person like any protected change. reviewed: every amendment waits for a person.",
       "type": "string",
@@ -272,7 +294,8 @@
               "tests",
               "guardrails:tighten",
               "guardrails",
-              "definition"
+              "definition",
+              "prose"
             ]
           }
         },

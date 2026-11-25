@@ -54,7 +54,10 @@ pipelines:
   gardening:
     may_change: [code, tests]
   hardening:
-    may_change: [code, tests, "guardrails:tighten"]
+    # `prose` is this repository's own conventions — AGENTS.md, CLAUDE.md and
+    # the rest. Remove it and hardening can still add rules, tests and
+    # refactors; it just cannot write a practice down in your own words.
+    may_change: [code, tests, "guardrails:tighten", prose]
   definition:
     may_change: [definition]
     requires: trusted_human_approval
@@ -81,6 +84,19 @@ weakening:
     - unpruned_suppressions_allowed
     - coverage_floor_lowered
     - skip_without_reason
+
+# The conventions this repository writes down for agents. The factory already
+# reads the conventional names — AGENTS.md, CLAUDE.md, CONTRIBUTING.md,
+# .claude/skills/ and friends — on every run, so this is only for prose kept
+# somewhere of your own, and for changing the budget.
+#
+# budget_bytes caps any one always-loaded file (AGENTS.md and its kind). Those
+# are in every run's context, so past the cap hardening has to consolidate
+# rather than append: without it, a factory that learns a practice per
+# correction eventually builds the file that degrades all of its own work.
+prose:
+  targets: []
+  budget_bytes: 16384
 
 # A role that cannot exercise what a change needs reports it, and the
 # factory amends its sandbox. automatic: the amendment merges itself when it

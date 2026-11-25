@@ -1,4 +1,5 @@
 import type { Association, ChangeKind, Policy, PullRequestFacts, Review } from "../lib/types.js";
+import { isProsePath, proseEvidence, PROSE_EVIDENCE_MINIMUM } from "./repo-prose.js";
 import { matchesAny, filesMatching } from "../lib/paths.js";
 import { FACTORY_YAML, GARDEN_WORKFLOW, SETTINGS_LABEL } from "../lib/settings.js";
 
@@ -19,7 +20,8 @@ export type PolicyFailureKind =
   | "undeclared_test_edit"
   | "guardrail_change_not_allowed"
   | "runner_upgrade_scope"
-  | "fork_agent_work";
+  | "fork_agent_work"
+  | "prose_without_evidence";
 
 export interface PolicyFailure {
   readonly kind: PolicyFailureKind;
@@ -253,12 +255,50 @@ export function runPolicy(ctx: PolicyContext): PolicyResult {
       });
     }
 
+    // The repo's own prose — AGENTS.md and the rest. Judged apart from code so
+    // that a repo can let hardening write code and not its house style, or the
+    // other way round. Never .factory/: isProsePath refuses it, so a practice
+    // declared there lands in the definition rules above instead.
+    const proseHits = pr.changed_files.filter(
+      (f) => isProsePath(f, policy) && !matchesAny(f, policy.paths.definition) && !matchesAny(f, policy.paths.protected),
+    );
+    if (proseHits.length > 0 && !allowed(may, "prose")) {
+      failures.push({
+        kind: "path_not_allowed_for_pipeline",
+        files: proseHits,
+        message:
+          `The ${pr.pipeline} pipeline may not change this repository's conventions: ${proseHits.join(", ")}. ` +
+          `Writing a practice into them is a lever this repo has not granted that pipeline.`,
+      });
+    } else if (proseHits.length > 0 && pr.pipeline === "hardening") {
+      // A rule proves itself by failing on the bad example. A paragraph cannot,
+      // so the only evidence a practice has is how often the thing came up, and
+      // the PR has to show it. One instance is taste, and taste written into a
+      // file every run reads is taste everyone in the repo now inherits.
+      const evidence = proseEvidence(pr.body);
+      if (evidence.instances < PROSE_EVIDENCE_MINIMUM) {
+        failures.push({
+          kind: "prose_without_evidence",
+          files: proseHits,
+          message:
+            `Writing a practice into ${proseHits.join(", ")} needs at least ${PROSE_EVIDENCE_MINIMUM} instances of ` +
+            `the thing it is about, listed under a "Why a practice" heading in this pull request. ` +
+            (evidence.found
+              ? `That heading lists ${evidence.instances}.`
+              : `There is no such heading here.`) +
+            ` A rule or a test proves itself by failing on the bad example; a practice cannot, so the ` +
+            `evidence is that it has come up more than once.`,
+        });
+      }
+    }
+
     const codeHits = pr.changed_files.filter(
       (f) =>
         !matchesAny(f, policy.paths.tests) &&
         !matchesAny(f, policy.paths.guardrails) &&
         !matchesAny(f, policy.paths.definition) &&
-        !matchesAny(f, policy.paths.protected),
+        !matchesAny(f, policy.paths.protected) &&
+        !isProsePath(f, policy),
     );
     if (codeHits.length > 0 && !allowed(may, "code")) {
       failures.push({

@@ -196,6 +196,14 @@ pre-agent-steps:
       rm -rf .factory-trusted
       echo "$RUNNER_TEMP/bsf" >> "$GITHUB_PATH"
       "$RUNNER_TEMP/bsf/bsf" --version
+  # The conventions this repository writes down for agents: AGENTS.md,
+  # CLAUDE.md, .claude/skills/ and anything policy.yaml declares. Resolved on
+  # every run rather than recorded at setup, so a file the owners added today
+  # is read today. Listed, not inlined — the role reads the ones it needs, so
+  # a long file costs that role rather than every role.
+  - name: Resolve the conventions this repository writes down
+    shell: bash
+    run: bsf repo-prose --out /tmp/gh-aw/agent/bsf/repo-prose.md
   # The budget: this step starts only if what is spent this month, what
   # running steps hold, and the most this step can cost (its credit cap plus
   # one request past it, for the agent and for threat detection) all fit.
@@ -344,10 +352,15 @@ correct change**, plus tests for new behavior.
 
 ## Read first
 
+- `/tmp/gh-aw/agent/bsf/repo-prose.md` — the conventions **this repository** writes
+  down for agents, and where they are. Read the files it lists first: they are the
+  owners' own statement of how work here is done, they are kept current, and
+  everything below supplements them rather than replacing them.
 - `.factory/definition/context/feature-map.md` — what exists and where
 - `.factory/definition/context/runbook.md` — how to build, run and test
 - `.factory/definition/context/fundamentals.md` — conventions no check enforces
-- `.factory/definition/context/practices.md` — what this repo's owners have asked for, in their words
+- `.factory/definition/context/practices.md` — practices the owners stated to
+  the factory, for what has no home in the codebase
 - `.factory/definition/context/history.md` — lessons from past failures
 - `.factory/definition/policy.yaml` — which paths this pipeline may change, and which are protected
 - `.factory/guardrails/` — the static rules your change is gated on, and their baselines

@@ -4,6 +4,7 @@ import { dashboardLink } from "./lib/dashboard-link.js";
 import { GitHub } from "./lib/github.js";
 import {
   DiskLoader, RefLoader, loadPolicy, loadBaselines, loadCoverage, changedFilesSince, changedLinesSince,
+  POLICY_PATH, resolveRead,
 } from "./lib/config.js";
 import { runStaticGate, runCoverageGate, checkedFromCheckRuns, summarizeGates, GATES_CHECK, type JobResult } from "./commands/gates-run.js";
 import { runPolicyCommand } from "./commands/policy-run.js";
@@ -17,11 +18,12 @@ import { runConflictsCommand } from "./commands/conflicts.js";
 import { runSyncCommand } from "./commands/sync-settings.js";
 import { runAuditCommand, blockingFindings } from "./commands/audit.js";
 import { scanAssetHosts } from "./commands/asset-hosts.js";
+import { scanProse, renderProse, budgetVerdict, budgetBytes, alwaysLoaded } from "./commands/repo-prose.js";
 import { planUninstall, applyUninstall, formatPlan } from "./commands/uninstall.js";
 import { readBrainstorm, render as renderBrainstorm } from "./commands/brainstorm.js";
 import { byFileOf } from "./commands/gates.js";
 import { parseYaml } from "./lib/yaml.js";
-import type { CandidatesFile } from "./lib/types.js";
+import type { CandidatesFile, Policy } from "./lib/types.js";
 import { runDoctor, formatReport } from "./commands/doctor.js";
 import { findDashboard, serveDashboard } from "./commands/serve.js";
 import { checkConsistencyOutcomes } from "./commands/consistency.js";
@@ -170,6 +172,15 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
   bsf audit [--commit SHA]
   bsf scan-asset-hosts [--root DIR] [--why]
       The external hosts this repo's own pages load. Each needs a sandbox stub.
+  bsf repo-prose [--root DIR] [--out PATH] [--json]
+      The conventions this repository writes down for agents — AGENTS.md,
+      CLAUDE.md, CONTRIBUTING.md, .claude/skills/ and anything policy.yaml
+      names. Every role reads these: they are the owners' own statement of
+      house style, and the factory's context supplements them.
+  bsf prose-budget [--root DIR]
+      Is any always-loaded prose file over its budget? Those files are in
+      every run's context, so past the cap a practice has to replace one
+      already there rather than being appended.
   bsf uninstall [--apply] [--purge-data] [--root DIR]
       Take the factory out of operation. Keeps everything it built.
   bsf brainstorm WORK_ITEM [--out PATH]
@@ -480,6 +491,10 @@ async function main(argv: readonly string[]): Promise<number> {
       return auditCommand(args);
     case "scan-asset-hosts":
       return scanAssetHostsCommand(args);
+    case "repo-prose":
+      return repoProseCommand(args);
+    case "prose-budget":
+      return proseBudgetCommand(args);
     case "uninstall":
       return uninstallCommand(args);
     case "brainstorm":
@@ -1900,6 +1915,95 @@ async function syncCommand(args: Args): Promise<number> {
 }
 
 /**
+ * The policy, when there is one, keeping "there isn't one" apart from
+ * "there is one and it is wrong".
+ *
+ * `repo-prose` runs during setup too, before `.factory/` exists, so a missing
+ * policy is an ordinary answer. An *invalid* one is not, and swallowing it
+ * would be the worst outcome here: a repo whose policy has a typo would
+ * silently lose every prose path it declared and never hear why.
+ */
+async function policyOrNull(root: string): Promise<{ policy: Policy | null; invalid: string | null }> {
+  if (!existsSync(resolveRead(root, POLICY_PATH))) return { policy: null, invalid: null };
+  try {
+    return { policy: await loadPolicy(new DiskLoader(root)), invalid: null };
+  } catch (err) {
+    return { policy: null, invalid: (err as Error).message };
+  }
+}
+
+/**
+ * `bsf repo-prose` — the repo's own conventions, for a role to read.
+ *
+ * Resolved on every run rather than recorded once at setup. An index written
+ * at setup is a second thing to keep current and is wrong the moment someone
+ * adds a `CONVENTIONS.md`; these names are cheap to check and always right.
+ */
+async function repoProseCommand(args: Args): Promise<number> {
+  const root = typeof args["root"] === "string" ? args["root"] : process.cwd();
+  const { policy, invalid } = await policyOrNull(root);
+  if (invalid !== null) {
+    // Loud, but not fatal. A role should still read AGENTS.md when the thing
+    // that is broken is a path list it does not depend on.
+    process.stderr.write(`${POLICY_PATH} is invalid, so any prose it declares is not being read:\n${invalid}\n`);
+  }
+  const scan = scanProse(root, policy);
+  const text = args["json"] === true ? JSON.stringify(scan, null, 2) : renderProse(scan);
+  const out = args["out"];
+  if (typeof out === "string") {
+    mkdirSync(dirname(out), { recursive: true });
+    writeFileSync(out, `${text}\n`);
+  } else {
+    process.stdout.write(`${text}\n`);
+  }
+  for (const r of scan.refused) {
+    process.stderr.write(`refused ${r}: .factory/, .github/workflows/ and .git/ are never prose\n`);
+  }
+  return 0;
+}
+
+/**
+ * `bsf prose-budget` — a gate on the size of always-loaded prose.
+ *
+ * `AGENTS.md` and its kind are read on every build and every gardening run, so
+ * a line added there is paid for on every run for as long as the repo exists.
+ * Hardening may write a practice into them, and the cheapest thing an agent can
+ * do is append one more line; fifty corrections later the file it keeps growing
+ * is the thing degrading all of its own work. Past the cap, a new practice has
+ * to replace one already there.
+ */
+async function proseBudgetCommand(args: Args): Promise<number> {
+  const root = typeof args["root"] === "string" ? args["root"] : process.cwd();
+  const { policy, invalid } = await policyOrNull(root);
+  if (invalid !== null) {
+    // A gate reads policy.yaml to know the budget. An unreadable policy is a
+    // failure, not a pass at the default.
+    process.stderr.write(`${POLICY_PATH} is invalid, so the prose budget cannot be read:\n${invalid}\n`);
+    return 1;
+  }
+  const scan = scanProse(root, policy);
+  const budget = budgetBytes(policy);
+  const verdict = budgetVerdict(scan, budget);
+
+  for (const d of alwaysLoaded(scan)) {
+    process.stdout.write(`${d.bytes > budget ? "OVER" : "ok  "} ${d.path}\t${d.bytes}/${budget} bytes\n`);
+  }
+  if (verdict.ok) {
+    process.stdout.write(`every always-loaded prose file is within ${budget} bytes\n`);
+    return 0;
+  }
+  for (const o of verdict.over) {
+    process.stderr.write(
+      `OVER BUDGET  ${o.path} is ${o.bytes} bytes, over the ${o.budget}-byte cap. ` +
+        `It is read on every run, so consolidate it — merge overlapping lines, drop what no longer holds, ` +
+        `or move a grown section into a file read on demand — rather than adding to it.\n`,
+    );
+  }
+  setOutput("prose_over_budget", String(verdict.over.length));
+  return 1;
+}
+
+/**
  * `bsf scan-asset-hosts` — the hosts the repo's front end loads at runtime.
  *
  * Each is a sandbox dependency with `"stand_in": "stub"`. They do not go in
@@ -2955,6 +3059,7 @@ async function hardenContextCommand(id: string | undefined, args: Args): Promise
     out,
     baselines: await loadBaselines(new DiskLoader(process.cwd())),
     candidatesPath: ".factory/guardrails/candidates.json",
+    policy: (await policyOrNull(process.cwd())).policy,
   });
   await addStandingGoals(r.wrote, "hardening");
   process.stdout.write(`${r.openRules} existing rule(s), ${r.candidates} candidate(s) -> ${r.wrote}\n`);

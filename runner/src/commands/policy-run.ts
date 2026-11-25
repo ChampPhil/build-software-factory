@@ -77,6 +77,7 @@ export async function gatherPullFacts(
     added_files: files.filter((f) => f.status === "added").map((f) => f.filename),
     reviews: await trustedReviews(gh, reviews, trusted, { pr: pr.number, headSha: pr.head.sha, base: pr.base.ref }),
     draft: pr.draft,
+    body: pr.body ?? null,
     declared_test_edits: declaredTestEdits,
   };
 

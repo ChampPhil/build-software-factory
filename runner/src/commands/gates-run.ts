@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Baselines, Coverage, Policy } from "../lib/types.js";
+import { scanProse, budgetVerdict, budgetBytes, type BudgetVerdict } from "./repo-prose.js";
 import {
   checkRatchet, checkWeakening, checkCoverage, countsFromBaselines,
   type RuleCounts, type RatchetResult, type WeakeningFinding,
@@ -50,6 +51,8 @@ export interface StaticGateResult {
   readonly conclusion: "success" | "failure" | "neutral";
   readonly ratchet: RatchetResult;
   readonly weakening: readonly WeakeningFinding[];
+  /** Always-loaded prose over its budget: read on every run, so size is a rule. */
+  readonly prose: BudgetVerdict;
   readonly findings: readonly Finding[];
   readonly toolsRun: readonly string[];
   readonly toolsUnavailable: readonly { readonly tool: string; readonly detail: string }[];
@@ -222,16 +225,28 @@ export async function runStaticGate(input: StaticGateInput): Promise<StaticGateR
     input.policy,
   );
 
+  // The repo's own always-loaded prose, against its budget. This belongs with
+  // the static checks: it is decided by reading files, not by running them,
+  // and like a guardrail it is a rule the change has to keep.
+  //
+  // Hardening may write a practice into AGENTS.md, and the cheapest thing an
+  // agent can do there is append one more line. Those files are in every
+  // build's and every gardening run's context, so fifty corrections later the
+  // file it kept growing is the thing degrading all of its own work. Past the
+  // cap a new practice has to replace one already there.
+  const prose = budgetVerdict(scanProse(root, input.policy), budgetBytes(input.policy));
+
   // A tool that could not run is not a pass, and neither is no tool at all:
   // both are neutral, so "nothing was checked" never shows as a green tick.
   const nothingRan = results.length === 0;
   const conclusion: StaticGateResult["conclusion"] =
-    ratchet.ok && weakening.length === 0 ? (nothingRan ? "neutral" : "success") : "failure";
+    ratchet.ok && weakening.length === 0 && prose.ok ? (nothingRan ? "neutral" : "success") : "failure";
 
   return {
     conclusion,
     ratchet,
     weakening,
+    prose,
     findings: results.flatMap((r) => r.findings),
     toolsRun: results.map((r) => r.tool),
     toolsUnavailable: unavailable,
@@ -239,18 +254,33 @@ export async function runStaticGate(input: StaticGateInput): Promise<StaticGateR
       nothingRan && unavailable.length === 0
         ? "Not applicable: no static checker here applies to this repo's languages, so nothing was checked. " +
           "Declared practices that a pattern can check are written as semgrep rules under .factory/guardrails/semgrep, " +
-          "which run on any language.\n\n" + summarizeStatic({ ratchet, weakening, results, unavailable })
-        : summarizeStatic({ ratchet, weakening, results, unavailable }),
+          "which run on any language.\n\n" + summarizeStatic({ ratchet, weakening, prose, results, unavailable })
+        : summarizeStatic({ ratchet, weakening, prose, results, unavailable }),
   };
 }
 
 function summarizeStatic(args: {
   ratchet: RatchetResult;
   weakening: readonly WeakeningFinding[];
+  prose?: BudgetVerdict;
   results: readonly ToolRunResult[];
   unavailable: readonly { tool: string; detail: string }[];
 }): string {
   const lines: string[] = [];
+
+  if (args.prose !== undefined && !args.prose.ok) {
+    lines.push("## The conventions file is over budget", "");
+    lines.push(
+      "These are read on every build and every gardening run, so what is in them is paid for " +
+        "on every run. Consolidate: merge lines that overlap, drop what no longer holds, or move " +
+        "a grown section into a file read on demand. Do not add to it.",
+      "",
+    );
+    for (const o of args.prose.over) {
+      lines.push(`- \`${o.path}\` — ${o.bytes} bytes, over the ${o.budget}-byte cap`);
+    }
+    lines.push("");
+  }
 
   if (args.weakening.length > 0) {
     lines.push("## A guardrail got weaker", "");

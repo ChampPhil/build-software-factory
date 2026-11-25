@@ -144,6 +144,13 @@ pre-agent-steps:
       rm -rf .factory-trusted
       echo "$RUNNER_TEMP/bsf" >> "$GITHUB_PATH"
       "$RUNNER_TEMP/bsf/bsf" --version
+  # The conventions this repository already writes down for agents. The setup
+  # agent reads them so that fundamentals.md does not become a paraphrase of
+  # AGENTS.md: the owners maintain theirs, nobody maintains a copy, and the
+  # copy is what goes stale.
+  - name: Resolve the conventions this repository writes down
+    shell: bash
+    run: bsf repo-prose --out /tmp/gh-aw/agent/bsf/repo-prose.md
   # The budget: this step starts only if what is spent this month, what
   # running steps hold, and the most this step can cost (its credit cap plus
   # one request past it, for the agent and for threat detection) all fit.
@@ -229,6 +236,14 @@ in the repo itself is kept.
    `.factory/definition/context/`. Replace every `{{PLACEHOLDER}}` with what is
    true of this repo, from reading it. Say what you did not find rather than
    guessing; an empty table row is better than an invented one.
+
+   **Read `/tmp/gh-aw/agent/bsf/repo-prose.md` and the files it lists before you
+   write `fundamentals.md`, and do not restate them.** Where this repo already
+   has an `AGENTS.md`, a `CLAUDE.md` or a contributing guide, that is its house
+   style and every role reads it directly on every run. A convention copied
+   into `fundamentals.md` is a second copy that the owners will not maintain,
+   so it goes stale and then contradicts theirs. `fundamentals.md` is for what
+   you worked out by reading the code and found written down nowhere.
 2. **`manifest.json`** — the sandbox, as a complete hypothesis. Check it before
    you finish; an invalid manifest wastes the whole round:
 
