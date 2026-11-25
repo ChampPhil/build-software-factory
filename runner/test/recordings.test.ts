@@ -25,7 +25,11 @@ describe("recordings", () => {
   it("finds videos and skips ones already made for a PR", () => {
     const { dir } = fresh("find");
     mkdirSync(join(dir, "recordings"));
-    for (const n of ["a.webm", "b.mp4", "recordings/c.pr.mp4", "shot.png"]) copyFileSync(process.execPath, join(dir, n));
+    // A few bytes, not a copy of the node binary. `findRecordings` filters on
+    // the name and nothing else, and the binary is 117 MB — four copies of it
+    // was 470 MB of disk for a test about file extensions, which is why this
+    // test timed out at 5s on CI while passing locally.
+    for (const n of ["a.webm", "b.mp4", "recordings/c.pr.mp4", "shot.png"]) writeFileSync(join(dir, n), "not a video");
     expect(findRecordings(dir).map((f) => f.replace(`${dir}/`, "")).sort()).toEqual(["a.webm", "b.mp4"]);
   });
 
@@ -77,7 +81,9 @@ describe("recordings", () => {
 
   it("keeps the raw file and says so when ffmpeg is missing", () => {
     const { dir, raw } = fresh("noff");
-    copyFileSync(process.execPath, join(dir, "v.webm"));
+    // Contents are never read on this path: ffmpeg is what would read them and
+    // the point of the test is that it is not there.
+    writeFileSync(join(dir, "v.webm"), "not a video");
     const saved = process.env["PATH"];
     process.env["PATH"] = "/nonexistent";
     try {

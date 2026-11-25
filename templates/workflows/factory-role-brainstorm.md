@@ -405,6 +405,13 @@ the frame. One turn, with `bsf brainstorm frame`. You supply:
   what having it lets them ask for, and a real project, paper or system that
   uses it that way if you know of one. A term that names nothing they said is
   a term you went looking for. A term that unlocks nothing is vocabulary.
+
+  Those two fields are printed behind a label, so write each to read after
+  one. `names` follows "From what you wrote:" — so `the part where it dies
+  halfway` or `you said it must not post twice`, not a bare fragment that
+  needs a different lead-in. `unlocks` follows "Lets you ask for:" — so
+  `a resume from the last good step`, a thing they could ask for, rather than
+  a description of the benefit.
 - `neighbors` — 2 or 3 fields that solved this shape of problem under other
   names. What carries over, **where the analogy breaks**, and which terms come
   back. Where it breaks is required: an analogy with no stated limit is the one

@@ -471,6 +471,13 @@ export function parseFrame(raw: unknown): Frame {
  * rather than a document to approve: they can take the vocabulary or ignore it
  * and just answer.
  */
+/** Small numbers read as words in prose; "The 3 words" looks machine-written. */
+const count = (n: number): string =>
+  ["no", "one", "two", "three", "four", "five", "six", "seven", "eight"][n] ?? String(n);
+
+/** Ends a fragment the agent wrote, so two of them do not run together. */
+const sentence = (text: string): string => (/[.!?:)]$/.test(text.trim()) ? text.trim() : `${text.trim()}.`);
+
 export function renderFrameTurn(frame: Frame, question: string): string {
   const out: string[] = [];
   if (frame.named !== undefined) out.push(`Before I ask anything else — **${frame.named}**`);
@@ -480,28 +487,45 @@ export function renderFrameTurn(frame: Frame, question: string): string {
     out.push(
       terms.length === 1
         ? "The word that matters most here:"
-        : `The ${terms.length} words that change what gets built here:`,
+        : `The ${count(terms.length)} words that change what gets built here:`,
     );
-    for (const t of terms) {
-      const art = t.prior_art === undefined ? "" : ` Used this way in ${t.prior_art}.`;
-      out.push(`- **${t.term}** — ${t.means} Names the part where ${t.names}. Lets you ask for ${t.unlocks}.${art}`);
-    }
+    // `names` and `unlocks` are the agent's own sentences, and it writes them
+    // as a clause one time and a noun phrase the next. Anything that glues
+    // them into scaffolding ("Names the part where X") reads broken for half
+    // of them, so each gets a line behind a label that takes either shape.
+    out.push(
+      terms
+        .map((t) => {
+          const art = t.prior_art === undefined ? "" : ` Used this way in ${sentence(t.prior_art)}`;
+          return [
+            `- **${t.term}** — ${sentence(t.means)}`,
+            `  From what you wrote: ${sentence(t.names)}`,
+            `  Lets you ask for: ${sentence(t.unlocks)}${art}`,
+          ].join("\n");
+        })
+        .join("\n"),
+    );
   }
 
   const near = (frame.neighbors ?? []).slice(0, FRAME_NEIGHBORS_SHOWN);
   if (near.length > 0) {
     out.push(near.length === 1 ? "Where this has been solved before:" : "Where this has been solved before, under other names:");
-    for (const n of near) {
-      const carry = n.carries_over === "" ? "" : ` ${n.carries_over}`;
-      const words = n.terms === undefined || n.terms.length === 0 ? "" : ` Worth borrowing: ${n.terms.join(", ")}.`;
-      out.push(`- **${n.field}** —${carry} Where it stops being the same problem: ${n.breaks_down}.${words}`);
-    }
+    out.push(
+      near
+        .map((n) => {
+          const lines = [`- **${n.field}**${n.carries_over === "" ? "" : ` — ${sentence(n.carries_over)}`}`];
+          lines.push(`  Where it stops being the same problem: ${sentence(n.breaks_down)}`);
+          if (n.terms !== undefined && n.terms.length > 0) lines.push(`  Worth borrowing: ${n.terms.join(", ")}.`);
+          return lines.join("\n");
+        })
+        .join("\n"),
+    );
   }
 
   const unsaid = (frame.unmentioned ?? []).slice(0, FRAME_UNMENTIONED_SHOWN);
   if (unsaid.length > 0) {
     out.push("Things you did not mention that will decide something:");
-    for (const u of unsaid) out.push(`- ${u}`);
+    out.push(unsaid.map((u) => `- ${sentence(u)}`).join("\n"));
   }
 
   out.push(question);
