@@ -380,3 +380,112 @@ describe("the review mapper both commands share", () => {
     expect(hasTrustedHumanApproval(onSame as never)).toBe(true);
   });
 });
+
+/**
+ * The repo's own prose — AGENTS.md and its kind — is a lever of its own.
+ *
+ * A rule proves itself by failing on the bad example; a paragraph cannot be run
+ * against anything, so the only evidence a written practice has is that the
+ * thing came up more than once. Without that bar, one passing remark becomes a
+ * standing instruction in a file every run reads and every contributor
+ * inherits.
+ */
+describe("writing a practice into the repo's own conventions", () => {
+  const proseAllowed: Policy = {
+    ...policy,
+    pipelines: { ...policy.pipelines, hardening: { may_change: ["code", "tests", "guardrails:tighten", "prose"] } },
+  };
+  const evidence = [
+    "## Why a practice",
+    "",
+    '- 2026-11-02 #41 — "we say members, not users"',
+    '- 2026-11-18 #67 — "members, not users, again"',
+  ].join("\n");
+
+  const run = (over: Override<PullRequestFacts>, p: Policy = proseAllowed) =>
+    runPolicy({ policy: p, pr: pr(over), appLogins: ["factory-app[bot]"] });
+
+  it("lets hardening write one when the evidence is there", () => {
+    const r = run({ pipeline: "hardening", changed_files: ["AGENTS.md"], body: evidence });
+    expect(r.conclusion).toBe("success");
+  });
+
+  it("refuses a practice with only one instance", () => {
+    const thin = ["## Why a practice", "", '- 2026-11-02 #41 — "we say members"'].join("\n");
+    const r = run({ pipeline: "hardening", changed_files: ["AGENTS.md"], body: thin });
+    expect(r.conclusion).toBe("failure");
+    if (r.conclusion !== "failure") return;
+    expect(r.failures.map((f) => f.kind)).toContain("prose_without_evidence");
+    expect(r.failures.find((f) => f.kind === "prose_without_evidence")?.message).toMatch(/lists 1/);
+  });
+
+  it("refuses a practice with no evidence section at all", () => {
+    const r = run({ pipeline: "hardening", changed_files: ["AGENTS.md"], body: "Tidied the conventions." });
+    expect(r.conclusion).toBe("failure");
+    if (r.conclusion !== "failure") return;
+    expect(r.failures.find((f) => f.kind === "prose_without_evidence")?.message).toMatch(/no such heading/);
+  });
+
+  it("refuses a practice when the body is empty", () => {
+    const r = run({ pipeline: "hardening", changed_files: ["CLAUDE.md"], body: null });
+    expect(r.conclusion).toBe("failure");
+  });
+
+  it("refuses the lever outright to a pipeline that was not granted it", () => {
+    // product_work builds features; it does not get to rewrite house style.
+    const r = run({ pipeline: "product_work", changed_files: ["AGENTS.md"], body: evidence });
+    expect(r.conclusion).toBe("failure");
+    if (r.conclusion !== "failure") return;
+    expect(r.failures.map((f) => f.kind)).toContain("path_not_allowed_for_pipeline");
+  });
+
+  it("refuses it to hardening too where the repo has not granted it", () => {
+    const r = run({ pipeline: "hardening", changed_files: ["AGENTS.md"], body: evidence }, policy);
+    expect(r.conclusion).toBe("failure");
+    if (r.conclusion !== "failure") return;
+    expect(r.failures.map((f) => f.kind)).toContain("path_not_allowed_for_pipeline");
+  });
+
+  it("asks nothing extra of a change that touches no prose", () => {
+    const r = run({ pipeline: "hardening", changed_files: ["src/export/download.ts"] });
+    expect(r.conclusion).toBe("success");
+  });
+
+  it("does not let prose count as code, or code as prose", () => {
+    // A pipeline with code but not prose may still not touch AGENTS.md, and the
+    // reverse: the two are judged separately on purpose.
+    const codeOnly: Policy = {
+      ...policy,
+      pipelines: { ...policy.pipelines, hardening: { may_change: ["code"] } },
+    };
+    const r = run({ pipeline: "hardening", changed_files: ["AGENTS.md"], body: evidence }, codeOnly);
+    expect(r.conclusion).toBe("failure");
+
+    const proseOnly: Policy = {
+      ...policy,
+      pipelines: { ...policy.pipelines, hardening: { may_change: ["prose"] } },
+    };
+    const r2 = run({ pipeline: "hardening", changed_files: ["src/a.ts"] }, proseOnly);
+    expect(r2.conclusion).toBe("failure");
+  });
+
+  it("still protects .factory, which is the text that governs the roles", () => {
+    // Declaring it as prose cannot launder it: the definition rules decide, and
+    // they need a trusted human.
+    const sneaky: Policy = {
+      ...proseAllowed,
+      prose: { targets: [".factory/definition/context/fundamentals.md"] },
+    };
+    const r = run(
+      { pipeline: "hardening", changed_files: [".factory/definition/context/fundamentals.md"], body: evidence },
+      sneaky,
+    );
+    expect(r.conclusion).toBe("failure");
+  });
+
+  it("holds a human PR to none of this", () => {
+    // No pipeline means a person, and a person edits their own conventions.
+    const r = run({ pipeline: undefined, changed_files: ["AGENTS.md"], author: "philip", author_association: "OWNER" });
+    expect(r.conclusion).toBe("success");
+  });
+});

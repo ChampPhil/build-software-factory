@@ -6,7 +6,7 @@ export type Role = "triage" | "spec" | "builder" | "verifier" | "gardener" | "ha
 export type TriggerClass = "request" | "dev_event" | "signal" | "scheduled" | "self";
 export type Association = "OWNER" | "MEMBER" | "COLLABORATOR" | "CONTRIBUTOR" | "FIRST_TIME_CONTRIBUTOR" | "NONE";
 
-export type ChangeKind = "code" | "tests" | "guardrails:tighten" | "guardrails" | "definition";
+export type ChangeKind = "code" | "tests" | "guardrails:tighten" | "guardrails" | "definition" | "prose";
 
 export interface Policy {
   readonly schema: "policy/1";
@@ -37,6 +37,16 @@ export interface Policy {
     readonly detects: readonly WeakeningKind[];
   };
   readonly sandbox_repairs?: "automatic" | "reviewed";
+  /**
+   * The repo's own prose: the files its owners write for agents. Absent, the
+   * factory resolves the names agents already read (`AGENTS.md` and friends).
+   * `targets` adds paths a repo keeps somewhere of its own; it is also the list
+   * hardening may write a practice into, and `.factory/` is never eligible.
+   */
+  readonly prose?: {
+    readonly targets?: readonly string[];
+    readonly budget_bytes?: number;
+  };
   readonly protected_files?: {
     readonly policy: "request-review" | "blocked" | "fallback-to-issue" | "allowed";
     readonly exclude: Readonly<Record<string, readonly string[]>>;
@@ -94,6 +104,8 @@ export interface PullRequestFacts {
   readonly added_files?: readonly string[];
   readonly reviews: readonly Review[];
   readonly draft: boolean;
+  /** The PR's description, for the evidence a prose practice has to carry. */
+  readonly body?: string | null;
   /** Set for factory PRs; absent on human PRs. */
   readonly pipeline?: Pipeline;
   /** The work item's spec, for the declared-test-edit check. */

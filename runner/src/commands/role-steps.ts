@@ -6,7 +6,8 @@ import { FactoryStore, json, runPath, workItemPath } from "../lib/store.js";
 import { baselinedDrift, untestedRecent, runGardenCommand, type DriftItem } from "./garden.js";
 import { readAll } from "./rollup-run.js";
 import { runReviewRoute, isReviewable, type ScoredFailure } from "./review.js";
-import type { Baselines } from "../lib/types.js";
+import type { Baselines, Policy } from "../lib/types.js";
+import { PROSE_EVIDENCE_MINIMUM } from "./repo-prose.js";
 
 /**
  * The gardener's, hardener's and scorer's own steps.
@@ -186,6 +187,34 @@ export interface HardenContextReport {
  * rule or candidate first" (doc 06). Handing it those lists is the difference
  * between that being an instruction and being a fact it has.
  */
+/**
+ * Whether this repo has granted hardening the written-practice lever, said
+ * plainly so a run does not spend a model on a change the gate will refuse.
+ *
+ * It is off unless the policy says otherwise, and that is deliberate for a repo
+ * that installed the factory before the lever existed: its policy predates the
+ * choice, so nothing starts writing into its AGENTS.md on the strength of an
+ * upgrade.
+ */
+export function proseNote(policy: Policy | null | undefined): string {
+  const may = policy?.pipelines?.["hardening"]?.may_change ?? [];
+  if (!may.includes("prose")) {
+    return (
+      "This repository has not granted hardening the written-practice lever, so a change to " +
+      "AGENTS.md or any other conventions file will be refused at the gate. Use a static rule, " +
+      "a verification requirement or a refactor. If the correction genuinely has no mechanical " +
+      "home, say so in a comment on the work item and leave it to a person."
+    );
+  }
+  return (
+    "The conventions this repository keeps for agents are listed in " +
+    "/tmp/gh-aw/agent/bsf/repo-prose.md, and they are the only place a written practice may go. " +
+    `Writing one needs at least ${PROSE_EVIDENCE_MINIMUM} instances listed under a "## Why a practice" ` +
+    "heading in the pull request, and a file already at its budget has to have a line replaced " +
+    "rather than added. Nothing under .factory/ is ever a place to write prose."
+  );
+}
+
 export async function hardenContext(opts: {
   readonly gh: GitHub;
   readonly now: string;
@@ -193,6 +222,8 @@ export async function hardenContext(opts: {
   readonly out: string;
   readonly baselines: Baselines;
   readonly candidatesPath?: string;
+  /** The policy, to say whether the written-practice lever is granted here. */
+  readonly policy?: Policy | null;
 }): Promise<HardenContextReport> {
   const store = new FactoryStore(opts.gh);
   const ledger = await store.ledger(opts.now);
@@ -222,9 +253,11 @@ export async function hardenContext(opts: {
       open_work: ledger.open.map((o) => ({ work_item: o.work_item, fixes: o.fixes ?? [] })),
       note:
         "Check existing_rules and existing_candidates before proposing anything: a second rule " +
-        "for a class already covered is a rule nobody can act on. The ordered check for the " +
-        "way to change the codebase (a static rule, a stronger verification requirement, or a refactor) is in the role prompt; the point of this file is that you are not guessing " +
-        "what already exists.",
+        "for a class already covered is a rule nobody can act on. The four ways to change the " +
+        "codebase (a static rule, a stronger verification requirement, a refactor, or writing the " +
+        "practice into the repo's own conventions) are in the role prompt, with what the fourth " +
+        "costs; the point of this file is that you are not guessing what already exists.",
+      prose: proseNote(opts.policy),
     }),
   );
   return { wrote: opts.out, openRules: existingRules.length, candidates: candidates.length };

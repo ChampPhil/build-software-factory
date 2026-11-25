@@ -303,6 +303,9 @@ export interface PullResponse {
   readonly user: { readonly login: string; readonly type: string };
   readonly author_association: string;
   readonly labels: readonly { readonly name: string }[];
+  readonly title?: string;
+  /** The description. Null when the PR has none. */
+  readonly body?: string | null;
   /**
    * These four are only populated when a single PR is fetched, not in a list
    * response, and `mergeable` is null while GitHub is still computing it.

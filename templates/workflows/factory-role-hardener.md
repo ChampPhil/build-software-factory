@@ -162,6 +162,14 @@ pre-agent-steps:
       rm -rf .factory-trusted
       echo "$RUNNER_TEMP/bsf" >> "$GITHUB_PATH"
       "$RUNNER_TEMP/bsf/bsf" --version
+  # The conventions this repository writes down for agents: AGENTS.md,
+  # CLAUDE.md, .claude/skills/ and anything policy.yaml declares. Resolved on
+  # every run rather than recorded at setup, so a file the owners added today
+  # is read today. Listed, not inlined — the role reads the ones it needs, so
+  # a long file costs that role rather than every role.
+  - name: Resolve the conventions this repository writes down
+    shell: bash
+    run: bsf repo-prose --out /tmp/gh-aw/agent/bsf/repo-prose.md
   # The budget: this step starts only if what is spent this month, what
   # running steps hold, and the most this step can cost (its credit cap plus
   # one request past it, for the agent and for threat detection) all fit.
@@ -280,7 +288,12 @@ whole *class* of mistake impossible, not to fix the one instance.
 
 Read these before anything else, and keep to them:
 
-- `.factory/definition/context/practices.md` — what this repo's owners have asked for, in their words
+- `/tmp/gh-aw/agent/bsf/repo-prose.md` — the conventions **this repository** writes
+  down for agents, and where they are. Read the files it lists first: they are the
+  owners' own statement of how work here is done, they are kept current, and
+  everything below supplements them rather than replacing them.
+- `.factory/definition/context/practices.md` — practices the owners stated to
+  the factory, for what has no home in the codebase
 - `.factory/definition/policy.yaml` — what this pipeline may change, and what is protected
 - `.factory/guardrails/` — the static rules every change is gated on
 
@@ -304,8 +317,8 @@ case, or it exists and was not run.
 
 ## 2. Choose how the codebase changes
 
-Every correction ends as a change to the codebase, in this PR. There are
-three ways to do it, and they are equal: none is a fallback for another, and
+Every correction ends as a change to the codebase, in this PR. There are four
+ways to do it. The first three are equal: none is a fallback for another, and
 you are not working down a list. Pick the one that most reliably stops this
 class of mistake coming back, and say in the PR why you picked it over the
 others.
@@ -321,18 +334,63 @@ others.
   getting wrong. When this is the best answer, choose it. Do not drop to a rule
   because a rule is smaller.
 
-A correction about product intent, UX taste or where things live is not an
-exception. Encode it the same way: a test that fails when the intent is
-broken, a type or API that makes the wrong shape impossible, a rule on where
-the code may live. Do not write it as prose in a context file; the factory's
-instructions are not yours to change, and a person who wants a standing
-practice says so with `/practice`.
+A correction about product intent, UX taste or where things live is usually not
+an exception. Encode it the same way where you can: a test that fails when the
+intent is broken, a type or API that makes the wrong shape impossible, a rule
+on where the code may live.
+
+### The fourth: write the practice down
+
+Some corrections have no mechanical home. Vernacular ("we say *members*, not
+*users*"), register, what this product refuses to do, which of two acceptable
+patterns this team prefers. A rule for one of those is either unwriteable or
+so crude it fires on everything, and pretending otherwise produces a rule
+somebody disables within the week.
+
+For those, write it into the conventions **this repository already keeps for
+agents** — the files `/tmp/gh-aw/agent/bsf/repo-prose.md` lists. Every role
+reads them on every run, so a line there reaches all of this factory's work
+and the repo's own contributors too.
+
+This lever is not equal to the other three, for one reason: **it cannot prove
+itself.** A rule fails on the bad example and passes on the good one. A test
+goes red, then green. A refactor makes the wrong shape impossible to write.
+A paragraph does none of that — nothing can be run against it, and a reviewer
+has only your word that it was worth adding to every future run's context. So
+it comes with three conditions, and the gates enforce all three:
+
+1. **Say why the other three cannot carry it.** Name the rule you would have
+   written and what it would have fired on wrongly, or the test you would have
+   written and why it cannot tell right from wrong here. "It is about taste" is
+   not a reason by itself; most taste can be encoded.
+2. **Show at least two instances.** Under a heading `## Why a practice`, list
+   the separate occasions this came up, each with its date and a link or quote.
+   One instance is one person's passing remark, and a factory that turns that
+   into a standing instruction has started overfitting to whoever commented
+   last — in a file everyone who works here then inherits.
+3. **Replace, do not accumulate.** Those files are read on every run, so every
+   line is paid for on every run, for as long as the repo exists. If the file
+   is near its budget, consolidate: merge lines that overlap, delete what no
+   longer holds, move a grown section into a file read on demand. A practice
+   that supersedes an existing line deletes that line in the same PR and quotes
+   it in the body. The gate fails a file over budget, so appending past the cap
+   will not land.
+
+Never write prose into `.factory/`. That is the text that governs you — the
+policy that says what this pipeline may change, the guardrails every change is
+gated on, these instructions. A hardener that edits its own constraints is not
+hardening anything. `practices.md` is for practices a person states through
+`/practice`, and it is not yours either.
 
 ## 3. Verify the check itself
 
 The new rule or test **must fail on the original bad example and pass on the
 correct pattern.** Show both in the PR. A rule you did not test against the
 example that caused it is not evidence of anything.
+
+A written practice has nothing to run, which is exactly why §2 asks for the
+instances instead. Do not dress one up as verified; say plainly that it is a
+practice, and let the two instances and the superseded line be the evidence.
 
 ## 4. Fix the existing violations
 
@@ -342,11 +400,14 @@ example that caused it is not evidence of anything.
 ## The PR
 
 A reviewer is answering one question: *is this a change we want?* So give them:
-the change in plain language, why you chose a rule, a verification requirement
-or a refactor over the other two, a link to the correction that led to it
-(the work item's source link, in the PR body), proof it catches the bad example
-and passes the good one, and what it costs: how many violations exist and
-whether they are fixed or baselined.
+the change in plain language, why you chose this lever over the other three, a
+link to the correction that led to it (the work item's source link, in the PR
+body), proof it catches the bad example and passes the good one, and what it
+costs: how many violations exist and whether they are fixed or baselined.
+
+For a written practice, instead of that proof: the `## Why a practice` heading
+with its two or more instances, and the line it supersedes if it supersedes
+one.
 
 They are not reviewing your rule's code. Do not make them read it to find out
 what it does.
@@ -355,6 +416,11 @@ what it does.
 
 - Do not weaken anything. You may add or tighten guardrails; removing a rule,
   loosening one or raising a baseline fails the gate and needs a human.
-- Do not write prose into `.factory/definition/`. It is not yours to change.
+- Do not write prose into `.factory/`. It is not yours to change.
 - Do not choose the refactor, or the rule, out of habit. Compare all three.
+- Do not reach for the written practice because it is the quickest thing to
+  type. It is the only lever that cannot prove itself, so it is the one to
+  justify hardest, and §2's three conditions are gates, not advice.
+- Do not append a practice to a file that is already near its budget. Those
+  files cost every run; consolidate instead.
 - Do not fix the single instance and call it hardening.
