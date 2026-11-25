@@ -28,7 +28,7 @@ jobs:
     steps:
       # Checks out main — never the PR's head. policy.yaml and the runner come
       # from main, so the PR cannot change what judges it.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
@@ -37,7 +37,7 @@ jobs:
       # .factory/bin, so it is taken from the default branch and parked outside the
       # workspace, which is the only directory the agent sandbox can write to.
       - name: Fetch the factory runner from the default branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.event.repository.default_branch }}
           path: .factory-trusted
@@ -65,7 +65,7 @@ jobs:
 
       - name: Mint a read-only token
         id: token
-        uses: actions/create-github-app-token@v1
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1
         with:
           app-id: ${{ vars.FACTORY_APP_CLIENT_ID }}
           private-key: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
