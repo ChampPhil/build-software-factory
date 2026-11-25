@@ -23,7 +23,9 @@ const here = dirname(fileURLToPath(import.meta.url));
 const OUT = join(here, "..", "out");
 const shotsDir = process.argv.includes("--shots") ? process.argv[process.argv.indexOf("--shots") + 1] : null;
 
-const PAGES = ["/", "/dashboard/", "/live/", "/work/", "/runs/", "/guardrails/", "/improvement/", "/factory/", "/sessions/"];
+const PAGES = ["/", "/requests/", "/request/?id=wi-0143", "/request/?id=wi-0146&tab=pr", "/request/?id=wi-0145", "/runs/", "/runs/?id=run-0028", "/guardrails/", "/spend/", "/factory/"];
+/** Addresses from the old dashboard, which must still land on a page. */
+const MOVED = { "/dashboard/": "/spend/", "/live/": "/", "/work/": "/requests/", "/improvement/": "/guardrails/", "/sessions/": "/guardrails/" };
 const TYPES = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".json": "application/json", ".svg": "image/svg+xml", ".woff2": "font/woff2" };
 
 /** The headers file, as Cloudflare Pages applies it: the rules under `/*` go on every response. */
@@ -174,7 +176,7 @@ async function visitAll(page, base, label, { expectEmpty = false } = {}) {
     if (expectEmpty) console.log(`     --- ${path}\n${text.split("\n").filter(Boolean).slice(0, 14).map((l) => "     | " + l).join("\n")}`);
     if (shotsDir !== null) {
       await mkdir(shotsDir, { recursive: true });
-      await page.screenshot({ path: join(shotsDir, `${label}-${path === "/" ? "home" : path.replaceAll("/", "")}.png`) });
+      await page.screenshot({ path: join(shotsDir, `${label}-${path === "/" ? "home" : path.replace(/[/?=&]+/g, "-").replace(/^-|-$/g, "")}.png`), fullPage: true });
     }
   }
 }
@@ -229,6 +231,11 @@ try {
     await page.getByRole("button", { name: /demo/ }).click();
     await page.getByText(/This is a demo/).waitFor();
     await visitAll(page, base, "demo");
+    for (const [from, to] of Object.entries(MOVED)) {
+      await page.goto(base + from);
+      await page.waitForURL((u) => u.pathname === to, { timeout: 5000 }).catch(() => {});
+      check(new URL(page.url()).pathname === to, `the old ${from} moves to ${to}`);
+    }
     await page.goto(`${base}/?demo`).catch(() => {});
     check(![...seen.hosts.keys()].some((h) => h.includes("api.github.com")), "the demo makes no request to GitHub");
     check(seen.pageErrors.length === 0 && seen.consoleErrors.length === 0, `demo: no browser errors ${[...seen.pageErrors, ...seen.consoleErrors].join(" | ")}`);

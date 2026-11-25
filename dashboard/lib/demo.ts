@@ -20,7 +20,8 @@ export function isDemo(token: string | null | undefined, repo?: string | null): 
 
 export const DEMO_REFUSAL = "This is the demo, so nothing is saved. Connect a repository to do this for real.";
 
-const HOUR = 3_600_000;
+const MIN = 60_000;
+const HOUR = 60 * MIN;
 const DAY = 24 * HOUR;
 
 function b64(text: string): string {
@@ -31,6 +32,9 @@ function b64(text: string): string {
 }
 
 const SHA = "a".repeat(40);
+const SHA59 = "5f3e9c2d1b0a8f7e6d5c4b3a29180f7e6d5c4b3a";
+const BOT = { login: "software-factory[bot]", type: "Bot" };
+const ME = { login: "maya", type: "User" };
 
 const SAMPLE_SETTINGS = `schema: factory/1
 harness: claude-code
@@ -51,141 +55,231 @@ budget:
     review_and_benchmarks: 15
 `;
 
-/** The sample records, dated relative to `now` so "3 days ago" stays true. */
+/**
+ * A small online shop with a factory three weeks old. Every state a request
+ * can be in appears once, so every page and every action has something real
+ * to show: a question being answered live, a change ready to merge with its
+ * proof, one running, one stuck, one from a stranger, one merging itself.
+ */
 export function sampleFactory(now: number): {
   readonly data: Readonly<Record<string, unknown>>;
   readonly dirs: Readonly<Record<string, readonly string[]>>;
   readonly repoFiles: Readonly<Record<string, unknown>>;
   readonly live: Readonly<Record<string, unknown>>;
   readonly comments: Readonly<Record<string, unknown>>;
+  readonly pulls: readonly Record<string, unknown>[];
+  readonly issues: readonly Record<string, unknown>[];
 } {
   const at = (msAgo: number): string => new Date(now - msAgo).toISOString();
-  const day = (n: number): string => new Date(now - n * DAY).toISOString().slice(0, 10);
+  const dayOf = (n: number): string => new Date(now - n * DAY).toISOString().slice(0, 10);
   const run = (n: number): string => `run-${String(n).padStart(4, "0")}`;
 
-  const daily = Array.from({ length: 14 }, (_, i) => {
-    const n = 13 - i;
-    return { date: day(n), runs: 2 + ((i * 3) % 4), merged: 1 + ((i * 2) % 3), spend_usd: Number((0.9 + ((i * 7) % 10) / 10).toFixed(2)), actions_minutes: 40 + ((i * 11) % 30) };
+  const daily = Array.from({ length: 21 }, (_, i) => {
+    const n = 20 - i;
+    return { date: dayOf(n), runs: 1 + ((i * 3) % 4), merged: (i * 2) % 3, spend_usd: Number((0.55 + ((i * 7) % 10) / 9).toFixed(2)), actions_minutes: 40 + ((i * 11) % 30) };
   });
 
-  const runIds = [run(31), run(30), run(29), run(28), run(27)];
-  const runDocs = Object.fromEntries(
-    runIds.map((id, i) => {
-      const pipeline = i === 2 ? "gardening" : i === 4 ? "hardening" : "product_work";
-      return [
-        `runs/${id}.json`,
-        {
-          schema: "run/1",
-          id,
-          work_item: `wi-${String(140 - i).padStart(4, "0")}`,
-          pipeline,
-          actor: { kind: "agent", harness: "claude-code" },
-          started_at: at((i + 1) * 9 * HOUR),
-          ended_at: at((i + 1) * 9 * HOUR - 24 * 60_000),
-          duration_sec: 1440,
-          outcome: i === 3 ? "escalated" : "merged",
-          pr: 50 + (4 - i),
-          steps: [
-            { role: "triage", model: "claude-haiku-5-5", duration_sec: 40, cost_usd: 0.02, exit: "ok" },
-            { role: "spec", model: "claude-opus-5-5", duration_sec: 210, cost_usd: 0.74, exit: "ok" },
-            { role: "builder", model: "claude-sonnet-5-5", attempt: 1, duration_sec: 820, cost_usd: 1.31, exit: "ok" },
-            { role: "verifier", model: "claude-haiku-5-5", duration_sec: 310, cost_usd: 0.18, exit: "ok" },
-          ],
-          gates: [
-            { gate: "static", attempt: 1, result: i === 3 ? "fail" : "pass", coverage: { diff_pct: 91, total_pct: 84 } },
-            { gate: "verification", attempt: 1, result: i === 3 ? "skipped" : "pass" },
-          ],
-          cost_usd: 2.25,
-          ...(i === 3 ? { escalated: true } : {}),
-        },
-      ];
-    }),
-  );
+  type Step = { role: string; model: string; attempt?: number; duration_sec: number; cost_usd: number; exit: string; tokens: { in: number; out: number; cached?: number } };
+  const step = (role: string, model: string, duration_sec: number, cost_usd: number, exit = "ok", attempt = 1): Step =>
+    ({ role, model, attempt, duration_sec, cost_usd, exit, tokens: { in: Math.round(cost_usd * 160_000), out: Math.round(cost_usd * 14_000), cached: Math.round(cost_usd * 90_000) } });
+  const product = (builderCost: number, exit = "ok"): Step[] => [
+    step("triage", "claude-haiku-5-5", 38, 0.02),
+    step("spec", "claude-opus-5-5", 214, 0.71),
+    step("builder", "claude-sonnet-5-5", 862, builderCost, exit),
+    step("verifier", "claude-sonnet-5-5", 305, 0.33),
+  ];
+  const runDoc = (id: string, work_item: string, pipeline: string, outcome: string, hoursAgo: number, minutes: number, steps: Step[], extra: Record<string, unknown> = {}) => ({
+    schema: "run/1", id, work_item, pipeline,
+    actor: { kind: "agent", harness: "claude-code" },
+    started_at: at(hoursAgo * HOUR), ended_at: at(hoursAgo * HOUR - minutes * MIN), duration_sec: minutes * 60,
+    outcome, steps,
+    gates: [
+      { gate: "static", attempt: 1, commit: "4c1d9e2", result: "pass", coverage: { diff_pct: 92, total_pct: 86 } },
+      { gate: "verification", attempt: 1, commit: "4c1d9e2", result: "pass" },
+    ],
+    cost_usd: Number(steps.reduce((n, s) => n + s.cost_usd, 0).toFixed(2)),
+    ...extra,
+  });
 
-  const workItem = (id: string, pipeline: string, title: string, status: string, extra: Record<string, unknown> = {}): [string, unknown] => [
+  const runs = [
+    runDoc(run(31), "wi-0146", "product_work", "draft_pr", 3, 31, product(1.42), { pr: 59, artifacts: { stored: [{ kind: "clip", path: "wi-0146/export.webm", caption: "Exporting March's invoices and opening the file" }] } }),
+    runDoc(run(30), "wi-0140", "product_work", "merged", 9, 26, product(1.18), { pr: 57 }),
+    runDoc(run(29), "wi-0139", "gardening", "merged", 20, 12, [step("gardener", "claude-sonnet-5-5", 520, 0.41), step("verifier", "claude-haiku-5-5", 140, 0.06)], { pr: 56 }),
+    runDoc(run(28), "wi-0147", "product_work", "escalated", 26, 58, [
+      ...product(1.05),
+      step("builder", "claude-sonnet-5-5", 610, 0.88, "ok", 2),
+      step("verifier", "claude-sonnet-5-5", 290, 0.31, "error", 2),
+    ], {
+      escalated: true,
+      gates: [
+        { gate: "static", attempt: 1, commit: "9b2e1f0", result: "pass" },
+        { gate: "verification", attempt: 1, commit: "9b2e1f0", result: "fail", failures: [{ rule: "session-survives-resume", message: "WebKit signed out after the tab slept for 40 minutes" }] },
+        { gate: "static", attempt: 2, commit: "2d7a6c3", result: "pass" },
+        { gate: "verification", attempt: 2, commit: "2d7a6c3", result: "fail", failures: [{ rule: "session-survives-resume", message: "Same: the cookie is gone on resume in the sandbox WebKit" }] },
+      ],
+    }),
+    runDoc(run(27), "wi-0138", "hardening", "merged", 44, 19, [step("triage", "claude-haiku-5-5", 30, 0.02), step("hardener", "claude-sonnet-5-5", 700, 0.94), step("verifier", "claude-haiku-5-5", 160, 0.07)], { pr: 55 }),
+    runDoc(run(26), "wi-0137", "product_work", "duplicate", 52, 1, [step("triage", "claude-haiku-5-5", 41, 0.02)], { gates: [] }),
+    runDoc(run(25), "wi-0136", "gardening", "no_action", 68, 6, [step("gardener", "claude-sonnet-5-5", 330, 0.22)], { gates: [] }),
+  ];
+  const runDocs = Object.fromEntries(runs.map((r) => [`runs/${r.id}.json`, r]));
+
+  const workItem = (id: string, pipeline: string, title: string, status: string, ageMs: number, extra: Record<string, unknown> = {}): [string, unknown] => [
     `work-items/${id}.json`,
     {
-      id, created_at: at(2 * DAY), pipeline, title, body: null, status, pr: null, parent: null,
+      id, created_at: at(ageMs), pipeline, title, body: null, status, pr: null, parent: null,
       source: { kind: "issue", ref: null, actor: "maya" }, ...extra,
     },
   ];
+  const cos = (reason: string, ageMs: number) => ({ routing: { by: "chief_of_staff", reason, at: at(ageMs) } });
 
   const data: Record<string, unknown> = {
     "index.json": {
       schema: "index/1",
-      updated_at: at(5 * 60_000),
-      factory: { runner: "0.1.0", harness: "claude-code", setup_completed_at: at(21 * DAY) },
+      updated_at: at(4 * MIN),
+      factory: { runner: "0.9.2", harness: "claude-code", setup_completed_at: at(21 * DAY) },
       metrics: {
-        window_days: 30, runs: 42, merged: 31, escalated: 3, automation_rate: 0.88, revert_rate: 0.03,
+        window_days: 30, runs: 42, merged: 31, escalated: 3, automation_rate: 0.84, revert_rate: 0.032,
         cycle_time_p50_sec: 1860, cycle_time_p90_sec: 5400, human_interactions_per_pr: 0.4,
         spend_usd: 21.4, budget_usd: 35, actions_minutes: 1180, actions_minutes_limit: 2000,
         by_pipeline: {
-          product_work: { runs: 24, merged: 17, spend_usd: 15.2 },
-          gardening: { runs: 14, merged: 11, spend_usd: 4.1 },
-          hardening: { runs: 4, merged: 3, spend_usd: 2.1 },
+          product_work: { runs: 24, merged: 17, spend_usd: 15.2, actions_minutes: 760, revert_rate: 0.04 },
+          gardening: { runs: 14, merged: 11, spend_usd: 4.1, actions_minutes: 300, revert_rate: 0 },
+          hardening: { runs: 4, merged: 3, spend_usd: 2.1, actions_minutes: 120, revert_rate: 0 },
         },
       },
       daily,
-      recent_runs: runIds,
+      recent_runs: runs.map((r) => r.id),
       guardrails: { rules: 12, baselined: 9, coverage_floor_pct: 78, candidates_pending: 2 },
-      health: { gardening_schedule_active: true, last_review: at(2 * DAY), lock_files_current: true, sandbox_profile: "none", enforcement: "branch_protection" },
+      health: { gardening_schedule_active: true, last_review: at(2 * DAY), lock_files_current: true, sandbox_profile: "docker", enforcement: "branch_protection" },
     },
     "ledger.json": {
       schema: "ledger/1",
-      updated_at: at(60_000),
+      updated_at: at(MIN),
       open: [
-        { work_item: "wi-0143", pipeline: "product_work", status: "needs_info", created_at: at(3 * DAY), source_ref: "#42" },
-        { work_item: "wi-0145", pipeline: "product_work", status: "building", created_at: at(40 * 60_000), source_ref: "#44", priority: "high" },
+        { work_item: "wi-0143", pipeline: "product_work", status: "needs_info", created_at: at(26 * HOUR), source_ref: "#42" },
+        { work_item: "wi-0146", pipeline: "product_work", status: "in_review", created_at: at(5 * HOUR), source_ref: "#45", pr: 59 },
+        { work_item: "wi-0145", pipeline: "product_work", status: "running", created_at: at(40 * MIN), source_ref: "#44", priority: "high" },
+        { work_item: "wi-0147", pipeline: "product_work", status: "escalated", created_at: at(28 * HOUR), source_ref: "#46" },
+        { work_item: "wi-0148", pipeline: "product_work", status: "waiting_trust", created_at: at(7 * HOUR), source_ref: "#47" },
+        { work_item: "wi-0149", pipeline: "gardening", status: "queued_to_merge", created_at: at(9 * HOUR), pr: 60 },
         { work_item: "wi-0144", pipeline: "gardening", status: "queued", created_at: at(5 * HOUR) },
       ],
       recent: [
         { work_item: "wi-0140", status: "merged", merged_at: at(6 * HOUR), pr: 57 },
-        { work_item: "wi-0139", status: "merged", merged_at: at(1 * DAY), pr: 56 },
-        { work_item: "wi-0138", status: "merged", merged_at: at(2 * DAY), pr: 55 },
-        { work_item: "wi-0137", status: "escalated", pr: 54 },
+        { work_item: "wi-0139", status: "merged", merged_at: at(19 * HOUR), pr: 56 },
+        { work_item: "wi-0138", status: "merged", merged_at: at(42 * HOUR), pr: 55 },
+        { work_item: "wi-0137", status: "duplicate" },
+        { work_item: "wi-0136", status: "rejected" },
       ],
-      merge_queue: [{ pr: 57, eligible_at: at(-2 * HOUR), pipeline: "product_work", work_item: "wi-0140" }],
+      merge_queue: [{ pr: 60, eligible_at: at(-2 * HOUR), pipeline: "gardening", work_item: "wi-0149" }],
     },
     "standing-goals.json": {
       schema: "standing-goals/1",
-      goals: [{ id: "g-1", text: "Focus hardening on checkout this month", lane: "hardening", by: "maya", at: at(4 * DAY), until: null }],
+      goals: [{ id: "g-1", text: "Harden checkout this month", lane: "hardening", by: "maya", at: at(4 * DAY), until: null }],
+    },
+    "brainstorms/wi-0143.json": {
+      work_item: "wi-0143",
+      turns: [
+        { at: at(26 * HOUR - 4 * MIN), who: "factory", text: "When a customer picks a date range, should refunds in that range show too, or only orders?" },
+        { at: at(25 * HOUR), who: "person", text: "Both. A refund is part of the order's story." },
+        { at: at(25 * HOUR - MIN), who: "factory", text: "Should a refund show under the date it happened, or under the date of the order it refunds?" },
+      ],
+      understood: null,
+      open: ["Which date a refund is filed under"],
+      holder: run(33),
+      heartbeat_at: at(20_000),
+      frame: { named: "A date-range filter on order history that includes refunds" },
+    },
+    "brainstorms/wi-0146.json": {
+      work_item: "wi-0146",
+      turns: [
+        { at: at(5 * HOUR), who: "factory", text: "Should the export keep each amount in the customer's currency, or convert everything to dollars?" },
+        { at: at(5 * HOUR - 3 * MIN), who: "person", text: "Keep their currency. Our accountant reconciles per currency." },
+      ],
+      understood: "Add a CSV export of the invoice list. Each amount stays in the customer's currency, with the exchange rate on the invoice date in its own column.",
+      open: [],
+      closed_at: at(5 * HOUR - 4 * MIN),
+      frame: { named: "A CSV export of invoices that keeps each customer's currency" },
     },
     "reviews/2026-review-0003.json": {
       schema: "review/1",
       id: "review-0003",
-      window: { from: at(5 * DAY), to: at(2 * DAY), runs: 18 },
-      scores: [{ run: run(30), criterion: "tests_match_behaviour", score: 4, note: "Covers the new path and one edge." }],
-      problems: [{ title: "Price rounding differs between cart and receipt", runs: [run(28)], route: "hardening", work_item: "wi-0142" }],
+      window: { from: at(9 * DAY), to: at(2 * DAY), runs: 18 },
+      scores: [
+        { run: run(30), criterion: "Tests match the behaviour asked for", score: 4.4 },
+        { run: run(30), criterion: "The change stays in scope", score: 4.7 },
+        { run: run(29), criterion: "Proof shows the change working", score: 3.9 },
+        { run: run(28), criterion: "Asked before guessing", score: 4.2 },
+      ],
+      problems: [{ title: "Prices rounded differently in cart and receipt", runs: [run(28), run(30)], route: "hardening", work_item: "wi-0138", pr: 55 }],
+      unrouted: [{ run: run(28), tag: "verification", reason: "Safari-only bugs can't be checked in the sandbox.", detail: "The sandbox WebKit is not Safari." }],
     },
+    "guardrails/candidate-decisions.json": { schema: "decisions/1", decisions: {} },
     ...runDocs,
     ...Object.fromEntries([
-      workItem("wi-0143", "product_work", "Let customers filter order history by date", "needs_info", {
-        goal: "A customer can narrow order history to a date range", success_check: "Open orders, pick last 30 days, only those orders show",
-        routing: { by: "chief_of_staff", reason: "A new capability on an existing page.", at: at(3 * DAY) },
+      workItem("wi-0143", "product_work", "Let customers filter order history by date", "needs_info", 26 * HOUR, {
+        source: { kind: "issue", ref: "#42", actor: "maya" },
+        goal: "A customer can narrow order history to a date range", success_check: "Pick last 30 days and only those orders show",
+        ...cos("A new capability on an existing page.", 26 * HOUR),
       }),
-      workItem("wi-0145", "product_work", "Add a dark mode toggle", "building", {
-        routing: { by: "person", reason: "Started from the dashboard.", at: at(40 * 60_000) },
+      workItem("wi-0146", "product_work", "Export invoices to CSV", "in_review", 5 * HOUR, {
+        source: { kind: "issue", ref: "#45", actor: "maya" }, pr: 59,
+        goal: "The accountant can reconcile a month without retyping", success_check: "March exports to a file that opens in a spreadsheet",
+        ...cos("A new feature with a visible result.", 5 * HOUR),
       }),
-      workItem("wi-0144", "gardening", "Remove unused helpers in the cart module", "queued"),
+      workItem("wi-0145", "product_work", "Add a dark mode toggle", "running", 40 * MIN, {
+        source: { kind: "dashboard", ref: "#44", actor: "maya" }, routing: { by: "person", reason: "Started from the dashboard.", at: at(40 * MIN) },
+      }),
+      workItem("wi-0147", "product_work", "Keep shoppers signed in after Safari sleeps", "escalated", 28 * HOUR, {
+        source: { kind: "issue", ref: "#46", actor: "devon" }, ...cos("A bug report about sign-in.", 28 * HOUR),
+      }),
+      workItem("wi-0148", "product_work", "Add Apple Pay at checkout", "waiting_trust", 7 * HOUR, {
+        source: { kind: "issue", ref: "#47", actor: "kai-ext" },
+      }),
+      workItem("wi-0149", "gardening", "Rename cartTotal to subtotal everywhere", "queued_to_merge", 9 * HOUR, {
+        source: { kind: "gardener", ref: null, actor: "factory" }, pr: 60,
+      }),
+      workItem("wi-0144", "gardening", "Remove unused helpers in the cart module", "queued", 5 * HOUR, {
+        source: { kind: "schedule", ref: null, actor: "factory" },
+      }),
+      workItem("wi-0140", "product_work", "Show the order total on the receipt", "merged", 30 * HOUR, { source: { kind: "issue", ref: "#41", actor: "maya" }, pr: 57 }),
+      workItem("wi-0139", "gardening", "Split the 600-line checkout component", "merged", 22 * HOUR, { source: { kind: "schedule", ref: null, actor: "factory" }, pr: 56 }),
+      workItem("wi-0138", "hardening", "A lint rule for rounding money outside the helper", "merged", 46 * HOUR, { source: { kind: "review", ref: null, actor: "factory" }, pr: 55 }),
+      workItem("wi-0137", "product_work", "Filter orders by date", "duplicate", 52 * HOUR, { source: { kind: "issue", ref: "#43", actor: "devon" }, parent: "wi-0143" }),
+      workItem("wi-0136", "gardening", "Tidy the search module", "rejected", 68 * HOUR, { source: { kind: "schedule", ref: null, actor: "factory" } }),
     ]),
   };
 
-  const comments: Record<string, unknown> = {};
-  comments["42"] = [
-    { id: 1, body: "Should the date range also apply to refunds, or only to orders?", created_at: at(3 * DAY), user: { login: "software-factory[bot]", type: "Bot" } },
-  ];
+  const comments: Record<string, unknown> = {
+    "42": [
+      { id: 1, body: "When a customer picks a date range, should refunds in that range show too, or only orders?", created_at: at(26 * HOUR - 4 * MIN), user: BOT },
+      { id: 2, body: "Both. A refund is part of the order's story.", created_at: at(25 * HOUR), user: ME },
+      { id: 3, body: "Should a refund show under the date it happened, or under the date of the order it refunds?", created_at: at(25 * HOUR - MIN), user: BOT },
+    ],
+    "46": [
+      { id: 4, body: "Shoppers on Safari are signed out after the laptop sleeps.", created_at: at(28 * HOUR), user: { login: "devon", type: "User" } },
+      { id: 5, body: "I tried twice and stopped. In the sandbox, WebKit drops the session cookie when a sleeping tab wakes, on both attempts, though Chrome and Firefox keep it. I can't tell whether real Safari does the same. Should I change the cookie to SameSite=None, or is this something to check on a real device first?", created_at: at(25 * HOUR), user: BOT },
+    ],
+    "47": [{ id: 6, body: "Could you add Apple Pay? I'd buy more often.", created_at: at(7 * HOUR), user: { login: "kai-ext", type: "User" } }],
+    "59": [
+      { id: 7, body: "Opened with the recording of March's export. Both gates passed.", created_at: at(3 * HOUR), user: BOT },
+    ],
+  };
 
   const dirs: Record<string, readonly string[]> = {
     reviews: ["2026-review-0003.json"],
-    runs: runIds.map((id) => `${id}.json`),
+    runs: runs.map((r) => `${r.id}.json`),
   };
 
   const repoFiles: Record<string, unknown> = {
     ".factory/guardrails/baselines.json": {
       schema: "baselines/1",
       rules: {
-        "no-console-log": { count: 4, recorded_at: at(20 * DAY) },
-        "no-any": { count: 11, recorded_at: at(20 * DAY), by_file: { "src/cart.ts": 6, "src/search.ts": 5 } },
+        "money/no-raw-rounding": { count: 3, recorded_at: at(2 * DAY), native: "eslint" },
+        "no-console-log": { count: 4, recorded_at: at(20 * DAY), native: "eslint" },
+        "no-any": { count: 11, recorded_at: at(20 * DAY), by_file: { "src/cart.ts": 6, "src/search.ts": 5 }, native: "typescript-eslint" },
+        "no-floating-promises": { count: 0, recorded_at: at(20 * DAY), retired: true, native: "typescript-eslint" },
       },
     },
     ".factory/guardrails/coverage.json": { schema: "coverage/1", high_pct: 86, floor_pct: 78, tolerance_pts: 1, diff_min_pct: 80, skips: { count: 2, cap: 10 } },
@@ -193,14 +287,18 @@ export function sampleFactory(now: number): {
       schema: "candidates/1",
       candidates: [
         {
-          id: "cand-1", problem_class: "Prices rounded differently in two places", occurrences: 3, last_seen: at(2 * DAY),
-          sources: [{ kind: "pr_comment", quote: "This rounds down here but up in the receipt.", pr: 55 }],
+          id: "cand-1", problem_class: "Dates shown in UTC instead of the shopper's time zone", occurrences: 3, first_seen: at(12 * DAY), last_seen: at(2 * DAY),
+          sources: [{ kind: "pr_comment", quote: "This shows tomorrow's date for anyone west of London.", pr: 52 }],
           proposed_fix: "static_rule", status: "pending",
         },
         {
-          id: "cand-2", problem_class: "Tests that never fail", occurrences: 2, last_seen: at(6 * DAY),
-          sources: [{ kind: "pr_comment", quote: "This test passes even if I delete the feature.", pr: 52 }],
+          id: "cand-2", problem_class: "Tests that pass even with the feature removed", occurrences: 2, first_seen: at(10 * DAY), last_seen: at(6 * DAY),
+          sources: [{ kind: "pr_comment", quote: "This test passes even if I delete the feature.", pr: 50 }],
           proposed_fix: "verification", status: "pending",
+        },
+        {
+          id: "cand-0", problem_class: "Money rounded outside the helper", occurrences: 4, sources: [{ kind: "pr_comment", quote: "This rounds down here but up in the receipt.", pr: 48 }],
+          proposed_fix: "static_rule", status: "installed",
         },
       ],
     },
@@ -209,33 +307,130 @@ export function sampleFactory(now: number): {
   const live: Record<string, unknown> = {
     [`refs/factory/live/${run(32)}`]: {
       schema: "live/1", run: run(32), work_item: "wi-0145", pipeline: "product_work", step: "builder",
-      attempt: 1, of: 3, started_at: at(18 * 60_000), cost_usd_so_far: 0.64,
+      attempt: 2, of: 3, started_at: at(18 * MIN), cost_usd_so_far: 1.12,
     },
   };
 
-  return { data, dirs, repoFiles, live, comments };
+  const labels = (...names: string[]) => names.map((name) => ({ name }));
+  const pull = (number: number, title: string, ageMs: number, ref: string, draft: boolean, names: string[], sha = SHA) => ({
+    number, title, draft, html_url: `https://github.com/${DEMO_REPO}/pull/${number}`, created_at: at(ageMs), updated_at: at(ageMs / 2),
+    user: BOT, labels: labels(...names), head: { ref, sha },
+  });
+  const pulls = [
+    pull(59, "Export invoices to CSV", 3 * HOUR, "factory/wi-0146", false, ["factory:product-work", "factory:cleared"], SHA59),
+    pull(60, "Rename cartTotal to subtotal everywhere", 8 * HOUR, "factory/wi-0149", false, ["factory:gardening", "factory:cleared"]),
+    pull(61, "Practice: round money only through formatMoney()", 20 * HOUR, "factory/practice-money", false, ["factory:definition"]),
+  ];
+  const issue = (number: number, title: string, ageMs: number, login: string, association: string, names: string[] = []) => ({
+    number, title, html_url: `https://github.com/${DEMO_REPO}/issues/${number}`, created_at: at(ageMs), user: { login }, labels: labels(...names), author_association: association,
+  });
+  const issues = [
+    issue(48, "Gift cards", 2 * HOUR, "pat-q", "NONE"),
+    issue(47, "[Feature] Add Apple Pay at checkout", 7 * HOUR, "kai-ext", "NONE"),
+    issue(46, "[Bug] Signed out after Safari sleeps", 28 * HOUR, "devon", "COLLABORATOR", ["factory:escalated"]),
+    issue(45, "[Feature] Export invoices to CSV", 5 * HOUR, "maya", "OWNER"),
+    issue(44, "[Feature] Add a dark mode toggle", 40 * MIN, "maya", "OWNER"),
+    issue(42, "[Feature] Filter order history by date", 26 * HOUR, "maya", "OWNER", ["factory:needs-info"]),
+  ];
+
+  return { data, dirs, repoFiles, live, comments, pulls, issues };
 }
 
-function pulls(now: number): unknown[] {
-  const at = (msAgo: number): string => new Date(now - msAgo).toISOString();
-  return [
-    {
-      number: 58, title: "Add a dark mode toggle", draft: true, html_url: "#", created_at: at(30 * 60_000), updated_at: at(10 * 60_000),
-      user: { login: "software-factory[bot]" }, labels: [{ name: "factory:product" }], head: { ref: "factory/wi-0145", sha: SHA },
-    },
-    {
-      number: 57, title: "Show the order total on the receipt", draft: false, html_url: "#", created_at: at(7 * HOUR), updated_at: at(6 * HOUR),
-      user: { login: "software-factory[bot]" }, labels: [{ name: "factory:product" }, { name: "factory:cleared" }], head: { ref: "factory/wi-0140", sha: SHA },
-    },
-  ];
+/** The pull request the demo shows in full: what the factory writes, and the change it made. */
+function pullDetail(now: number, number: number, base: Record<string, unknown>): Record<string, unknown> {
+  const bodies: Record<number, string> = {
+    59: [
+      "Adds **Export to CSV** to the invoice list. Each amount stays in the customer's currency.",
+      "- A new column carries the exchange rate on the invoice date, so totals reconcile.",
+      "- Rates are fetched once per invoice date and cached for the export.",
+      "- Exports of more than 5,000 invoices stream instead of building in memory.",
+      "",
+      "## Proof",
+      "A recording of March's 212 invoices exporting and opening in a spreadsheet.",
+    ].join("\n"),
+    60: "Renames `cartTotal` to `subtotal` in 14 files, which is what the receipt and the API already call it.\n\nNo behaviour changes; both gates passed.",
+    61: "A standing instruction declared with `/practice` on #48's review:\n\n- Round money only through `formatMoney()`, never with `toFixed` or `Math.round`.\n\nEvery agent follows it once a trusted person merges this.",
+  };
+  return {
+    ...base,
+    body: bodies[number] ?? "",
+    state: "open", merged: false, merged_at: null, mergeable: true, mergeable_state: "clean",
+    additions: number === 59 ? 184 : 41, deletions: number === 59 ? 12 : 41, changed_files: number === 59 ? 4 : 14,
+    base: { ref: "main" },
+    created_at: base["created_at"] ?? new Date(now).toISOString(),
+  };
 }
 
-function issues(now: number): unknown[] {
+const PATCH_59 = `@@ -1,9 +1,18 @@
+ import { Invoice } from "./types";
++import { rateOn } from "../money/rates";
++import { formatMoney } from "../money/format";
+ 
+-export function invoiceRows(invoices: Invoice[]) {
+-  return invoices.map((i) => [i.number, i.customer, i.total]);
++export async function invoiceRows(invoices: Invoice[]) {
++  const rows = [["Number", "Customer", "Amount", "Currency", "Rate to USD", "Date"]];
++  for (const i of invoices) {
++    const rate = await rateOn(i.currency, i.issuedOn);
++    rows.push([i.number, i.customer, formatMoney(i.total, i.currency), i.currency, rate.toFixed(6), i.issuedOn]);
++  }
++  return rows;
+ }`;
+
+function pullFiles(number: number): unknown[] {
+  if (number === 59) {
+    return [
+      { filename: "src/invoices/export.ts", status: "modified", additions: 12, deletions: 3, changes: 15, patch: PATCH_59 },
+      { filename: "src/invoices/ExportButton.tsx", status: "added", additions: 64, deletions: 0, changes: 64, patch: "@@ -0,0 +1,6 @@\n+export function ExportButton({ month }: { month: string }) {\n+  return (\n+    <a className=\"btn\" href={`/api/invoices/${month}.csv`} download>\n+      Export to CSV\n+    </a>\n+  );" },
+      { filename: "src/money/rates.ts", status: "modified", additions: 38, deletions: 9, changes: 47, patch: "@@ -12,4 +12,9 @@ export async function rateOn(currency: string, day: string) {\n-  return fetchRate(currency, day);\n+  const key = `${currency}:${day}`;\n+  const hit = cache.get(key);\n+  if (hit !== undefined) return hit;\n+  const rate = await fetchRate(currency, day);\n+  cache.set(key, rate);\n+  return rate;" },
+      { filename: "test/invoices/export.test.ts", status: "added", additions: 70, deletions: 0, changes: 70, patch: "@@ -0,0 +1,5 @@\n+it(\"keeps each amount in its own currency\", async () => {\n+  const rows = await invoiceRows([euroInvoice]);\n+  expect(rows[1]).toContain(\"EUR\");\n+  expect(rows[1]![2]).toBe(\"€120.00\");\n+});" },
+    ];
+  }
+  return [{ filename: "src/cart/total.ts", status: "modified", additions: 3, deletions: 3, changes: 6, patch: "@@ -4,6 +4,6 @@\n-export function cartTotal(items: Item[]) {\n+export function subtotal(items: Item[]) {\n   return items.reduce((n, i) => n + i.price * i.qty, 0);\n }" }];
+}
+
+function checkRuns(): unknown {
+  return {
+    total_count: 4,
+    check_runs: [
+      { id: 1, name: "factory/static", status: "completed", conclusion: "success", output: { title: "Types, lint and 12 guardrails pass" } },
+      { id: 2, name: "factory/verification", status: "completed", conclusion: "success", output: { title: "Driven in the sandbox; recording attached" } },
+      { id: 3, name: "factory/policy", status: "completed", conclusion: "success", output: { title: "No protected files touched" } },
+      { id: 4, name: "ci / test", status: "completed", conclusion: "success", output: { title: "418 tests passed" } },
+    ],
+  };
+}
+
+const WORKFLOWS = ["audit", "budget-settle", "conflicts", "drop", "garden", "gates", "intake", "merge", "policy", "recompile", "review", "rollup", "run", "sync"];
+function workflows(): unknown {
+  return {
+    total_count: WORKFLOWS.length,
+    workflows: WORKFLOWS.map((w, i) => ({ id: 100 + i, name: `factory-${w}`, path: `.github/workflows/factory-${w}.yml`, state: "active" })),
+  };
+}
+function workflowRuns(now: number): unknown {
   const at = (msAgo: number): string => new Date(now - msAgo).toISOString();
-  return [
-    { number: 44, title: "[Feature] Add a dark mode toggle", html_url: "#", created_at: at(40 * 60_000), user: { login: "maya" }, labels: [], author_association: "OWNER" },
-    { number: 42, title: "[Feature] Filter order history by date", html_url: "#", created_at: at(3 * DAY), user: { login: "maya" }, labels: [{ name: "factory:needs-info" }], author_association: "OWNER" },
-  ];
+  const r = (id: number, w: string, conclusion: string | null, ago: number, status = "completed") => ({
+    id, name: `factory-${w}`, path: `.github/workflows/factory-${w}.yml`, workflow_id: 100 + WORKFLOWS.indexOf(w), status, conclusion,
+    created_at: at(ago), updated_at: at(ago - MIN), html_url: `https://github.com/${DEMO_REPO}/actions/runs/${id}`, event: "workflow_dispatch",
+  });
+  return {
+    total_count: 12,
+    workflow_runs: [
+      r(9012, "run", null, 18 * MIN, "in_progress"),
+      r(9011, "gates", "success", 3 * HOUR),
+      r(9010, "policy", "success", 3 * HOUR),
+      r(9009, "sync", "failure", 4 * HOUR),
+      r(9008, "merge", "success", 6 * HOUR),
+      r(9007, "garden", "success", 18 * HOUR),
+      r(9006, "intake", "success", 26 * HOUR),
+      r(9005, "review", "success", 2 * DAY),
+      r(9004, "rollup", "success", 2 * DAY),
+      r(9003, "audit", "success", 3 * DAY),
+      r(9002, "conflicts", "success", 3 * DAY),
+      r(9001, "recompile", "success", 9 * DAY),
+    ],
+  };
 }
 
 const json = (body: unknown, status = 200): Response =>
@@ -260,8 +455,20 @@ export function demoFetch(now: () => number = Date.now): typeof fetch {
     if (rest === "") {
       return json({ default_branch: "main", private: true, permissions: { push: true, admin: true, pull: true } });
     }
-    if (rest === "pulls") return json(pulls(t));
-    if (rest === "issues") return json(issues(t));
+    if (rest === "pulls") return json(url.searchParams.get("state") === "closed" ? [] : sample.pulls);
+    const pullMatch = /^pulls\/(\d+)(\/files|\/comments)?$/.exec(rest);
+    if (pullMatch !== null) {
+      const n = Number(pullMatch[1]);
+      const base = sample.pulls.find((p) => p["number"] === n);
+      if (base === undefined) return notFound();
+      if (pullMatch[2] === "/files") return json(pullFiles(n));
+      if (pullMatch[2] === "/comments") return json([]);
+      return json(pullDetail(t, n, base));
+    }
+    if (/^commits\/[^/]+\/check-runs$/.test(rest)) return json(checkRuns());
+    if (rest === "actions/workflows") return json(workflows());
+    if (rest === "actions/runs") return json(workflowRuns(t));
+    if (rest === "issues") return json(url.searchParams.get("state") === "closed" ? [] : sample.issues);
     const comment = /^issues\/(\d+)\/comments$/.exec(rest);
     if (comment !== null) return json(sample.comments[comment[1]!] ?? []);
     if (rest === "collaborators") {

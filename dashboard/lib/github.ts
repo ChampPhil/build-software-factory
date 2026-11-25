@@ -363,6 +363,90 @@ export class GitHubClient {
     return this.get<readonly PullFile[]>(`repos/${this.repo}/pulls/${number}/files?per_page=100`);
   }
 
+  /**
+   * Drop requests: the factory closes their pull requests with the reason and
+   * stops working on them. Only someone who can start a workflow can do this,
+   * which is the same set of people who can start work.
+   */
+  async dropRequests(workItems: readonly string[], why: string): Promise<void> {
+    await this.dispatchWorkflow("factory-drop.yml", await this.defaultBranch(), {
+      work_items: workItems.join(","),
+      why,
+    });
+  }
+
+  /** Start a request again from its first gate attempt, for one that was handed back. */
+  async retryRequest(workItem: string): Promise<void> {
+    await this.dispatchWorkflow("factory-run.yml", await this.defaultBranch(), { work_item: workItem });
+  }
+
+  /** Run one of the factory's workflows that needs no input, now, on the default branch. */
+  async runWorkflowNow(file: string): Promise<void> {
+    await this.dispatchWorkflow(file, await this.defaultBranch(), file === "factory-review.yml" ? { force: "true" } : {});
+  }
+
+  /** One pull request in full: its body carries the factory's summary, and its state says whether it can merge. */
+  async pull(number: number): Promise<PullDetail> {
+    return this.get<PullDetail>(`repos/${this.repo}/pulls/${number}`);
+  }
+
+  /**
+   * Close a pull request without merging it.
+   *
+   * The branch stays. Closing is how a person says "not this attempt": the
+   * request goes back to the factory, which starts the next try from main.
+   */
+  async closePull(number: number): Promise<void> {
+    await this.send("PATCH", `repos/${this.repo}/pulls/${number}`, { state: "closed" });
+  }
+
+  /**
+   * Comment on one line of a pull request's diff, on the side the line is on.
+   *
+   * GitHub anchors the comment to a commit, so it stays on the line it was
+   * written about even after the factory pushes again.
+   */
+  async createReviewComment(
+    number: number,
+    comment: { readonly body: string; readonly commit: string; readonly path: string; readonly line: number; readonly side: "LEFT" | "RIGHT" },
+  ): Promise<void> {
+    await this.send("POST", `repos/${this.repo}/pulls/${number}/comments`, {
+      body: comment.body,
+      commit_id: comment.commit,
+      path: comment.path,
+      line: comment.line,
+      side: comment.side,
+    });
+  }
+
+  /** The checks GitHub ran on a commit, for showing beside a pull request. */
+  async checkRuns(sha: string): Promise<readonly CheckRunSummary[]> {
+    const r = await this.get<{ check_runs: CheckRunSummary[] }>(`repos/${this.repo}/commits/${sha}/check-runs?per_page=100`);
+    return r.check_runs;
+  }
+
+  /** The repository's workflows: the factory's own are the ones whose file starts with `factory-`. */
+  async workflows(): Promise<readonly WorkflowSummary[]> {
+    const r = await this.get<{ workflows: WorkflowSummary[] }>(`repos/${this.repo}/actions/workflows?per_page=100`);
+    return r.workflows;
+  }
+
+  /** Recent workflow runs, newest first: what is running, and what failed and can be run again. */
+  async workflowRuns(perPage = 50): Promise<readonly WorkflowRunSummary[]> {
+    const r = await this.get<{ workflow_runs: WorkflowRunSummary[] }>(`repos/${this.repo}/actions/runs?per_page=${perPage}`);
+    return r.workflow_runs;
+  }
+
+  /**
+   * Stop a workflow run that is still going.
+   *
+   * What it spent so far is still spent; the factory's budget settlement reads
+   * the run's own record, so a cancelled run is charged what it used and no more.
+   */
+  async cancelWorkflowRun(runId: number): Promise<void> {
+    await this.send("POST", `repos/${this.repo}/actions/runs/${runId}/cancel`);
+  }
+
   async dispatchWorkflow(workflow: string, ref: string, inputs: Record<string, string> = {}): Promise<void> {
     await this.send("POST", `repos/${this.auth.repo}/actions/workflows/${workflow}/dispatches`, {
       ref,
@@ -489,4 +573,51 @@ export interface IssueSummary {
   readonly author_association: string;
   /** Present on PRs; absent on true issues. */
   readonly pull_request?: unknown;
+}
+
+export interface PullDetail extends PullSummary {
+  readonly body: string | null;
+  readonly state: "open" | "closed";
+  readonly merged: boolean;
+  readonly merged_at: string | null;
+  readonly mergeable: boolean | null;
+  /** "clean", "behind", "blocked", "dirty", "unstable" and so on; GitHub works it out after a moment, so it can be "unknown". */
+  readonly mergeable_state: string;
+  readonly additions: number;
+  readonly deletions: number;
+  readonly changed_files: number;
+  readonly base: { readonly ref: string };
+}
+
+export interface CheckRunSummary {
+  readonly id: number;
+  readonly name: string;
+  /** "queued", "in_progress" or "completed". */
+  readonly status: string;
+  /** "success", "failure", "neutral", "cancelled", "skipped", "timed_out", "action_required", or null while running. */
+  readonly conclusion: string | null;
+  readonly html_url?: string;
+  readonly output?: { readonly title?: string | null; readonly summary?: string | null };
+}
+
+export interface WorkflowSummary {
+  readonly id: number;
+  readonly name: string;
+  readonly path: string;
+  readonly state: string;
+}
+
+export interface WorkflowRunSummary {
+  readonly id: number;
+  readonly name: string;
+  readonly path?: string;
+  readonly workflow_id: number;
+  /** "queued", "in_progress" or "completed". */
+  readonly status: string;
+  readonly conclusion: string | null;
+  readonly created_at: string;
+  readonly updated_at: string;
+  readonly html_url: string;
+  readonly event: string;
+  readonly head_branch?: string | null;
 }

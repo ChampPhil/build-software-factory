@@ -1,37 +1,60 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import {
   readSession, clearSession, writeSession, repoFromAddress, demoFromAddress, startDemo, validRepo, type Session,
 } from "@/lib/session";
 import { isDemo } from "@/lib/demo";
 import { completeGithubLogin, needsRefresh, refreshSession, REFRESH_MARGIN_MS } from "@/lib/github-login";
 import { GitHubClient } from "@/lib/github";
-import { useClient, useLedger } from "@/lib/data";
+import { useClient, useFactorySettings, useGuardrails, useIndex, useIssues, useLedger, useLive, usePulls, useWorkItems } from "@/lib/data";
+import { needsFrom, requestsFrom, requestIds, statusName } from "@/lib/view";
+import type { FirstRequest } from "@/lib/request";
 import { SignIn } from "@/components/sign-in";
 import { Landing } from "@/components/landing";
-import { NewRequest } from "@/components/request";
+import { RequestForm } from "@/components/request-form";
 import { BrandCredit } from "@/components/brand-credit";
+import { AppProvider, explain, useApp, useTalkBack, type App } from "@/components/app";
+import { Chev, Dialog, Mark, SearchIcon } from "@/components/ui";
 
-const PAGES = [
-  { href: "/", label: "Waiting on you" },
-  { href: "/dashboard", label: "Dashboard" },
-  { href: "/live", label: "Live" },
-  { href: "/work", label: "Work items" },
-  { href: "/runs", label: "Runs" },
-  { href: "/guardrails", label: "Guardrails" },
-  { href: "/improvement", label: "Improvement" },
-  { href: "/factory", label: "Factory" },
-  { href: "/sessions", label: "Sessions" },
+const NAV = [
+  { href: "/", label: "Briefing" },
+  { href: "/requests/", label: "Requests" },
+  { href: "/runs/", label: "Runs" },
+  { href: "/guardrails/", label: "Guardrails" },
+  { href: "/spend/", label: "Spend" },
+  { href: "/factory/", label: "Factory" },
 ] as const;
+
+/** Which top-level section a path belongs to, so a request's page lights up Requests. */
+function sectionOf(path: string): string {
+  const p = path.endsWith("/") ? path : `${path}/`;
+  if (p === "/") return "/";
+  if (p.startsWith("/request")) return "/requests/";
+  return NAV.find((n) => n.href !== "/" && p.startsWith(n.href))?.href ?? "/";
+}
+
+type Theme = "system" | "light" | "dark";
+const THEME_KEY = "bsf.theme";
+function readTheme(): Theme {
+  try {
+    const t = window.localStorage.getItem(THEME_KEY);
+    return t === "light" || t === "dark" ? t : "system";
+  } catch {
+    return "system";
+  }
+}
+function applyTheme(t: Theme): void {
+  if (t === "system") delete document.documentElement.dataset["theme"];
+  else document.documentElement.dataset["theme"] = t;
+}
 
 export function Shell({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [ready, setReady] = useState(false);
-  const pathname = usePathname();
 
   // A link can name a repository (`?repo=owner/name`) or ask for the demo (`?demo`).
   const [linkRepo, setLinkRepo] = useState<string | null>(null);
@@ -42,6 +65,7 @@ export function Shell({ children }: { children: ReactNode }) {
   const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
+    applyTheme(readTheme());
     let live = true;
     void (async () => {
       // Coming back from GitHub: the sign-in page checks the repository and lets the person in.
@@ -131,32 +155,19 @@ export function Shell({ children }: { children: ReactNode }) {
     }
   }
 
-  // Depending on the two fields keeps the identity of `auth` stable across a
-  // re-render that produced an equal session object.
-  const token = session?.token ?? null;
-  const repo = session?.repo ?? null;
-  const auth = useMemo(
-    () => (token === null || repo === null ? null : { token, repo }),
-    [token, repo],
-  );
-  const client = useClient(auth);
-  const ledger = useLedger(client);
-  const [composing, setComposing] = useState(false);
   const [wantsSignIn, setWantsSignIn] = useState(false);
-
-  const openCount = ledger.state === "ready" ? (ledger.data?.open.length ?? 0) : null;
-  const queueCount = ledger.state === "ready" ? (ledger.data?.merge_queue.length ?? 0) : null;
 
   if (!ready) {
     // The session is read after hydration, so this frame exists either way.
     // Rendering the sign-in form here would flash it past a signed-in user;
-    // rendering nothing leaves a blank page. So: the wordmark, which is true
-    // in both cases.
+    // rendering nothing leaves a blank page. So: the mark, which is true in
+    // both cases.
     return (
-      <div className="main" style={{ maxWidth: 560, paddingTop: 64 }}>
-        <div className="rail-mark" style={{ padding: 0 }}>
-          <b>Software Factory</b>
-        </div>
+      <div className="boot" aria-busy="true">
+        <span className="brand">
+          <Mark />
+          Software Factory
+        </span>
       </div>
     );
   }
@@ -168,11 +179,10 @@ export function Shell({ children }: { children: ReactNode }) {
     // Anybody else arrived at the root because a friend sent it, and wants to
     // know what this is before giving an agent commit rights.
     const handedOver =
-      typeof window !== "undefined" &&
-      (new URL(window.location.href).searchParams.get("repo") !== null ||
-        window.location.pathname.replace(/\/+$/, "") !== "" ||
-        resume !== null ||
-        notice !== null);
+      new URL(window.location.href).searchParams.get("repo") !== null ||
+      window.location.pathname.replace(/\/+$/, "") !== "" ||
+      resume !== null ||
+      notice !== null;
     if (!handedOver && !wantsSignIn) {
       return (
         <Landing
@@ -186,95 +196,331 @@ export function Shell({ children }: { children: ReactNode }) {
       );
     }
     return (
-      <div className="main" style={{ maxWidth: 560 }}>
-        <SignIn
-          onSignedIn={(s) => {
-            setResume(null);
-            setNotice(null);
-            setSession(s);
-          }}
-          resume={resume}
-          notice={notice}
-        />
-        <div style={{ marginTop: 32, color: "var(--ink-faint)", fontSize: 12 }}>
-          <BrandCredit />
-        </div>
+      <SignIn
+        onSignedIn={(s) => {
+          setResume(null);
+          setNotice(null);
+          setSession(s);
+        }}
+        resume={resume}
+        notice={notice}
+      />
+    );
+  }
+
+  return (
+    <SignedIn
+      key={session.repo}
+      session={session}
+      linkRepo={linkRepo}
+      switching={switching}
+      onSwitch={(r) => void switchTo(r)}
+      onStay={() => setLinkRepo(null)}
+      onSignOut={() => {
+        clearSession();
+        setSession(null);
+      }}
+    >
+      {children}
+    </SignedIn>
+  );
+}
+
+function SignedIn({
+  session, linkRepo, switching, onSwitch, onStay, onSignOut, children,
+}: {
+  session: Session;
+  linkRepo: string | null;
+  switching: string | null;
+  onSwitch: (repo: string) => void;
+  onStay: () => void;
+  onSignOut: () => void;
+  children: ReactNode;
+}) {
+  const demo = isDemo(session.token, session.repo);
+  // Depending on the two fields keeps the identity of `auth` stable across a
+  // re-render that produced an equal session object.
+  const auth = useMemo(() => ({ token: session.token, repo: session.repo }), [session.token, session.repo]);
+  const client = useClient(auth);
+  const [version, setVersion] = useState(0);
+  const bump = useCallback(() => setVersion((v) => v + 1), []);
+
+  const index = useIndex(client);
+  const ledger = useLedger(client, true);
+  const live = useLive(client);
+  const pulls = usePulls(client, version);
+  const issues = useIssues(client, version);
+  const guardrails = useGuardrails(client);
+  const settings = useFactorySettings(client);
+  const installed = settings.state === "ready" ? settings.data !== null : null;
+
+  const { toast, ask, layer } = useTalkBack();
+  const [composing, setComposing] = useState<(FirstRequest & { kind?: string }) | null | false>(false);
+  const [palette, setPalette] = useState(false);
+
+  const act = useCallback(
+    async (fn: () => Promise<unknown>, done: string): Promise<boolean> => {
+      try {
+        await fn();
+        toast(done);
+        bump();
+        return true;
+      } catch (e) {
+        toast(explain(e));
+        return false;
+      }
+    },
+    [toast, bump],
+  );
+
+  // "/" or Ctrl-K opens the palette from anywhere that is not a text field.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      const t = e.target as HTMLElement | null;
+      const typing = t !== null && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable);
+      if ((e.key === "k" && (e.metaKey || e.ctrlKey)) || (e.key === "/" && !typing)) {
+        e.preventDefault();
+        setPalette(true);
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
+
+  const needs = needsFrom({
+    ledger: ledger.state === "ready" ? ledger.data : null,
+    pulls: pulls.state === "ready" ? pulls.data : [],
+    issues: issues.state === "ready" ? issues.data : [],
+    candidates: guardrails.state === "ready" ? (guardrails.data.candidates?.candidates ?? []) : [],
+  }).length;
+
+  if (client === null) {
+    return (
+      <div className="boot" aria-busy="true">
+        <span className="brand">
+          <Mark />
+          Software Factory
+        </span>
       </div>
     );
   }
 
-  const counts: Partial<Record<string, { n: number; attention?: boolean; live?: boolean }>> = {
-    "/live": openCount === null ? undefined : { n: openCount, live: openCount > 0 },
-    "/work": openCount === null ? undefined : { n: openCount },
-    "/runs": queueCount === null || queueCount === 0 ? undefined : { n: queueCount },
+  const app: App = {
+    repo: session.repo, demo, client, version, bump, index, ledger, live, pulls, issues, guardrails, settings, installed,
+    toast, act, ask, compose: (initial) => setComposing(initial ?? null),
   };
 
   return (
-    <div className="shell">
-      <aside className="rail">
-        <div className="rail-mark">
-          <b>Software Factory</b>
+    <AppProvider value={app}>
+      <a className="skip" href="#content">
+        Skip to the page
+      </a>
+      <TopBar repo={session.repo} needs={needs} demo={demo} onPalette={() => setPalette(true)} onCompose={() => setComposing(null)} onSignOut={onSignOut} />
+      {(demo || linkRepo !== null) && (
+        <div className="notes">
+          {demo && (
+            <p className="note">
+              This is a demo with made-up records. Nothing here is saved, and nothing is sent to GitHub.{" "}
+              <button className="link" type="button" onClick={onSignOut}>
+                Leave the demo
+              </button>
+            </p>
+          )}
+          {linkRepo !== null && !demo && (
+            <p className="note">
+              <span>
+                This link is for <b>{linkRepo}</b>. You are connected to <b>{session.repo}</b>.
+              </span>
+              <button className="btn small" type="button" onClick={() => onSwitch(linkRepo)}>
+                Switch to it
+              </button>
+              <button className="btn small quiet" type="button" onClick={onStay}>
+                Stay here
+              </button>
+              {switching !== null && <span className="warn">{switching}</span>}
+            </p>
+          )}
         </div>
-        <button
-          className="btn"
-          style={{ margin: "0 12px 16px" }}
-          onClick={() => setComposing(true)}
-        >
-          New request
-        </button>
-        <nav aria-label="Pages">
-          {PAGES.map((p) => {
-            const current = pathname === p.href || (p.href !== "/" && pathname.startsWith(p.href));
-            const count = counts[p.href];
-            return (
-              <Link key={p.href} href={p.href} {...(current ? { "aria-current": "page" as const } : {})}>
-                <span>{p.label}</span>
-                {count !== undefined && (
-                  <span className={`count${count.attention === true ? " attention" : ""}${count.live === true ? " live" : ""}`}>{count.n}</span>
-                )}
-              </Link>
-            );
-          })}
+      )}
+      <div id="content">{children}</div>
+      <footer className="foot">
+        <BrandCredit />
+      </footer>
+      {composing !== false && (
+        <Dialog title="New request" onClose={() => setComposing(false)} size="sheet">
+          <RequestForm initial={composing ?? undefined} onCancel={() => setComposing(false)} />
+        </Dialog>
+      )}
+      {palette && <Palette onClose={() => setPalette(false)} onCompose={() => { setPalette(false); setComposing(null); }} />}
+      {layer}
+    </AppProvider>
+  );
+}
+
+function TopBar({
+  repo, needs, demo, onPalette, onCompose, onSignOut,
+}: {
+  repo: string;
+  needs: number;
+  demo: boolean;
+  onPalette: () => void;
+  onCompose: () => void;
+  onSignOut: () => void;
+}) {
+  const path = usePathname();
+  const here = sectionOf(path);
+  const [owner, name] = repo.split("/");
+  const [menu, setMenu] = useState(false);
+  const [theme, setTheme] = useState<Theme>("system");
+  useEffect(() => setTheme(readTheme()), []);
+
+  return (
+    <header className="top">
+      <div className="top-in">
+        <Link className="repo" href="/" aria-label={`${repo}, the briefing`}>
+          <Mark />
+          <span>
+            {name} <small>{owner}</small>
+          </span>
+        </Link>
+        <nav className="nav" aria-label="Main">
+          {NAV.map((n) => (
+            <Link key={n.href} href={n.href} {...(here === n.href ? { "aria-current": "page" as const } : {})}>
+              {n.label}
+              {n.href === "/" && needs > 0 && (
+                <span className="count" aria-label={`${needs} waiting on you`}>
+                  {needs}
+                </span>
+              )}
+            </Link>
+          ))}
         </nav>
-        <div className="rail-foot">
-          <div className="mono">{session.repo}</div>
-          <BrandCredit />
-          <button
-            className="btn"
-            style={{ marginTop: 10, padding: "4px 9px", fontSize: 13 }}
-            onClick={() => {
-              clearSession();
-              setSession(null);
-            }}
-          >
-            {isDemo(session.token, session.repo) ? "Leave the demo" : "Sign out"}
+        <span className="gap" />
+        <button className="btn search" type="button" onClick={onPalette}>
+          <SearchIcon />
+          <span className="lbl">Search or do anything</span>
+          <kbd>/</kbd>
+        </button>
+        <button className="btn go" type="button" onClick={onCompose}>
+          <span aria-hidden="true">+</span>
+          <span className="lbl">New request</span>
+        </button>
+        <div className="menu-wrap">
+          <button className="avatar" type="button" aria-haspopup="menu" aria-expanded={menu} aria-label="Your account and settings" onClick={() => setMenu((m) => !m)}>
+            {(owner ?? "?").slice(0, 2).toUpperCase()}
+            <Chev />
           </button>
+          {menu && (
+            <>
+              <div className="scrim clear" onClick={() => setMenu(false)} aria-hidden="true" />
+              <div className="pop" role="menu">
+                <p className="muted small">Connected to <b>{repo}</b></p>
+                <div className="theme-pick" role="radiogroup" aria-label="Appearance">
+                  {(["system", "light", "dark"] as const).map((t) => (
+                    <label key={t}>
+                      <input
+                        type="radio"
+                        name="theme"
+                        checked={theme === t}
+                        onChange={() => {
+                          setTheme(t);
+                          applyTheme(t);
+                          try { window.localStorage.setItem(THEME_KEY, t); } catch { /* private mode: it lasts this visit */ }
+                        }}
+                      />
+                      {t === "system" ? "Auto" : t === "light" ? "Light" : "Dark"}
+                    </label>
+                  ))}
+                </div>
+                <hr />
+                {!demo && (
+                  <a className="out" role="menuitem" href={`https://github.com/${repo}`} target="_blank" rel="noopener noreferrer">
+                    The repository on GitHub
+                  </a>
+                )}
+                <a className="out" role="menuitem" href="https://github.com/ChampPhil/build-software-factory#readme" target="_blank" rel="noopener noreferrer">
+                  How the factory works
+                </a>
+                <hr />
+                <button type="button" role="menuitem" onClick={onSignOut}>
+                  {demo ? "Leave the demo" : "Sign out"}
+                </button>
+              </div>
+            </>
+          )}
         </div>
-      </aside>
-      <main className="main" key={session.repo}>
-        {isDemo(session.token, session.repo) && (
-          <div className="note quiet" style={{ marginBottom: 16 }}>
-            This is a demo with made-up records. Nothing here is saved, and nothing is sent to GitHub.
-          </div>
-        )}
-        {linkRepo !== null && !isDemo(session.token, session.repo) && (
-          <div className="note" style={{ marginBottom: 16, display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-            <span>
-              This link is for <b className="mono">{linkRepo}</b>. You are connected to{" "}
-              <b className="mono">{session.repo}</b>.
-            </span>
-            <button className="btn" style={{ padding: "4px 9px", fontSize: 13 }} onClick={() => void switchTo(linkRepo)}>
-              Switch to it
-            </button>
-            <button className="btn" style={{ padding: "4px 9px", fontSize: 13 }} onClick={() => setLinkRepo(null)}>
-              Stay here
-            </button>
-            {switching !== null && <span style={{ flexBasis: "100%" }}>{switching}</span>}
-          </div>
-        )}
-        {composing && client !== null && <NewRequest client={client} onClose={() => setComposing(false)} />}
-        {children}
-      </main>
-    </div>
+      </div>
+    </header>
+  );
+}
+
+/**
+ * Search or do anything: every page, every action that needs no context, and
+ * every request by its title or number. The quickest way to anything for a
+ * person who knows what they want.
+ */
+function Palette({ onClose, onCompose }: { onClose: () => void; onCompose: () => void }) {
+  const app = useApp();
+  const router = useRouter();
+  const [q, setQ] = useState("");
+  const [at, setAt] = useState(0);
+  const ledger = app.ledger.state === "ready" ? app.ledger.data : null;
+  const docs = useWorkItems(app.client, requestIds(ledger, 60));
+  const requests = requestsFrom(ledger, docs.state === "ready" ? docs.data : {}, app.issues.state === "ready" ? app.issues.data : []);
+
+  type Entry = { label: string; hint: string; run: () => void };
+  const go = (href: string) => () => {
+    onClose();
+    router.push(href);
+  };
+  const entries: Entry[] = [
+    { label: "New request", hint: "Ask the factory for something", run: onCompose },
+    ...NAV.map((n) => ({ label: n.label, hint: "Page", run: go(n.href) })),
+    { label: "Settings", hint: "Factory", run: go("/factory/#settings") },
+    { label: "Standing goals", hint: "Factory", run: go("/factory/#goals") },
+    { label: "Workflows", hint: "Factory", run: go("/factory/#workflows") },
+    { label: "Rules it could add", hint: "Guardrails", run: go("/guardrails/") },
+    ...requests.map((r) => ({
+      label: r.title,
+      hint: `${r.issue === null ? r.id : `#${r.issue}`}, ${statusName(r.status).toLowerCase()}`,
+      run: go(`/request/?id=${encodeURIComponent(r.id)}`),
+    })),
+  ];
+  const needle = q.trim().toLowerCase();
+  const shown = (needle === "" ? entries.slice(0, 12) : entries.filter((e) => `${e.label} ${e.hint}`.toLowerCase().includes(needle.replace(/^#/, "")))).slice(0, 14);
+  const pick = shown[Math.min(at, shown.length - 1)];
+
+  return (
+    <Dialog onClose={onClose} size="pal" label="Search or do anything">
+      <div className="palette">
+        <input
+          className="field"
+          data-autofocus
+          value={q}
+          placeholder="Search requests, pages and actions"
+          aria-label="Search or do anything"
+          aria-controls="pal-list"
+          onChange={(e) => {
+            setQ(e.target.value);
+            setAt(0);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "ArrowDown") { e.preventDefault(); setAt((a) => Math.min(a + 1, shown.length - 1)); }
+            if (e.key === "ArrowUp") { e.preventDefault(); setAt((a) => Math.max(a - 1, 0)); }
+            if (e.key === "Enter" && pick !== undefined) { e.preventDefault(); pick.run(); }
+          }}
+        />
+        <ul id="pal-list" role="listbox" aria-label="Results">
+          {shown.map((e, i) => (
+            <li key={`${e.label}-${i}`} role="option" aria-selected={i === Math.min(at, shown.length - 1)} onClick={e.run} onMouseEnter={() => setAt(i)}>
+              {e.label}
+              <span>{e.hint}</span>
+            </li>
+          ))}
+          {shown.length === 0 && <li className="muted" aria-disabled="true">Nothing matches. Press Escape to close.</li>}
+        </ul>
+        <p className="muted small">Arrow keys to move, Enter to open, Escape to close.</p>
+      </div>
+    </Dialog>
   );
 }

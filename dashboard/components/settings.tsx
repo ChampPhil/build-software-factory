@@ -1,191 +1,273 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import type { GitHubClient } from "@/lib/github";
 import { applySettingsChange, type SettingsOutcome, type Stage } from "@/lib/apply-settings";
 import { SETTINGS, applySettings, changesFrom, describeValue, readSettings, type Setting, type SettingValue } from "@/lib/settings";
-
-const GROUPS: readonly { readonly title: string; readonly ids: readonly string[] }[] = [
-  { title: "Budget", ids: ["monthly_budget", "share_product_work", "share_gardening", "share_review"] },
-  { title: "Merge by itself", ids: ["auto_merge_product_work", "auto_merge_gardening", "auto_merge_hardening"] },
-  { title: "Nightly cleanup", ids: ["gardening_prs", "gardening_hour"] },
-];
+import { GOAL_LANES, liveGoals } from "@/lib/routing";
+import { day, hourLocal, pipeName } from "@/lib/view";
+import type { StandingGoalsFile } from "@/lib/types";
+import { useApp, explain } from "@/components/app";
+import { Out } from "@/components/ui";
 
 const STAGE_TEXT: Readonly<Record<Stage, string>> = {
   reading: "Reading the current settings…",
   opening: "Opening the change…",
-  checking: "Waiting for the factory's check…",
+  checking: "Waiting for the factory's policy check…",
   merging: "Merging…",
 };
 
+const ORDER = ["monthly_budget", "share_product_work", "share_gardening", "share_review", "auto_merge_product_work", "auto_merge_gardening", "auto_merge_hardening", "gardening_prs", "gardening_hour"];
+const SHARE_IDS = ["share_product_work", "share_gardening", "share_review"];
+
 /**
- * The settings a person may change, each with its own control. Saving applies
- * the change in one step as the signed-in person; nobody opens a file.
+ * The settings a person may change, each with its own control. Saving opens a
+ * pull request that changes the factory's settings file and merges it once the
+ * policy check passes, as the signed-in person: nobody opens a file.
  */
-export function SettingsPanel({
-  client, yaml, onApplied, enforcement,
-}: {
-  client: GitHubClient;
-  yaml: string;
-  onApplied: () => void;
-  /** From `index.health.enforcement`; decides whether the policy check can ever finish. */
-  enforcement?: "branch_protection" | "audit" | null | undefined;
-}) {
+export function SettingsForm({ yaml, enforcement }: { yaml: string; enforcement: "branch_protection" | "audit" | null }) {
+  const { client, toast, bump, demo } = useApp();
   const current = useMemo(() => readSettings(yaml), [yaml]);
   const [draft, setDraft] = useState<Record<string, SettingValue>>({ ...current });
   const [stage, setStage] = useState<Stage | null>(null);
   const [outcome, setOutcome] = useState<SettingsOutcome | null>(null);
-
   // A new copy of the settings (after a save, or another person's change) resets the controls to it.
-  useEffect(() => { setDraft({ ...current }); }, [current]);
+  useEffect(() => setDraft({ ...current }), [current]);
 
   const changes = changesFrom(current, draft);
   const pending = Object.keys(changes).length;
-  const check = pending === 0 ? null : applySettings(yaml, changes).problems[0]?.message ?? null;
+  const problem = pending === 0 ? null : (applySettings(yaml, changes).problems[0]?.message ?? null);
+  const shareTotal = SHARE_IDS.reduce((n, id) => n + (typeof draft[id] === "number" ? draft[id] : 0), 0);
+  const by = (id: string): Setting | undefined => SETTINGS.find((s) => s.id === id);
+  const set = (id: string, v: SettingValue): void => setDraft((d) => ({ ...d, [id]: v }));
+  const busy = stage !== null;
 
   const save = async (): Promise<void> => {
     setOutcome(null);
-    const result = await applySettingsChange(client, changes, { onStage: setStage, enforcement: enforcement ?? null });
-    setStage(null);
-    setOutcome(result);
-    if (result.status === "applied") onApplied();
+    try {
+      const result = await applySettingsChange(client, changes, { onStage: setStage, enforcement });
+      setOutcome(result);
+      if (result.status === "applied") {
+        toast("Settings saved.");
+        bump();
+      }
+    } catch (e) {
+      setOutcome({ status: "failed", message: explain(e) });
+    } finally {
+      setStage(null);
+    }
   };
 
-  return (
-    <div>
-      {GROUPS.map((g) => (
-        <div key={g.title} style={{ marginBottom: 16 }}>
-          <h3 style={{ margin: "0 0 6px" }}>{g.title}</h3>
-          <div className="rows">
-            {g.ids.map((id) => {
-              const s = SETTINGS.find((x) => x.id === id);
-              if (s === undefined) return null;
-              return <Control key={id} setting={s} value={draft[id] ?? null} was={current[id] ?? null} disabled={stage !== null} onChange={(v) => setDraft((d) => ({ ...d, [id]: v }))} />;
-            })}
-          </div>
-        </div>
-      ))}
-
-      <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-        <button className="btn primary" disabled={pending === 0 || check !== null || stage !== null} onClick={() => void save()}>
-          {pending === 0 ? "No changes" : `Save ${pending} change${pending === 1 ? "" : "s"}`}
-        </button>
-        {pending > 0 && stage === null && (
-          <button className="btn" onClick={() => setDraft({ ...current })}>Undo</button>
-        )}
-        {stage !== null && <span className="row-meta">{STAGE_TEXT[stage]}</span>}
-        {check !== null && stage === null && <span className="row-meta">{check}</span>}
-      </div>
-      <Outcome outcome={outcome} />
-    </div>
-  );
-}
-
-function Control({ setting: s, value, was, disabled, onChange }: {
-  setting: Setting; value: SettingValue; was: SettingValue; disabled: boolean; onChange: (v: SettingValue) => void;
-}) {
-  const changed = value !== was;
-  return (
-    <div className="row" style={{ gridTemplateColumns: "1fr auto" }}>
+  const row = (id: string) => {
+    const s = by(id);
+    if (s === undefined) return null;
+    const v = draft[id] ?? null;
+    const was = current[id] ?? null;
+    const changed = v !== was && was !== null;
+    const label = (
       <div>
-        <div className="row-title">{s.label}{changed && was !== null ? <span className="row-meta"> was {describeValue(s, was)}</span> : null}</div>
-        <div className="row-meta">{s.help}</div>
-      </div>
-      {s.kind === "boolean" ? (
-        <label className="row-meta">
-          <input type="checkbox" aria-label={s.label} disabled={disabled} checked={value === true} onChange={(e) => onChange(e.target.checked)} /> {value === true ? "on" : "off"}
+        <label htmlFor={`s-${id}`}>
+          <b>{s.label}</b>
         </label>
-      ) : (
-        <span>
+        <p className="muted small">
+          {s.help}
+          {changed && <> Was {describeValue(s, was)}.</>}
+        </p>
+      </div>
+    );
+    if (s.kind === "boolean") {
+      return (
+        <div className="setting" key={id}>
+          {label}
+          <span className="switch">
+            <input id={`s-${id}`} type="checkbox" role="switch" checked={v === true} disabled={busy} onChange={(e) => set(id, e.target.checked)} />
+            <span />
+          </span>
+        </div>
+      );
+    }
+    if (s.kind === "cron_hour") {
+      return (
+        <div className="setting" key={id}>
+          {label}
+          <select id={`s-${id}`} className="field narrow" value={v === null ? "" : String(v)} disabled={busy} onChange={(e) => set(id, e.target.value === "" ? null : Number(e.target.value))}>
+            {v === null && <option value="">Not scheduled</option>}
+            {Array.from({ length: 24 }, (_, h) => (
+              <option key={h} value={h}>
+                {hourLocal(h)} ({h}:00 UTC)
+              </option>
+            ))}
+          </select>
+        </div>
+      );
+    }
+    return (
+      <div className="setting" key={id}>
+        {label}
+        <span className="unit-in">
+          {s.unit === "usd" && <span>$</span>}
           <input
+            id={`s-${id}`}
+            className="field"
             type="number"
-            aria-label={s.label}
-            disabled={disabled}
-            value={value === null ? "" : String(value)}
+            value={v === null ? "" : String(v)}
             min={s.min}
             max={s.max}
             step={s.kind === "number" ? "any" : 1}
-            style={{ width: 88 }}
-            onChange={(e) => onChange(e.target.value === "" ? null : Number(e.target.value))}
-          />{" "}
-          <span className="row-meta">{s.unit === "usd" ? "USD" : s.unit === "percent" ? "%" : s.unit === "utc_hour" ? "UTC hour" : ""}</span>
+            disabled={busy}
+            onChange={(e) => set(id, e.target.value === "" ? null : Number(e.target.value))}
+          />
+          {s.unit === "percent" && <span>%</span>}
         </span>
+      </div>
+    );
+  };
+
+  return (
+    <form
+      className="settings"
+      onSubmit={(e) => {
+        e.preventDefault();
+        void save();
+      }}
+    >
+      {ORDER.filter((id) => !SHARE_IDS.includes(id)).slice(0, 1).map(row)}
+      <div className="setting">
+        <div>
+          <b>How the budget is shared</b>
+          <p className="muted small">
+            What each kind of work may use.{" "}
+            {shareTotal === 100 ? "Adds up to 100%." : <span className="warn">Adds up to {shareTotal}%; it has to be 100%.</span>}
+          </p>
+        </div>
+        <div className="shares">
+          {SHARE_IDS.map((id) => {
+            const s = by(id);
+            if (s === undefined) return null;
+            return (
+              <label key={id}>
+                {s.label.replace(/^Share for\s*/i, "").replace(/ share$/i, "")}
+                <span className="unit-in">
+                  <input className="field" type="number" min={0} max={100} value={draft[id] === null || draft[id] === undefined ? "" : String(draft[id])} disabled={busy} onChange={(e) => set(id, e.target.value === "" ? null : Number(e.target.value))} />
+                  <span>%</span>
+                </span>
+              </label>
+            );
+          })}
+        </div>
+      </div>
+      {ORDER.filter((id) => !SHARE_IDS.includes(id)).slice(1).map(row)}
+      <div className="acts">
+        <button className="btn go" type="submit" disabled={pending === 0 || problem !== null || busy}>
+          {pending === 0 ? "No changes" : `Save ${pending} ${pending === 1 ? "change" : "changes"}`}
+        </button>
+        {pending > 0 && !busy && (
+          <button className="btn quiet" type="button" onClick={() => setDraft({ ...current })}>
+            Undo
+          </button>
+        )}
+        <span className="muted small" role="status">
+          {busy
+            ? STAGE_TEXT[stage]
+            : problem !== null
+              ? problem
+              : demo
+                ? "In the demo, saving is refused like every change."
+                : "Saving opens a pull request that changes the factory's settings and merges it once the policy check passes, usually within a minute."}
+        </span>
+      </div>
+      {outcome !== null && (
+        <p className={outcome.status === "applied" || outcome.status === "unchanged" ? "note" : "note stop"} role="status">
+          {outcome.status === "applied" && (
+            <>
+              Saved: {outcome.summary.join("; ")}. <Out href={outcome.url}>See the change</Out>
+            </>
+          )}
+          {outcome.status === "open" && (
+            <>
+              {outcome.reason} <Out href={outcome.url}>Pull request #{outcome.pr}</Out>
+            </>
+          )}
+          {outcome.status === "unchanged" && "Nothing to change."}
+          {outcome.status === "refused" && outcome.problems.map((p) => p.message).join(" ")}
+          {outcome.status === "failed" && outcome.message}
+        </p>
       )}
-    </div>
+    </form>
   );
 }
 
-function Outcome({ outcome }: { outcome: SettingsOutcome | null }) {
-  if (outcome === null) return null;
-  const line = (() => {
-    switch (outcome.status) {
-      case "applied": return <>Saved: {outcome.summary.join("; ")}. <a href={outcome.url}>See the change</a>.</>;
-      case "open": return <>{outcome.reason} <a href={outcome.url}>Pull request #{outcome.pr}</a>.</>;
-      case "unchanged": return <>Nothing to change.</>;
-      case "refused": return <>{outcome.problems.map((p) => p.message).join(" ")}</>;
-      case "failed": return <>{outcome.message}</>;
-    }
-  })();
-  return <div className="note quiet" style={{ marginTop: 8 }} role="status">{line}</div>;
-}
-
-/** Everyone with write access: the people the factory acts for. Changed in GitHub's own settings, not here. */
-export function WhoCanStart({ repo, writers }: { repo: string; writers: readonly { login: string; role: string }[] | null }) {
+/** A focus the factory holds for a while. Added and removed through intake, so it is recorded like everything else. */
+export function Goals({ file }: { file: StandingGoalsFile | null }) {
+  const { client, act } = useApp();
+  const [text, setText] = useState("");
+  const [lane, setLane] = useState("");
+  const goals = liveGoals(file);
   return (
-    <div>
-      {writers === null ? (
-        <div className="row-meta">This token cannot list who has access. GitHub's access page shows it.</div>
-      ) : (
-        <div className="rows">
-          {writers.map((w) => (
-            <div className="row" key={w.login} style={{ gridTemplateColumns: "1fr auto" }}>
-              <span className="row-title">{w.login}</span>
-              <span className="row-meta">{w.role}</span>
-            </div>
+    <>
+      <ul className="goals">
+        {goals.length === 0 && <li className="muted">No goals. The factory works on requests in the order they come.</li>}
+        {goals.map((g) => (
+          <li key={g.id}>
+            <span>
+              <b>{g.text}</b>
+              <small>
+                {g.lane === null ? "Any kind of work" : pipeName(g.lane)}, set by {g.by} {day(g.at)}
+                {g.until !== null ? `, until ${day(g.until)}` : ""}
+              </small>
+            </span>
+            <button className="btn small" type="button" onClick={() => void act(() => client.removeStandingGoal(g.id), "Removing the goal. It goes once the factory has recorded it.")}>
+              Remove
+            </button>
+          </li>
+        ))}
+      </ul>
+      <form
+        className="goal-form"
+        onSubmit={(e) => {
+          e.preventDefault();
+          const words = text.trim();
+          if (words === "") return;
+          void act(() => client.addStandingGoal(words, lane === "" ? null : lane), "Goal sent. It shows here once the factory has recorded it.").then((ok) => ok && setText(""));
+        }}
+      >
+        <input className="field" value={text} maxLength={200} placeholder="For example: harden sign-in this month" aria-label="New goal" onChange={(e) => setText(e.target.value)} />
+        <select className="field narrow" value={lane} aria-label="For which kind of work" onChange={(e) => setLane(e.target.value)}>
+          {GOAL_LANES.map((l) => (
+            <option key={l.value} value={l.value}>
+              {l.label.charAt(0).toUpperCase() + l.label.slice(1)}
+            </option>
           ))}
-        </div>
-      )}
-      <div className="row-meta" style={{ marginTop: 8 }}>
-        Anyone else&rsquo;s issue waits for an accept on Home. To add or remove a person, use{" "}
-        <a href={`https://github.com/${repo}/settings/access`}>the repository&rsquo;s access page on GitHub</a>.
-      </div>
-    </div>
+        </select>
+        <button className="btn" type="submit" disabled={text.trim() === ""}>
+          Add goal
+        </button>
+      </form>
+      <p className="muted small">You can also write /focus followed by a goal in any issue comment.</p>
+    </>
   );
 }
 
 /** For a change there is no control for yet. The words go to the factory as a request; nobody is pointed at a file. */
-export function AskFactory({ client }: { client: GitHubClient }) {
+export function AskFactory() {
+  const { client, act } = useApp();
   const [text, setText] = useState("");
-  const [state, setState] = useState<"idle" | "sending" | "failed" | { url: string }>("idle");
-  const send = async (): Promise<void> => {
-    const words = text.trim();
-    if (words === "") return;
-    setState("sending");
-    try {
-      const first = words.split("\n")[0]!.slice(0, 70);
-      const issue = await client.createIssue(`[Settings] ${first}`, `### What should change?\n\n${words}`, ["factory:ask"]);
-      setState({ url: issue.html_url });
-      setText("");
-    } catch {
-      setState("failed");
-    }
-  };
   return (
-    <div>
-      <textarea
-        aria-label="What should change"
-        rows={3}
-        value={text}
-        maxLength={2000}
-        placeholder="e.g. use a cheaper model for triage"
-        style={{ width: "100%" }}
-        onChange={(e) => setText(e.target.value)}
-      />
-      <div style={{ display: "flex", gap: 12, alignItems: "center", marginTop: 8 }}>
-        <button className="btn primary" disabled={text.trim() === "" || state === "sending"} onClick={() => void send()}>Ask the factory</button>
-        {state === "failed" && <span className="row-meta">Could not send that. Try again.</span>}
-        {typeof state === "object" && <span className="row-meta">Sent. <a href={state.url}>Follow it on the issue</a>.</span>}
+    <form
+      className="ask-form"
+      onSubmit={(e) => {
+        e.preventDefault();
+        const words = text.trim();
+        if (words === "") return;
+        const first = words.split("\n")[0]!.slice(0, 70);
+        void act(() => client.createIssue(`[Settings] ${first}`, `### What should change?\n\n${words}`, ["factory:ask"]), "Sent. The factory answers on the issue.").then((ok) => ok && setText(""));
+      }}
+    >
+      <textarea className="field" rows={3} value={text} maxLength={2000} aria-label="What should change" placeholder="For example: use a cheaper model for triage" onChange={(e) => setText(e.target.value)} />
+      <div className="acts">
+        <button className="btn" type="submit" disabled={text.trim() === ""}>
+          Ask the factory
+        </button>
       </div>
-    </div>
+    </form>
   );
 }

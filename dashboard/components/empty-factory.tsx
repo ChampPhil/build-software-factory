@@ -1,4 +1,3 @@
-import { Note } from "@/components/primitives";
 
 const README = "https://github.com/ChampPhil/build-software-factory#readme";
 
@@ -15,15 +14,18 @@ export function EmptyFactoryNote({ installed }: { installed: boolean | null }) {
   if (installed === null) return null;
   if (installed) {
     return (
-      <Note>
+      <div className="callout">
+        <p>
         The factory is set up here and has not run yet. It starts when an issue is filed, when a
         review comment lands on one of its pull requests, or on the nightly cleanup. This page fills
         in from the first run.
-      </Note>
+      </p>
+      </div>
     );
   }
   return (
-    <Note>
+    <div className="callout">
+      <p>
       There is no factory on this repository yet. Setup is done by Claude Code, from your own
       machine: give it the setup skill and ask it to set up the software factory on this repository.
       The steps are in the{" "}
@@ -31,6 +33,7 @@ export function EmptyFactoryNote({ installed }: { installed: boolean | null }) {
         project README
       </a>
       . This page fills in once setup has run.
-    </Note>
+    </p>
+    </div>
   );
 }
