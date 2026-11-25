@@ -64,6 +64,19 @@
     "closed_at": {
       "type": "string",
       "format": "date-time"
+    },
+    "holder": {
+      "type": "string",
+      "description": "The run holding this conversation open. With heartbeat_at it answers the one question intake has to get right: is somebody already listening? Absent means nobody is."
+    },
+    "heartbeat_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the holder last said it was still waiting, refreshed on every poll. A fresh one means a job will pick the next comment up itself, so intake must not start a second conversation and ask the person the same thing twice. A stale one means that job is gone."
+    },
+    "last_comment_id": {
+      "type": "integer",
+      "description": "The last issue comment this conversation has accounted for, so a holder knows what is new and a restarted one does not answer the same thing twice."
     }
   }
 }

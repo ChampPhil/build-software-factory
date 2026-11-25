@@ -159,6 +159,9 @@
         "type": "object",
         "properties": [
           "closed_at",
+          "heartbeat_at",
+          "holder",
+          "last_comment_id",
           "open",
           "schema",
           "turns",
@@ -220,6 +223,15 @@
       },
       "/properties/closed_at": {
         "type": "string"
+      },
+      "/properties/holder": {
+        "type": "string"
+      },
+      "/properties/heartbeat_at": {
+        "type": "string"
+      },
+      "/properties/last_comment_id": {
+        "type": "integer"
       }
     },
     "candidates.json": {

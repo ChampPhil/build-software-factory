@@ -185,6 +185,15 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
       Take the factory out of operation. Keeps everything it built.
   bsf brainstorm WORK_ITEM [--out PATH]
       The conversation held with the author so far, for a role to read.
+  bsf brainstorm say WORK_ITEM --issue N --text TEXT [--understood TEXT]
+      Ask the author something: one comment on the issue, one turn in the log.
+  bsf brainstorm wait WORK_ITEM --issue N [--idle SECONDS] [--poll SECONDS]
+      Block until the author answers, then print what they said. Exits 0 with
+      "quiet" on the first line when they have said nothing for --idle.
+      Conditional polling, so watching costs no rate limit while nothing
+      happens.
+  bsf brainstorm close WORK_ITEM --understood TEXT
+      End the conversation. The log stays; it is what the spec stage reads.
       After a push to main: did anything reach main without passing the gates,
       and is every compiled role workflow current with its source?
 
@@ -501,7 +510,7 @@ async function main(argv: readonly string[]): Promise<number> {
     case "uninstall":
       return uninstallCommand(args);
     case "brainstorm":
-      return brainstormCommand(args);
+      return brainstormCommand(second, command.slice(2), args);
 
     case "consistency":
       return consistencyCommand(args);
@@ -1369,10 +1378,25 @@ async function runCommand(second: string | undefined, args: Args, third?: string
     // `bsf run status WORK_ITEM`: proceed=true while the item is still the run's.
     if (third === undefined) die("usage: bsf run status WORK_ITEM");
     const { itemStatus } = await import("./commands/run-lifecycle.js");
-    const status = await itemStatus(new GitHub({ repo: requireRepo() }), third);
+    const gh = new GitHub({ repo: requireRepo() });
+    const status = await itemStatus(gh, third);
     process.stdout.write(`${third} is ${status}\n`);
     setOutput("status", status);
     setOutput("proceed", String(status === "running"));
+
+    // A request triage could not pin down is not a dead end any more: the run
+    // goes on to a conversation. Two things have to be true — triage asked for
+    // information, and nobody is already talking to them, because a second
+    // conversation would ask the same question twice.
+    const { readBrainstorm, heldLive } = await import("./commands/brainstorm.js");
+    const convo = await readBrainstorm(gh, third).catch(() => null);
+    const live = heldLive(convo, new Date());
+    const wants = status === "needs_info" && !live;
+    setOutput("wants_conversation", String(wants));
+    // Set when a conversation has already run and settled, which is what lets
+    // the spec step proceed from an item triage had marked needs_info.
+    setOutput("understood", String(convo?.closed_at !== undefined && convo.understood !== null));
+    if (live) process.stdout.write(`a conversation is already open on ${third}; not starting another\n`);
     return 0;
   }
 
@@ -2049,9 +2073,15 @@ function scanAssetHostsCommand(args: Args): number {
  * first instead of starting again; spec reads it because what the person said
  * when asked directly beats anything inferred from the issue text.
  */
-async function brainstormCommand(args: Args): Promise<number> {
-  const id = typeof args["_"] === "string" ? args["_"] : (args["_"] as string[] | undefined)?.[0];
-  if (id === undefined) die("usage: bsf brainstorm WORK_ITEM [--out PATH]");
+async function brainstormCommand(second: string | undefined, rest: readonly string[], args: Args): Promise<number> {
+  // `bsf brainstorm say|wait|close WORK_ITEM ...` holds the conversation;
+  // `bsf brainstorm WORK_ITEM` reads it. The verbs are checked first, so a
+  // work item is never mistaken for one.
+  if (second === "say" || second === "wait" || second === "close") {
+    return brainstormTurnCommand(second, rest[0], args);
+  }
+  const id = second;
+  if (id === undefined) die("usage: bsf brainstorm WORK_ITEM [--out PATH] | bsf brainstorm say|wait|close WORK_ITEM ...");
   const text = renderBrainstorm(await readBrainstorm(new GitHub({ repo: requireRepo() }), id));
   const out = args["out"];
   if (typeof out === "string") {
@@ -2060,6 +2090,102 @@ async function brainstormCommand(args: Args): Promise<number> {
   } else {
     process.stdout.write(`${text}\n`);
   }
+  return 0;
+}
+
+/**
+ * The commands a held conversation runs between questions.
+ *
+ * The agent asks with `say`, blocks on `wait`, and ends with `close`. Keeping
+ * the loop in the agent's own session is the point: the conversation is its
+ * context, so a fourth question knows what the first three settled without
+ * anything being re-read or re-primed.
+ */
+async function brainstormTurnCommand(sub: "say" | "wait" | "close", workItem: string | undefined, args: Args): Promise<number> {
+  if (workItem === undefined || workItem === "") die(`usage: bsf brainstorm ${sub} WORK_ITEM ...`);
+  const gh = new GitHub({ repo: requireRepo() });
+  const bs = await import("./commands/brainstorm.js");
+
+  if (sub === "close") {
+    const understood = typeof args["understood"] === "string" ? args["understood"] : "";
+    if (understood === "") die("usage: bsf brainstorm close WORK_ITEM --understood TEXT");
+    await bs.closeBrainstorm(gh, workItem, understood, nowIso());
+    process.stdout.write("the conversation is closed; the spec stage reads the log from here\n");
+    return 0;
+  }
+
+  const issue = Number(args["issue"]);
+  if (!Number.isInteger(issue) || issue <= 0) die(`usage: bsf brainstorm ${sub} WORK_ITEM --issue N ...`);
+
+  if (sub === "say") {
+    const text = typeof args["text"] === "string" ? args["text"].trim() : "";
+    if (text === "") die("usage: bsf brainstorm say WORK_ITEM --issue N --text TEXT");
+    const r = await bs.say(gh, {
+      workItem,
+      issue,
+      text,
+      now: nowIso(),
+      ...(typeof args["understood"] === "string" ? { understood: args["understood"] } : {}),
+    });
+    process.stdout.write(`asked on #${issue} (comment ${r.commentId})\n`);
+    return 0;
+  }
+
+  // The author of the request is always trusted to answer it; anyone else has
+  // to be someone the repo trusts. A conversation that decides what gets built
+  // is not open to passers-by.
+  const policy = (await policyOrNull(process.cwd())).policy;
+  const { isTrustedActor } = await import("./commands/policy.js");
+  const author = typeof args["author"] === "string" ? args["author"] : "";
+  const trusted = (c: {
+    readonly body?: string | undefined;
+    readonly user?: { readonly login?: string | undefined } | undefined;
+    readonly author_association?: string | undefined;
+  }): boolean => {
+    if (bs.wroteByFactory(c)) return false;
+    const login = c.user?.login ?? "";
+    if (login !== "" && login === author) return true;
+    if (policy === null) return false;
+    return isTrustedActor(policy, login, (c.author_association ?? "NONE") as Parameters<typeof isTrustedActor>[2]);
+  };
+
+  const idleMs = (Number(args["idle"]) > 0 ? Number(args["idle"]) : 300) * 1000;
+  const pollMs = (Number(args["poll"]) > 0 ? Number(args["poll"]) : 3) * 1000;
+  const holder = process.env["GITHUB_RUN_ID"] ?? "local";
+  const outcome = await bs.waitForAnswer(gh, {
+    issue,
+    idleMs,
+    pollMs,
+    trusted,
+    after: (await bs.readBrainstorm(gh, workItem))?.last_comment_id ?? 0,
+    now: () => new Date(),
+    sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+    onAnswer: async (c) => {
+      await bs.mark(gh, workItem, { holder, lastCommentId: c.id, now: nowIso() });
+      await bs.appendTurn(gh, workItem, {
+        at: c.created_at ?? nowIso(),
+        who: "person",
+        text: (c.body ?? "").trim(),
+      });
+    },
+    onHeartbeat: async () => {
+      await bs.mark(gh, workItem, { holder, now: nowIso() });
+    },
+  });
+
+  if (outcome.kind === "answer") {
+    process.stdout.write(`answer from ${outcome.from}:\n${outcome.text}\n`);
+    return 0;
+  }
+  if (outcome.kind === "closed") {
+    process.stdout.write("closed\nThe conversation was closed while you were waiting.\n");
+    return 0;
+  }
+  // Exits 0: nobody saying anything is an ordinary way for a conversation to
+  // pause, not a failure, and a non-zero here would fail the whole run.
+  process.stdout.write(
+    `quiet\nNothing said for ${Math.round(outcome.waitedMs / 1000)}s. Stop here; their next comment starts a new conversation.\n`,
+  );
   return 0;
 }
 

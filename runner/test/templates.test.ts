@@ -27,7 +27,16 @@ const ROOT = repoRoot();
 const TEMPLATES = join(ROOT, "templates");
 const WORKFLOWS = join(TEMPLATES, "workflows");
 
-const ROLES = ["triage", "spec", "builder", "verifier", "gardener", "hardener", "scorer"] as const;
+/** Every role with a workflow of its own. */
+const ROLES = ["triage", "brainstorm", "spec", "builder", "verifier", "gardener", "hardener", "scorer"] as const;
+
+/**
+ * The roles a factory configures: a model in factory.yaml, a role file, a
+ * rubric. The conversation is not one of them — it shares triage's model and
+ * writes nothing for a rubric to judge, so requiring an entry for it would
+ * make every factory that predates it fail its own doctor.
+ */
+const CONFIGURED_ROLES = ROLES.filter((r) => r !== "brainstorm");
 
 describe("default factory.yaml", () => {
   const doc = parseYaml(readFileSync(join(TEMPLATES, "definition/factory.yaml"), "utf8")) as unknown;
@@ -38,9 +47,9 @@ describe("default factory.yaml", () => {
     expect(res.ok).toBe(true);
   });
 
-  it("names a model for every one of the seven roles", () => {
+  it("names a model for every role a factory configures", () => {
     const models = (doc as { models: Record<string, string> }).models;
-    for (const r of ROLES) expect(models[r], `no model for ${r}`).toBeTruthy();
+    for (const r of CONFIGURED_ROLES) expect(models[r], `no model for ${r}`).toBeTruthy();
   });
 
   it("starts with every auto-merge toggle off", () => {
@@ -380,7 +389,7 @@ describe("definition templates", () => {
 
   it("there is one role file per role, and each validates", () => {
     const files = readdirSync(join(DEF, "roles")).filter((f) => f.endsWith(".yaml")).sort();
-    expect(files).toEqual([...ROLES].sort().map((r) => `${r}.yaml`));
+    expect(files).toEqual([...CONFIGURED_ROLES].sort().map((r) => `${r}.yaml`));
     for (const f of files) {
       const doc = parseYaml(readFileSync(join(DEF, "roles", f), "utf8")) as unknown;
       const res = validate("role", doc);

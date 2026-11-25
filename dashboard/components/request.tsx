@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useBrainstorm } from "@/lib/data";
+import { useBrainstorm, conversationLive } from "@/lib/data";
 import type { GitHubClient } from "@/lib/github";
 import { buildRequest, REQUEST_KINDS, type FirstRequest, type RequestKind } from "@/lib/request";
 import { waitingFor, type Waiting } from "@/lib/questions";
@@ -193,6 +193,11 @@ function Thread({ client, workItem }: { client: GitHubClient; workItem: string }
   const [all, setAll] = useState(false);
   if (convo.state !== "ready" || convo.data === null || convo.data.turns.length === 0) return null;
 
+  // Live means a job is sitting on `bsf brainstorm wait` and will answer in
+  // seconds. Not live means a reply starts a run, which takes minutes to wake
+  // up. Saying which is the difference between a person waiting twenty
+  // seconds and a person deciding the thing is broken and closing the tab.
+  const live = conversationLive(convo.data);
   const turns = convo.data.turns;
   const shown = all ? turns : turns.slice(-2);
   return (
@@ -212,6 +217,18 @@ function Thread({ client, workItem }: { client: GitHubClient; workItem: string }
         <div className="turn understood">
           <span className="turn-who">What it has understood so far</span>
           <p>{convo.data.understood}</p>
+        </div>
+      )}
+      {convo.data.closed_at === undefined && (
+        <div className={live ? "turn listening" : "turn not-listening"}>
+          <span className="turn-who">
+            {live ? "Listening now" : "Not listening right now"}
+          </span>
+          <p>
+            {live
+              ? "Answer and it replies in a few seconds."
+              : "Answer whenever you like. It takes a couple of minutes to pick the conversation back up."}
+          </p>
         </div>
       )}
     </div>

@@ -36,6 +36,14 @@ export interface DoctorReport {
   readonly checked: readonly string[];
 }
 
+/**
+ * The roles a factory configures: a model, a role file, a rubric.
+ *
+ * The conversation is not one of them. It shares triage's model and writes
+ * nothing for a rubric to judge, so a factory installed before it existed is
+ * not called broken for having no entry. Its compiled workflow is still
+ * checked — that check walks the workflows directory rather than this list.
+ */
 const ROLES = ["triage", "spec", "builder", "verifier", "gardener", "hardener", "scorer"] as const;
 type RoleName = (typeof ROLES)[number];
 const CONTEXT = ["feature-map.md", "runbook.md", "fundamentals.md", "history.md"] as const;

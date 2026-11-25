@@ -291,6 +291,53 @@ describe("events on an issue that already has an open item", () => {
     expect(d).toMatchObject({ outcome: "answers_open_item", openItem: "wi_open" });
   });
 
+  /**
+   * The one way this goes visibly wrong for a person. A held job is blocked on
+   * `bsf brainstorm wait` and picks their comment up within seconds, in the
+   * session that asked the question. Requeuing the item as well starts a
+   * second conversation that asks them the same thing again.
+   */
+  it("leaves a comment alone when a conversation is already being held open", () => {
+    const held = ctx({
+      openItems: [{ work_item: "wi_open", status: "needs_info", pipeline: "product_work", source_ref: "#142" }],
+      liveConversations: ["wi_open"],
+    });
+    const d = runIntake([ev({ kind: "issue_comment", body: "it is the CSV export" })], held).decisions[0];
+    expect(d).toMatchObject({ outcome: "conversation_in_progress", openItem: "wi_open" });
+    // Recorded, and deliberately not dispatched: the held job answers it.
+    expect(d?.workItem).toBeNull();
+  });
+
+  it("answers it as before when the conversation is held open on a different item", () => {
+    const held = ctx({
+      openItems: [{ work_item: "wi_open", status: "needs_info", pipeline: "product_work", source_ref: "#142" }],
+      liveConversations: ["wi_somebody_else"],
+    });
+    const d = runIntake([ev({ kind: "issue_comment", body: "the CSV export" })], held).decisions[0];
+    expect(d?.outcome).toBe("answers_open_item");
+  });
+
+  it("answers it as before when nothing is held open", () => {
+    // The old behaviour, which is still the common one: nobody is listening,
+    // so the item goes back in the queue and a run picks it up.
+    const d = runIntake([ev({ kind: "issue_comment", body: "the CSV export" })], open("needs_info")).decisions[0];
+    expect(d?.outcome).toBe("answers_open_item");
+  });
+
+  it("does not let a held conversation swallow an untrusted comment either way", () => {
+    const held = ctx({
+      openItems: [{ work_item: "wi_open", status: "needs_info", pipeline: "product_work", source_ref: "#142" }],
+      liveConversations: ["wi_open"],
+    });
+    const d = runIntake(
+      [ev({ kind: "issue_comment", actor: "stranger", actor_association: "NONE" })],
+      held,
+    ).decisions[0];
+    // Still just context: a conversation that decides what gets built is not
+    // open to passers-by, held or not.
+    expect(d?.outcome).toBe("context_for_open_item");
+  });
+
   it("an untrusted reply does not re-queue it", () => {
     const d = runIntake([ev({ kind: "issue_comment", actor: "stranger", actor_association: "NONE" })], open("needs_info")).decisions[0];
     expect(d?.outcome).toBe("context_for_open_item");

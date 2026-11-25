@@ -276,6 +276,34 @@ export interface BrainstormFile {
   readonly turns: readonly { readonly at: string; readonly who: "factory" | "person"; readonly text: string }[];
   readonly understood: string | null;
   readonly open: readonly string[];
+  readonly closed_at?: string;
+  /** The run holding the conversation open, and when it last said so. */
+  readonly holder?: string;
+  readonly heartbeat_at?: string;
+}
+
+/**
+ * How long a heartbeat is worth trusting. The holder refreshes it on every
+ * poll, so a gap this long means that job is gone rather than busy.
+ * HEARTBEAT_STALE_MS in the runner, kept the same here on purpose.
+ */
+const HEARTBEAT_STALE_MS = 90_000;
+
+/**
+ * Is a job listening right now?
+ *
+ * The difference the person feels. Live, their reply is answered in seconds by
+ * the session that asked the question. Not live, their comment starts a run,
+ * which takes minutes to wake up. Those are two different experiences and the
+ * interface has no business showing them the same way.
+ */
+export function conversationLive(b: BrainstormFile | null, now: Date = new Date()): boolean {
+  if (b === null || b.closed_at !== undefined) return false;
+  if (b.holder === undefined || b.heartbeat_at === undefined) return false;
+  const beat = Date.parse(b.heartbeat_at);
+  if (Number.isNaN(beat)) return false;
+  // A heartbeat from the future is a clock disagreement, not liveness.
+  return beat <= now.getTime() + 5_000 && now.getTime() - beat < HEARTBEAT_STALE_MS;
 }
 
 export function useBrainstorm(client: GitHubClient | null, workItem: string | null, version = 0): Loaded<BrainstormFile | null> {
@@ -283,5 +311,8 @@ export function useBrainstorm(client: GitHubClient | null, workItem: string | nu
     client === null || workItem === null
       ? null
       : () => client.fileFromRef<BrainstormFile>(`brainstorms/${workItem}.json`);
-  return usePolled(load, 30_000, [client?.repo, workItem, version]);
+  // Faster than the other polls: while a conversation is live the person is
+  // sitting there waiting for a reply, and thirty seconds of nothing reads as
+  // broken even when the answer arrived in five.
+  return usePolled(load, 5_000, [client?.repo, workItem, version]);
 }
