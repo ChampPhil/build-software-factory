@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeAll } from "vitest";
-import { mkdtempSync, mkdirSync, existsSync, statSync, copyFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, existsSync, statSync, copyFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
-import { hasTool, probe, processRecordings, findRecordings } from "../src/lib/recordings.js";
+import { hasTool, probe, processRecordings, findRecordings, FILE_CAP_BYTES, RECORDING_LIMITS } from "../src/lib/recordings.js";
 
 const haveFfmpeg = hasTool("ffmpeg") && hasTool("ffprobe");
 const scratch = mkdtempSync(join(tmpdir(), "bsf-rec-"));
@@ -59,7 +59,10 @@ describe("recordings", () => {
       copyFileSync(sample, join(dir, "v.mp4"));
       const r = processRecordings(dir, { rawDir: raw, limits: { clipBytes: 200 } });
       expect(r.items).toEqual([]);
-      expect(r.problems.join(" ")).toMatch(/v\.mp4/);
+      // A recording that would not fit is diminished proof, not a report
+      // claiming something that is not there, so it does not fail the PR.
+      expect(r.degraded.join(" ")).toMatch(/v\.mp4/);
+      expect(r.problems).toEqual([]);
     });
 
     it("speeds up, rather than cuts, a recording longer than the preview", () => {
@@ -79,9 +82,76 @@ describe("recordings", () => {
     process.env["PATH"] = "/nonexistent";
     try {
       const r = processRecordings(dir, { rawDir: raw });
-      expect(r.problems.join(" ").toLowerCase()).toContain("ffmpeg");
+      // A missing package is the factory's own plumbing, not the report
+      // claiming what is not there. It is said, and it does not fail the PR.
+      expect(r.degraded.join(" ").toLowerCase()).toContain("ffmpeg");
+      expect(r.problems).toEqual([]);
     } finally {
       process.env["PATH"] = saved;
     }
+  });
+
+  /**
+   * A PR on CS2_Rob_The_Bobber arrived with a 19.7 MB recording of the feature
+   * working and a check that said "The PR does not show its proof". The
+   * recording was dropped for being over an 8 MB encode target with no ffmpeg
+   * to shrink it, and the one piece of proof that mattered most was gone. Then
+   * a summary line being successfully shortened from 282 to 200 characters was
+   * listed as something missing, under the same heading.
+   */
+  describe("what counts as the report failing", () => {
+    /** A file of a known size; nothing probes it on the no-ffmpeg path. */
+    const sized = (dir: string, name: string, bytes: number): void =>
+      writeFileSync(join(dir, name), Buffer.alloc(bytes, 7));
+
+    const withoutFfmpeg = <T,>(fn: () => T): T => {
+      const saved = process.env["PATH"];
+      process.env["PATH"] = "/nonexistent";
+      try {
+        return fn();
+      } finally {
+        process.env["PATH"] = saved;
+      }
+    };
+
+    it("stores a recording over the encode target but under the hard cap", () => {
+      const { dir, raw } = fresh("overtarget");
+      sized(dir, "v.webm", 2 * 1024 * 1024);
+      // The encode target describes what an encode aims for. Without ffmpeg
+      // there is no encode, and a watchable file is better than none: a 9 MB
+      // recording of the feature working used to be thrown away for being
+      // over a number that only ever described an encode.
+      const r = withoutFfmpeg(() => processRecordings(dir, { rawDir: raw, limits: { clipBytes: 1024 * 1024 } }));
+      expect(r.items).toHaveLength(1);
+      expect(r.problems).toEqual([]);
+      expect(r.degraded.join(" ")).toMatch(/stored as it was written/);
+    });
+
+    it("drops one over the hard cap, because it cannot be stored at all", () => {
+      const { dir, raw } = fresh("overcap");
+      sized(dir, "v.webm", FILE_CAP_BYTES + 1024);
+      const r = withoutFfmpeg(() => processRecordings(dir, { rawDir: raw }));
+      // Still not a failure: the PR says the video would not fit, and
+      // whatever other proof the report carries stands on its own.
+      expect(r.items).toEqual([]);
+      expect(r.problems).toEqual([]);
+      expect(r.degraded.join(" ")).toMatch(/could not be stored/);
+    });
+
+    it("counts the hard cap as one number, not two", () => {
+      // 8 MB in the recordings module and 10 MB hardcoded in pr-report meant a
+      // 9 MB file was dropped by one and then separately complained about by
+      // the other.
+      expect(FILE_CAP_BYTES).toBeGreaterThan(RECORDING_LIMITS.clipBytes);
+    });
+
+    it("still fails a recording that got no frames", () => {
+      // The role said it recorded and it did not. That is the report being
+      // wrong about itself, which is the one thing here that has to fail.
+      const { dir, raw } = fresh("empty");
+      writeFileSync(join(dir, "v.webm"), "");
+      const r = processRecordings(dir, { rawDir: raw });
+      expect(r.problems.join(" ")).toMatch(/never got any frames/);
+    });
   });
 });

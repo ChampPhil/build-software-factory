@@ -2963,6 +2963,7 @@ async function reportCommand(second: string | undefined, args: Args): Promise<nu
     const { publishReport } = await import("./commands/pr-report.js");
     const r = await publishReport({ gh, workItem, pr, now: nowIso() });
     process.stdout.write(r.problems.length === 0 ? `PR #${pr} shows its proof\n` : `PR #${pr} is missing: ${r.problems.join("; ")}\n`);
+    for (const d of r.degraded) process.stdout.write(`  note: ${d}\n`);
     return 0;
   }
   if (second === "setup") {
@@ -2985,17 +2986,20 @@ async function reportCommand(second: string | undefined, args: Args): Promise<nu
     });
     writeFileSync(out, r.body);
     writeFileSync(`${out}.problems.json`, JSON.stringify(r.problems));
+    writeFileSync(`${out}.degraded.json`, JSON.stringify(r.degraded));
     if (r.continued !== null) writeFileSync(`${out}.continued.md`, r.continued);
     process.stdout.write(r.problems.length === 0 ? "rendered the setup PR\n" : `rendered the setup PR; missing: ${r.problems.join("; ")}\n`);
     return 0;
   }
   if (second === "check") {
-    // `bsf report check --pr N --problems FILE`
+    // `bsf report check --pr N --problems FILE [--degraded FILE]`
     const pr = Number(args["pr"]);
     const file = typeof args["problems"] === "string" ? args["problems"] : "";
-    if (!Number.isInteger(pr) || pr <= 0 || file === "") die("usage: bsf report check --pr N --problems FILE");
+    if (!Number.isInteger(pr) || pr <= 0 || file === "") die("usage: bsf report check --pr N --problems FILE [--degraded FILE]");
+    const notesFile = typeof args["degraded"] === "string" ? args["degraded"] : "";
+    const notes = notesFile !== "" && existsSync(notesFile) ? (JSON.parse(readFileSync(notesFile, "utf8")) as string[]) : [];
     const { reportCheck } = await import("./commands/pr-report.js");
-    await reportCheck(gh, pr, JSON.parse(readFileSync(file, "utf8")) as string[]);
+    await reportCheck(gh, pr, JSON.parse(readFileSync(file, "utf8")) as string[], notes);
     return 0;
   }
   die("usage: bsf report store ... | publish ... | setup ... | check ...");

@@ -61,9 +61,34 @@ export interface RecordedVideo {
 
 export interface ProcessedRecordings {
   readonly items: readonly RecordedVideo[];
-  /** Things the PR check should say, such as a recording left out for its size. */
+  /**
+   * The report claims something that is not there: a recording that produced
+   * no frames, or a file named and never written. These fail the PR check.
+   */
   readonly problems: readonly string[];
+  /**
+   * Proof that is present and diminished: a recording with no inline preview,
+   * or one left out because it would not fit. These are said on the PR and
+   * never fail it.
+   *
+   * The two were one list, and any entry in it failed the check. So a PR with
+   * a working video of the feature was rejected with "the PR does not show its
+   * proof" because ffmpeg was absent from the runner and the file could not be
+   * shrunk — the proof was there and better than most, and the factory blocked
+   * it over its own plumbing.
+   */
+  readonly degraded: readonly string[];
 }
+
+/**
+ * The hard limit on any one stored proof file, recordings included.
+ *
+ * `clipBytes` is the target an encode aims for; this is the point past which a
+ * file cannot be stored at all. They were two numbers in two files, 8 MB and
+ * 10 MB, and a 9 MB recording was dropped by the first and then separately
+ * complained about by the second.
+ */
+export const FILE_CAP_BYTES = 10 * 1024 * 1024;
 
 /* -------------------------------------------------------------------- tools */
 
@@ -213,13 +238,14 @@ const slugOf = (rel: string): string =>
 export function processRecordings(dir: string, opts: ProcessOptions = {}): ProcessedRecordings {
   const lim: RecordingLimits = { ...RECORDING_LIMITS, ...opts.limits };
   const sources = findRecordings(dir);
-  if (sources.length === 0) return { items: [], problems: [] };
+  if (sources.length === 0) return { items: [], problems: [], degraded: [] };
 
   const problems: string[] = [];
+  const degraded: string[] = [];
   const items: RecordedVideo[] = [];
   const canEncode = hasTool("ffmpeg") && hasTool("ffprobe");
   if (!canEncode) {
-    problems.push("ffmpeg is not installed on this runner, so recordings are kept as they were written, with no preview");
+    degraded.push("ffmpeg is not installed on this runner, so recordings are kept as they were written, with no preview");
   }
   const rawDir = opts.rawDir ?? join(dirname(dir), "raw-recordings");
   const outDir = join(dir, "recordings");
@@ -230,6 +256,7 @@ export function processRecordings(dir: string, opts: ProcessOptions = {}): Proce
     const abs = join(dir, rel);
     const size = statSync(abs).size;
     if (size === 0) {
+      // Stays a failure: the role recorded nothing and the report says it did.
       problems.push(`${rel} is empty: the recording never got any frames`);
       continue;
     }
@@ -239,12 +266,22 @@ export function processRecordings(dir: string, opts: ProcessOptions = {}): Proce
     used.add(slug);
 
     if (!canEncode) {
-      if (size > lim.clipBytes) {
-        problems.push(`${rel} is ${mb(size)} and cannot be shrunk without ffmpeg; the limit is ${mb(lim.clipBytes)}`);
+      // Keep it whole up to the hard cap rather than the encode target. A 9 MB
+      // recording of the feature working is proof; dropping it for being over
+      // a number that only describes what an encode aims for threw away the
+      // most valuable thing on the PR.
+      if (size > FILE_CAP_BYTES) {
+        degraded.push(
+          `${rel} is ${mb(size)} and could not be stored: over the ${mb(FILE_CAP_BYTES)} a proof file may be, ` +
+            `and ffmpeg is not on this runner to shrink it`,
+        );
         continue;
       }
+      if (size > lim.clipBytes) {
+        degraded.push(`${rel} is ${mb(size)}, over the ${mb(lim.clipBytes)} an encode aims for, and is stored as it was written`);
+      }
       if (total + size > lim.totalBytes) {
-        problems.push(`${rel} was left out: the recordings on one PR may weigh ${mb(lim.totalBytes)} together`);
+        degraded.push(`${rel} was left out: the recordings on one PR may weigh ${mb(lim.totalBytes)} together`);
         continue;
       }
       total += size;
@@ -254,7 +291,7 @@ export function processRecordings(dir: string, opts: ProcessOptions = {}): Proce
 
     const info = probe(abs);
     if (info === null) {
-      problems.push(`${rel} could not be read as a video`);
+      degraded.push(`${rel} could not be read as a video`);
       continue;
     }
 
@@ -262,11 +299,11 @@ export function processRecordings(dir: string, opts: ProcessOptions = {}): Proce
     const mp4 = join(outDir, `${slug}${STORED}.mp4`);
     const bytes = encodeVideo(abs, mp4, lim);
     if (bytes === null) {
-      problems.push(`${rel} stays over ${mb(lim.clipBytes)} even at the lowest quality, so it was left out`);
+      degraded.push(`${rel} stays over ${mb(lim.clipBytes)} even at the lowest quality, so it was left out`);
       continue;
     }
     if (total + bytes > lim.totalBytes) {
-      problems.push(`${rel} was left out: the recordings on one PR may weigh ${mb(lim.totalBytes)} together`);
+      degraded.push(`${rel} was left out: the recordings on one PR may weigh ${mb(lim.totalBytes)} together`);
       continue;
     }
     total += bytes;
@@ -278,7 +315,7 @@ export function processRecordings(dir: string, opts: ProcessOptions = {}): Proce
     } else {
       const still = join(outDir, `${slug}${STORED}.png`);
       if (encodeStill(abs, still, info.seconds)) poster = relative(dir, still);
-      else problems.push(`${rel} has no preview: the GIF and the still both failed`);
+      else degraded.push(`${rel} has no preview: the GIF and the still both failed`);
     }
 
     mkdirSync(rawDir, { recursive: true });
@@ -291,7 +328,7 @@ export function processRecordings(dir: string, opts: ProcessOptions = {}): Proce
       bytes,
     });
   }
-  return { items, problems };
+  return { items, problems, degraded };
 }
 
 /* ---------------------------------------------------------------- formatting */

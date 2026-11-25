@@ -178,3 +178,79 @@ describe("recordings on a PR", () => {
     expect(needsVideo(null)).toBe(false);
   });
 });
+
+/**
+ * A PR on a real repository arrived carrying a 19.7 MB recording of the
+ * feature working, and the check on it said **"The PR does not show its
+ * proof"**. The recording had been dropped for being over an 8 MB encode
+ * target with no ffmpeg on the runner to shrink it, so the one piece of proof
+ * that mattered most was gone. In the same list, under the heading "What is
+ * missing", was this: `summary line 1 was shortened to fit (282 → 200)` — a
+ * thing the tooling had done successfully.
+ *
+ * The check asks one question now: is the proof there? Not whether the tooling
+ * had an easy time of it.
+ */
+describe("whether the proof check passes", async () => {
+  const { reportCheck } = await import("../src/commands/pr-report.js");
+
+  const check = async (problems: readonly string[], degraded: readonly string[] = []) => {
+    let sent: { conclusion: string; title: string; summary: string } | undefined;
+    const gh = {
+      repo: "o/r",
+      pull: async () => ({ head: { sha: "abc" } }),
+      reportCheck: async (c: { conclusion: string; title: string; summary: string }) => { sent = c; },
+    } as never;
+    await reportCheck(gh, 14, problems, degraded);
+    return sent!;
+  };
+
+  it("passes a PR whose proof is all there", async () => {
+    const r = await check([]);
+    expect(r.conclusion).toBe("success");
+    expect(r.title).toBe("The PR shows its proof");
+  });
+
+  it("passes a PR whose video could not be shrunk, and says so", async () => {
+    const r = await check([], [
+      "ffmpeg is not installed on this runner, so recordings are kept as they were written, with no preview",
+    ]);
+    expect(r.conclusion).toBe("success");
+    expect(r.title).toMatch(/shows its proof, with notes/);
+    expect(r.summary).toMatch(/not a reason to hold the PR/i);
+    expect(r.summary).toContain("ffmpeg");
+  });
+
+  it("passes a PR whose summary line was shortened", async () => {
+    // This was the whole failure once: a successful automatic fixup, listed
+    // under "What is missing", rejecting a PR with perfect proof.
+    const r = await check([], ["summary line 1 was shortened to fit (282 → 200)"]);
+    expect(r.conclusion).toBe("success");
+  });
+
+  it("fails a PR that names a file nobody wrote", async () => {
+    // The report being wrong about itself is the one thing that has to fail.
+    const r = await check(["builder names recordings/run.webm, which it did not write"]);
+    expect(r.conclusion).toBe("failure");
+    expect(r.title).toBe("The PR does not show its proof");
+    expect(r.summary).toMatch(/What is missing/);
+  });
+
+  it("fails a PR with no proof at all", async () => {
+    const r = await check(["there is no proof: no screenshot, recording, log or diagram"]);
+    expect(r.conclusion).toBe("failure");
+  });
+
+  it("fails on a real absence even when there are notes too", async () => {
+    const r = await check(["there is no proof: no screenshot, recording, log or diagram"], ["ffmpeg is not installed"]);
+    expect(r.conclusion).toBe("failure");
+    expect(r.summary).toMatch(/What is missing/);
+    // The notes still get said: they may be why the proof is absent.
+    expect(r.summary).toContain("ffmpeg");
+  });
+
+  it("does not call a PR with notes alone 'missing' anything", async () => {
+    const r = await check([], ["v.webm has no preview: the GIF and the still both failed"]);
+    expect(r.summary).not.toMatch(/What is missing/);
+  });
+});
