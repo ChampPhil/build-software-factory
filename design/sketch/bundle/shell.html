@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Factory dashboard sketch</title>
+<style>
+/*
+  VOICE: a quiet viewing frame; the sketches are the content.
+  IDEA: a lightbox with three slides on it.
+  PICTURE: the live sketch itself, filling the screen.
+  COLOUR and TYPE: the Briefing's paper, ink and ultramarine; system sans.
+  LAYOUT: one thin bar of tabs, the sketch below at full height.
+*/
+:root { color-scheme: light dark; --bg: light-dark(#f4f5f2, #111419); --ink: light-dark(#16181b, #eceee9); --ink-2: light-dark(#4b5058, #b4b9c1); --rule: light-dark(#dcdfd9, #2b3038); --you: light-dark(#2340d6, #8fa3ff); --tab: light-dark(#ffffff, #191d23); }
+:root[data-theme=light] { color-scheme: light; } :root[data-theme=dark] { color-scheme: dark; }
+* { box-sizing: border-box; min-width: 0; }
+html, body { height: 100%; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; display: flex; flex-direction: column; overflow: hidden; }
+.bar { display: flex; align-items: center; gap: 16px; padding: 10px 16px; border-bottom: 1px solid var(--rule); flex: none; }
+.bar h1 { font-size: 15px; margin: 0; font-weight: 650; white-space: nowrap; }
+.tabs { display: flex; gap: 4px; overflow-x: auto; }
+.tabs button { flex: none; font: inherit; color: var(--ink-2); background: transparent; border: 1px solid transparent; border-radius: 8px; padding: 8px 12px; min-height: 40px; cursor: pointer; }
+.tabs button:hover { color: var(--ink); background: var(--tab); }
+.tabs button[aria-selected=true] { color: var(--ink); background: var(--tab); border-color: var(--rule); font-weight: 600; }
+.tabs button span { color: var(--you); font-weight: 600; }
+.note { margin-left: auto; color: var(--ink-2); font-size: 13px; text-align: right; }
+button:focus-visible { outline: 2px solid var(--you); outline-offset: 2px; }
+iframe { flex: 1; width: 100%; border: 0; display: block; background: var(--bg); }
+@media (max-width: 760px) { .bar { flex-wrap: wrap; gap: 6px 12px; padding: 8px 10px; } .note, .bar h1, .tabs button span { display: none; } }
+</style>
+</head>
+<body>
+<header class="bar">
+  <h1>Factory dashboard sketch</h1>
+  <div class="tabs" role="tablist" aria-label="Design directions">
+    <button role="tab" id="t-briefing" data-k="briefing" aria-selected="true">A. Briefing <span>recommended</span></button>
+    <button role="tab" id="t-workbench" data-k="workbench" aria-selected="false">B. Workbench</button>
+    <button role="tab" id="t-reel" data-k="reel" aria-selected="false">C. Reel</button>
+  </div>
+  <p class="note">Synthetic data: Ledgerline, an invoicing app, one morning. Use the switcher at the bottom of each sketch to change screens.</p>
+</header>
+<iframe id="view" title="Sketch" role="tabpanel"></iframe>
+<script type="application/json" id="files">__FILES__</script>
+<script>
+{
+  /* Every file of design/sketch, byte for byte from the commit: text as-is, binary as base64.
+     Each direction's page is assembled here, in the browser, by inlining what it links to. */
+  const FILES = JSON.parse(document.getElementById("files").textContent);
+  const DIRS = { briefing: "a-briefing", workbench: "b-workbench", reel: "c-reel" };
+  const resolve = (dir, rel) => {
+    const out = dir.split("/");
+    for (const part of rel.split("/")) { if (part === "..") out.pop(); else if (part !== ".") out.push(part); }
+    return out.join("/");
+  };
+  const text = (path) => { const f = FILES[path]; if (!f || f.text === undefined) throw new Error("Missing " + path); return f.text; };
+  const assemble = (dir) => {
+    const page = text(dir + "/index.html");
+    return page
+      .replace(/<link rel="stylesheet" href="([^"]+)">/g, (_, href) => {
+        const path = resolve(dir, href), base = path.split("/").slice(0, -1).join("/");
+        const css = text(path).replace(/url\(([^)]+\.woff2)\)/g, (m, u) => {
+          const f = FILES[resolve(base, u)];
+          return f ? "url(data:font/woff2;base64," + f.base64 + ")" : m;
+        });
+        return "<style>\n" + css + "\n</style>";
+      })
+      .replace(/<script src="([^"]+)"><\/script>/g, (_, src) => "<script>\n" + text(resolve(dir, src)) + "\n<\/script>")
+      .replace("</head>", "<style>.sketch-chrome .sc-home{display:none}</style>\n</head>");
+  };
+  const DATA = {};
+  for (const [k, dir] of Object.entries(DIRS)) DATA[k] = assemble(dir);
+  const frame = document.getElementById("view");
+  const tabs = [...document.querySelectorAll(".tabs button")];
+  const syncTheme = () => {
+    const t = document.documentElement.dataset.theme;
+    try { const d = frame.contentDocument; if (d && t) d.documentElement.dataset.theme = t; } catch (e) {}
+  };
+  const show = (k) => {
+    if (!DATA[k]) k = "briefing";
+    tabs.forEach((b) => b.setAttribute("aria-selected", String(b.dataset.k === k)));
+    frame.setAttribute("aria-labelledby", "t-" + k);
+    frame.srcdoc = DATA[k];
+    try { if (location.hash.slice(1) !== k) history.replaceState(null, "", "#" + k); } catch (e) {}
+  };
+  frame.addEventListener("load", syncTheme);
+  new MutationObserver(syncTheme).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+  tabs.forEach((b, i) => {
+    b.addEventListener("click", () => show(b.dataset.k));
+    b.addEventListener("keydown", (e) => {
+      if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+      const n = tabs[(i + (e.key === "ArrowRight" ? 1 : tabs.length - 1)) % tabs.length];
+      n.focus(); show(n.dataset.k);
+    });
+  });
+  window.addEventListener("hashchange", () => show(location.hash.slice(1)));
+  show(location.hash.slice(1));
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:,">
+<title>Software Factory dashboard: three directions</title>
+<style>
+@font-face { font-family: "Schibsted"; src: url(fonts/schibsted-grotesk-latin-wght-normal.woff2) format("woff2-variations"); font-weight: 400 900; font-display: swap; }
+@font-face { font-family: "Newsreader"; src: url(fonts/newsreader-latin-opsz-normal.woff2) format("woff2-variations"); font-weight: 200 800; font-display: swap; }
+:root { --paper: #f4f5f2; --sheet: #fff; --ink: #16181b; --ink-2: #4b5058; --ink-3: #666b74; --rule: #dcdfd9; --you: #2340d6; --film: #0f1114; color-scheme: light; }
+@media (prefers-color-scheme: dark) { :root { --paper: #111419; --sheet: #191d23; --ink: #eceee9; --ink-2: #b4b9c1; --ink-3: #8a909a; --rule: #2b3038; --you: #8fa3ff; color-scheme: dark; } }
+* { box-sizing: border-box; }
+html, body { overflow-x: clip; }
+body { margin: 0; background: var(--paper); color: var(--ink); font: 400 1.0625rem/1.6 "Schibsted", system-ui, sans-serif; }
+a { color: inherit; text-underline-offset: .2em; }
+:focus-visible { outline: 2.5px solid var(--you); outline-offset: 3px; border-radius: 4px; }
+main { max-width: 72rem; margin: 0 auto; padding: 4rem 1.5rem 6rem; }
+.lede { max-width: 46rem; }
+.kick { color: var(--ink-3); margin: 0 0 1rem; }
+h1 { font-size: clamp(2.4rem, 5.5vw, 4.2rem); line-height: 1.02; letter-spacing: -0.035em; margin: 0 0 1.25rem; font-weight: 760; text-wrap: balance; }
+.voice { font-family: "Newsreader", Georgia, serif; font-size: 1.35rem; line-height: 1.45; color: var(--ink-2); margin: 0; }
+h2 { font-size: 1.9rem; letter-spacing: -0.025em; margin: 0 0 .75rem; line-height: 1.1; }
+h3 { font-size: 1.15rem; margin: 2rem 0 .5rem; letter-spacing: -0.01em; }
+p { max-width: 44rem; }
+.dir { margin-top: 5rem; padding-top: 2.5rem; border-top: 1px solid var(--rule); }
+.dir.pick { border-top: 3px solid var(--you); }
+.dir .meta { color: var(--ink-3); margin-bottom: .5rem; display: flex; gap: 1rem; flex-wrap: wrap; }
+.dir .meta b { color: var(--you); }
+.open { display: inline-block; margin-top: .5rem; font-weight: 650; background: var(--ink); color: var(--paper); text-decoration: none; padding: .65rem 1.15rem; border-radius: 10px; }
+.open:hover { filter: brightness(1.15); }
+.shots { display: grid; grid-template-columns: minmax(0, 2.2fr) minmax(0, 1fr); gap: 1rem; margin-top: 2rem; align-items: start; }
+.shots.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+figure { margin: 0; }
+figure img { width: 100%; height: auto; display: block; border-radius: 12px; border: 1px solid var(--rule); background: var(--sheet); }
+figure.crop img { aspect-ratio: 1440 / 900; object-fit: cover; object-position: top; }
+figure.tall img { max-height: 46rem; object-fit: cover; object-position: top; }
+figcaption { color: var(--ink-3); font-size: .9rem; margin-top: .45rem; }
+.grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1rem; margin-top: 1.5rem; }
+.grid figure img { aspect-ratio: 1440 / 900; object-fit: cover; object-position: top; }
+.grid a { text-decoration: none; }
+.grid a:hover figcaption { color: var(--ink); text-decoration: underline; }
+.phones { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 1rem; margin-top: 1.5rem; }
+.phones img { aspect-ratio: 390 / 844; object-fit: cover; object-position: top; }
+.why { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 1rem 3rem; }
+.why p { margin: .25rem 0 0; }
+ul.plain { padding-left: 1.1rem; max-width: 44rem; }
+ul.plain li { margin: .35rem 0; }
+.note { background: var(--sheet); border-radius: 16px; padding: 1.5rem 1.75rem; margin-top: 1.5rem; max-width: 52rem; }
+.note h3 { margin-top: 0; }
+@media (max-width: 760px) {
+  main { padding-top: 2.5rem; }
+  .shots, .shots.three, .why { grid-template-columns: 1fr; }
+  .grid { grid-template-columns: 1fr 1fr; }
+  .phones { grid-template-columns: 1fr 1fr; }
+}
+</style>
+
+</head>
+<body>
+<main>
+  <section class="lede">
+    <p class="kick">Phase 1 sketch, 25 November 2026. Synthetic data: an invoicing app called Ledgerline, one morning.</p>
+    <h1>The factory's dashboard, three ways. I recommend the Briefing.</h1>
+    <p class="voice">The dashboard is where the owner spends almost all of their time with the factory, so the recommended direction is built out as the whole product: every page, every state, and every action the owner would otherwise open GitHub for. The other two directions are drawn at their core screens, so the comparison is about structure, not finish.</p>
+  </section>
+
+  <section class="dir pick" id="a">
+    <div class="meta"><b>Recommended</b><span>Direction A</span><span>the whole dashboard, light, dark and phone</span></div>
+    <h2>A. Briefing</h2>
+    <p>The home page is written, not tiled. It opens with a sentence that answers the first question outright (<em>Six things need you.</em>), then the second and third in smaller type. Items that need a person come first, the conversation with an open question above everything else, with a reply box right there. The pull request is the one dark, wide block on the page: a screening of the recording, with Merge beside it. A rail on the right holds what's running, what's next, the month's spend and the standing goal, so the page uses the whole screen while text keeps a comfortable line length. As the factory gets better the page gets shorter and calmer, down to <em>Nothing needs you.</em></p>
+    <p>Behind it sit six pages, each a place you'd go on purpose: <b>Requests</b> (everything the factory was asked, by state, kind or text), one page per request with tabs for the conversation, the pull request, its runs and its activity, <b>Runs</b>, <b>Guardrails</b>, <b>Spend</b> and <b>Factory</b> (settings, goals, workflows, sandbox, people, health, installation). Search, under <kbd>/</kbd>, jumps to any of it or does any common action; whatever matches nothing becomes a new request.</p>
+    <p>The factory speaks in its own typeface, a serif, and you speak in the sans, so the conversation reads like an interview rather than a support chat.</p>
+    <a class="open" href="a-briefing/index.html">Open the Briefing</a>
+    <div class="shots">
+      <figure class="tall"><img src="screens/a-briefing-home-1440-light.jpg" alt="Briefing home: six things need you, a question to answer, the pull request as a dark screening, and a rail of what's running"><figcaption>Something needs you: the question, then the proof, with the factory's state alongside</figcaption></figure>
+      <div style="display:grid;gap:1rem">
+        <figure class="crop"><img src="screens/a-briefing-quiet-1440-light.jpg" alt="Quiet state: nothing needs you"><figcaption>The quiet state. Same page, less of it.</figcaption></figure>
+        <figure class="crop"><img src="screens/a-briefing-home-1440-dark.jpg" alt="Briefing home in dark mode"><figcaption>Dark.</figcaption></figure>
+      </div>
+    </div>
+
+    <h3>Everything it does</h3>
+    <p>Merge three ways, request changes, comment on the pull request or on one line of the diff, mark files viewed, close without merging. Answer the factory, agree to its playback or correct it. File a request of any kind, open an issue for one that came from Slack, close and reopen, add and remove labels, change priority, let someone new start, move a request to another kind of work, drop one. Re-run failed jobs, cancel a run, run any factory workflow by hand. Accept or reject a guardrail, add and remove standing goals, change all nine settings, switch repositories, sign in and out, choose light or dark. Every one of these is performed in a real browser by <code>bundle/check-actions.mjs</code>, along with a check that each kind of data appears where it should: 61 of 61 pass. <code>COVERAGE.md</code> maps each action to the client method it calls; three are new methods to add in Phase 2.</p>
+
+    <h3>Every state</h3>
+    <div class="grid">
+      <a href="a-briefing/index.html#r-203"><figure class=""><img src="screens/a-briefing-r-203-1440-light.jpg" alt="Request page with the pull request, proof and merge bar"><figcaption>Pull request: proof, where to look, checks, files changed with line comments, merge</figcaption></figure></a>
+      <a href="a-briefing/index.html#r-221"><figure class=""><img src="screens/a-briefing-r-221-1440-light.jpg" alt="Request with a run in flight"><figcaption>A request while it builds: every step, model, token and cent</figcaption></figure></a>
+      <a href="a-briefing/index.html#run-01jd9ee0"><figure class=""><img src="screens/a-briefing-run-01jd9ee0-1440-light.jpg" alt="Live run"><figcaption>A run, live: time and cost tick, try 2 of 3</figcaption></figure></a>
+      <a href="a-briefing/index.html#r-214-first"><figure class=""><img src="screens/a-briefing-r-214-first-1440-light.jpg" alt="First question"><figcaption>Conversation: the first question, already listening</figcaption></figure></a>
+      <a href="a-briefing/index.html#r-214-live"><figure class=""><img src="screens/a-briefing-r-214-live-1440-light.jpg" alt="Live conversation"><figcaption>Live: an answer goes out, the factory types, the next question lands</figcaption></figure></a>
+      <a href="a-briefing/index.html#r-214-cold"><figure class=""><img src="screens/a-briefing-r-214-cold-1440-light.jpg" alt="Cold conversation"><figcaption>Gone cold: send anyway, the next reply takes minutes</figcaption></figure></a>
+      <a href="a-briefing/index.html#r-214-understood"><figure class=""><img src="screens/a-briefing-r-214-understood-1440-light.jpg" alt="Playback"><figcaption>The playback: here's what I'll build</figcaption></figure></a>
+      <a href="a-briefing/index.html#r-n000a"><figure class=""><img src="screens/a-briefing-r-n000a-1440-light.jpg" alt="No issue to answer on"><figcaption>A request from Slack with nowhere to answer</figcaption></figure></a>
+      <a href="a-briefing/index.html#r-207"><figure class=""><img src="screens/a-briefing-r-207-1440-light.jpg" alt="Escalated request"><figcaption>Stuck after three tries, in the factory's own words</figcaption></figure></a>
+      <a href="a-briefing/index.html#r-222"><figure class=""><img src="screens/a-briefing-r-222-1440-light.jpg" alt="Request from someone new"><figcaption>From someone without write access: let it start, or close it</figcaption></figure></a>
+      <a href="a-briefing/index.html#requests"><figure class=""><img src="screens/a-briefing-requests-1440-light.jpg" alt="All requests"><figcaption>Every request, filtered by state, kind or text</figcaption></figure></a>
+      <a href="a-briefing/index.html#runs"><figure class=""><img src="screens/a-briefing-runs-1440-light.jpg" alt="All runs"><figcaption>Every run, with re-run and cancel</figcaption></figure></a>
+      <a href="a-briefing/index.html#guardrails"><figure class=""><img src="screens/a-briefing-guardrails-1440-light.jpg" alt="Guardrails"><figcaption>Candidates, installed rules, coverage, the self-review</figcaption></figure></a>
+      <a href="a-briefing/index.html#spend"><figure class=""><img src="screens/a-briefing-spend-1440-light.jpg" alt="Spend"><figcaption>Spend against the hard budget, and automation</figcaption></figure></a>
+      <a href="a-briefing/index.html#factory"><figure class=""><img src="screens/a-briefing-factory-1440-light.jpg" alt="Factory"><figcaption>Settings, goals, workflows, sandbox, people, health</figcaption></figure></a>
+      <a href="a-briefing/index.html#empty"><figure class=""><img src="screens/a-briefing-empty-1440-light.jpg" alt="Empty factory"><figcaption>Before the first run</figcaption></figure></a>
+      <a href="a-briefing/index.html#signin"><figure class=""><img src="screens/a-briefing-signin-1440-light.jpg" alt="Sign in"><figcaption>Sign-in: one button, the token behind a disclosure</figcaption></figure></a>
+      <a href="a-briefing/index.html#signin-pick"><figure class=""><img src="screens/a-briefing-signin-pick-1440-light.jpg" alt="Pick a repository"><figcaption>Then pick a repository</figcaption></figure></a>
+      <a href="a-briefing/index.html#factory"><figure class=""><img src="screens/a-briefing-factory-1440-dark.jpg" alt="Factory, dark"><figcaption>Factory, dark</figcaption></figure></a>
+      <a href="a-briefing/index.html#spend"><figure class=""><img src="screens/a-briefing-spend-1440-dark.jpg" alt="Spend, dark"><figcaption>Spend, dark</figcaption></figure></a>
+    </div>
+    <h3>On a phone</h3>
+    <div class="phones"><figure class=""><img src="screens/a-briefing-home-390-light.jpg" alt="Phone briefing"></figure><figure class=""><img src="screens/a-briefing-r-214-live-390-dark.jpg" alt="Phone conversation, dark"></figure><figure class=""><img src="screens/a-briefing-r-203-390-light.jpg" alt="Phone pull request"></figure><figure class=""><img src="screens/a-briefing-requests-390-dark.jpg" alt="Phone requests, dark"></figure><figure class=""><img src="screens/a-briefing-signin-390-light.jpg" alt="Phone sign-in"></figure></div>
+  </section>
+
+  <section class="dir" id="b">
+    <div class="meta"><span>Direction B</span><span>core screens</span></div>
+    <h2>B. Workbench</h2>
+    <p>A two-pane tool. The left pane sorts every request by who has the ball: your move, the factory's move, landed. The right pane shows one request's whole life on a vertical spine, from what you asked to the merge. Keyboard shortcuts on every action.</p>
+    <a class="open" href="b-workbench/index.html">Open the Workbench</a>
+    <div class="shots three">
+      <figure class=""><img src="screens/b-workbench-home-1440-light.jpg" alt="Workbench with the pull request selected"><figcaption>Pull request selected</figcaption></figure>
+      <figure class=""><img src="screens/b-workbench-talk-1440-dark.jpg" alt="Workbench conversation, dark"><figcaption>Conversation on the spine, dark</figcaption></figure>
+      <figure class=""><img src="screens/b-workbench-run-1440-light.jpg" alt="Workbench run in flight"><figcaption>A run in flight</figcaption></figure>
+    </div>
+  </section>
+
+  <section class="dir" id="c">
+    <div class="meta"><span>Direction C</span><span>core screens</span></div>
+    <h2>C. Reel</h2>
+    <p>A screening room. The newest proof plays first and large, the title set in condensed type like a film credit, and Merge glows under it like a cue light. A ticker across the top carries the machine work. Decisions that need you sit in a rack below; the conversation slides in as a sheet.</p>
+    <a class="open" href="c-reel/index.html">Open the Reel</a>
+    <div class="shots three">
+      <figure class=""><img src="screens/c-reel-home-1440-dark.jpg" alt="Reel home, dark"><figcaption>Up for review</figcaption></figure>
+      <figure class=""><img src="screens/c-reel-talk-1440-light.jpg" alt="Reel conversation sheet, light"><figcaption>The conversation sheet, light</figcaption></figure>
+      <figure class=""><img src="screens/c-reel-home-1440-light.jpg" alt="Reel home, light"><figcaption>Light</figcaption></figure>
+    </div>
+  </section>
+
+  <section class="dir" id="why">
+    <h2>Why the Briefing</h2>
+    <div class="why">
+      <div><h3>It answers the three questions in order</h3><p>The first sentence on the page answers <em>is anything waiting on me</em>; the rail answers <em>what's happening now</em>; Landed answers <em>did it get done</em>. B makes you read a list to find out; C answers a different question first.</p></div>
+      <div><h3>It puts the unanswered question first</h3><p>Nothing moves until a question is answered, so the reply box is on the home page. C, the most striking of the three, ranks a pull request above it.</p></div>
+      <div><h3>It gets quieter on its own</h3><p>Fewer items, shorter page, down to a sentence. B always looks like a full inbox; C has an empty stage.</p></div>
+      <div><h3>Proof is still the loudest thing</h3><p>The pull request is the only dark, wide block on the home page, and its page shows every proof block at full width in the author's order.</p></div>
+      <div><h3>It's easy to learn</h3><p>Six plainly named pages, one page per request, actions where you'd look for them, and search for everything else. Every action says what it did, and anything that can't be undone asks first.</p></div>
+      <div><h3>It works from bed</h3><p>On a phone the rail and the request details fold under the main column, the details collapse to one line, and dialogs become bottom sheets.</p></div>
+    </div>
+    <div class="note">
+      <h3>Styling decision for Phase 2: no Tailwind</h3>
+      <p>assistant-ui for the conversation (its <code>useExternalStoreRuntime</code> takes <code>turns[]</code> as the message array, <code>onNew</code> posts the GitHub comment, and <code>isRunning</code> is bound only to a live conversation with an answer outstanding), styled with plain CSS: one token file of custom properties and a CSS module per component. That's how this sketch is written, so it ports directly. prompt-kit would bring shadcn/ui and Tailwind, letting a component library decide the styling of a design that rests on two typefaces and about a dozen colours.</p>
+      <h3>Type and colour</h3>
+      <p>Schibsted Grotesk for the interface, Newsreader for the factory's voice, both self-hosted from <code>@fontsource-variable</code>. Ultramarine marks what needs a person, green means done, red means stuck, and the screening is near-black in both themes. Text colours clear 4.5:1 against their backgrounds in both themes.</p>
+    </div>
+  </section>
+</main>
+</body>
+</html>
