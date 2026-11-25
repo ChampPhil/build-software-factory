@@ -4,7 +4,7 @@ import type { GitHub } from "../lib/github.js";
 import { MEDIA_REF } from "../lib/dataref.js";
 import { FactoryStore, json, workItemPath } from "../lib/store.js";
 import { assertValid } from "../lib/schema.js";
-import { clock, mb, processRecordings, VIDEO_EXT as RECORDING_EXT, type RecordedVideo } from "../lib/recordings.js";
+import { clock, mb, processRecordings, FILE_CAP_BYTES, VIDEO_EXT as RECORDING_EXT, type RecordedVideo } from "../lib/recordings.js";
 import { attributionMarkdown } from "../lib/brand.js";
 
 /**
@@ -93,12 +93,23 @@ export interface StoredReport {
   readonly inline: Readonly<Record<string, string>>;
   /** What each stored recording is, so the PR can say how long it runs and how big it is. */
   readonly videos?: readonly { readonly file: string; readonly seconds: number | null; readonly bytes: number }[];
+  /** The report claims something that is not there. These fail the PR check. */
   readonly problems: readonly string[];
+  /**
+   * Proof that is present and diminished — a recording with no preview, a
+   * summary line the tool shortened to fit. Said on the PR, never a failure.
+   *
+   * These used to go in `problems`, where any entry failed the check. So a PR
+   * whose summary line was 282 characters and was successfully shortened to
+   * 200 was rejected with "the PR does not show its proof", with the proof
+   * sitting right there. The check is about whether there is proof, not about
+   * whether the tooling had to tidy anything on the way.
+   */
+  readonly degraded?: readonly string[];
   readonly stored_at: string;
 }
 
 export const REPORT_FILE = "report.json";
-const FILE_CAP_BYTES = 10 * 1024 * 1024;
 const INLINE_CAP = 4000;
 const TEXT_EXT = new Set([".json", ".txt", ".log", ".md", ".html", ".xml", ".csv", ".yaml", ".yml"]);
 const IMAGE_EXT = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg"]);
@@ -226,16 +237,23 @@ export async function storeReport(opts: {
   const prefix = `reports/${opts.now.slice(0, 10)}/${opts.workItem}/${opts.role}-${opts.attempt}`;
   const changes: { path: string; content: string; encoding: "base64" }[] = [];
   const inline: Record<string, string> = {};
-  const problems: string[] = [...trimmed, ...recorded.problems];
+  // Two kinds, kept apart. `problems` is the report claiming what is not
+  // there; `degraded` is proof that is present and diminished. `trimmed` is
+  // the second kind by definition — every entry in it is something the tool
+  // successfully fixed.
+  const problems: string[] = [...recorded.problems];
+  const degraded: string[] = [...trimmed, ...recorded.degraded];
   for (const rel of filesOf(report)) {
     const abs = inside(opts.dir, rel);
     if (abs === null || !existsSync(abs)) {
+      // A role naming a file it never wrote is the report being wrong about
+      // itself, which is the one thing here that has to fail.
       problems.push(`${opts.role} names ${rel}, which it did not write`);
       continue;
     }
     const size = statSync(abs).size;
     if (size > FILE_CAP_BYTES) {
-      problems.push(`${rel} is ${Math.round(size / 1024 / 1024)} MB, over the 10 MB a proof file may be`);
+      degraded.push(`${rel} is ${mb(size)} and could not be stored: over the ${mb(FILE_CAP_BYTES)} a proof file may be`);
       continue;
     }
     changes.push({ path: `${prefix}/${rel}`, content: readFileSync(abs, "base64"), encoding: "base64" });
@@ -254,6 +272,7 @@ export async function storeReport(opts: {
     inline,
     ...(recorded.items.length === 0 ? {} : { videos: recorded.items.map((v) => ({ file: v.file, seconds: v.seconds, bytes: v.bytes })) }),
     problems,
+    ...(degraded.length === 0 ? {} : { degraded }),
     stored_at: opts.now,
   };
   await new FactoryStore(opts.gh).put(
@@ -283,7 +302,10 @@ export interface Rendered {
   readonly body: string;
   /** Proof that did not fit in the body; it goes in one PR comment. */
   readonly continued: string | null;
+  /** The report claims what is not there. These fail the PR check. */
   readonly problems: readonly string[];
+  /** Proof present and diminished. Said on the check, never a failure. */
+  readonly degraded: readonly string[];
 }
 
 export const MARKER = "<!-- bsf:pr-report v1 -->";
@@ -333,9 +355,13 @@ export function renderBlock(repo: string, stored: StoredReport, b: Block): strin
 /** The PR body (and, when the proof will not fit, the comment it continues in). */
 export function renderReport(input: RenderInput): Rendered {
   const problems: string[] = [];
+  const degraded: string[] = [];
   const builder = input.reports.find((r) => r.role === "builder" || r.role === "setup") ?? input.reports[0];
   if (builder === undefined) problems.push("no role wrote a report");
-  for (const r of input.reports) problems.push(...r.problems);
+  for (const r of input.reports) {
+    problems.push(...r.problems);
+    degraded.push(...(r.degraded ?? []));
+  }
 
   const summary = builder?.report.summary ?? [];
   const head: string[] = [MARKER, ""];
@@ -403,6 +429,7 @@ export function renderReport(input: RenderInput): Rendered {
     body: `${headText}\n${proofHeading}${tailText}`,
     continued: rest === "" ? null : `${CONTINUED_MARKER}\n\n### Proof, continued\n\n${rest}`,
     problems,
+    degraded,
   };
 }
 
@@ -490,7 +517,7 @@ export async function publishReport(opts: {
   });
   await opts.gh.send("PATCH", `repos/${opts.gh.repo}/pulls/${opts.pr}`, { body: rendered.body });
   await upsertContinued(opts.gh, opts.pr, rendered.continued);
-  await reportCheck(opts.gh, opts.pr, rendered.problems);
+  await reportCheck(opts.gh, opts.pr, rendered.problems, rendered.degraded);
   return rendered;
 }
 
@@ -616,16 +643,40 @@ export async function renderSetupReport(opts: {
 }
 
 /** factory/pr-report on a PR, from the problems its render found. */
-export async function reportCheck(gh: GitHub, pr: number, problems: readonly string[]): Promise<void> {
+/**
+ * The check on whether the PR shows its proof.
+ *
+ * It asks one question: is the proof there? Not whether the tooling had an
+ * easy time of it. A recording stored at full size because the runner has no
+ * ffmpeg, a summary line shortened to fit, a preview that could not be
+ * made — those are said on the check and the check passes, because the proof
+ * is on the PR and a person can watch it.
+ *
+ * It failed on any of them before, with the title "The PR does not show its
+ * proof" over a PR carrying a working video of the feature. That told the
+ * reader something untrue and blocked good work on the factory's own plumbing.
+ */
+export async function reportCheck(
+  gh: GitHub,
+  pr: number,
+  problems: readonly string[],
+  degraded: readonly string[] = [],
+): Promise<void> {
   const head = (await gh.pull(pr)).head.sha;
+  const ok = problems.length === 0;
+  const notes = degraded.length === 0 ? "" : `\n\nWorth knowing, and not a reason to hold the PR:\n\n${degraded.map((d) => `- ${d}`).join("\n")}`;
   await gh.reportCheck({
     name: REPORT_CHECK,
     headSha: head,
-    conclusion: problems.length === 0 ? "success" : "failure",
-    title: problems.length === 0 ? "The PR shows its proof" : "The PR does not show its proof",
+    conclusion: ok ? "success" : "failure",
+    title: ok
+      ? degraded.length === 0
+        ? "The PR shows its proof"
+        : "The PR shows its proof, with notes"
+      : "The PR does not show its proof",
     summary:
-      problems.length === 0
+      (ok
         ? "Summary, proof, key things to focus on and the longer breakdowns are all on the PR."
-        : `What is missing:\n\n${problems.map((p) => `- ${p}`).join("\n")}`,
+        : `What is missing:\n\n${problems.map((p) => `- ${p}`).join("\n")}`) + notes,
   });
 }

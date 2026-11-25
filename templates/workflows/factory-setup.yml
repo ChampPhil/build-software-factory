@@ -376,7 +376,8 @@ jobs:
             gh api "repos/${GITHUB_REPOSITORY}/issues/$pr/comments" -F "body=@$RUNNER_TEMP/pr-body.md.continued.md" > /dev/null
           fi
           report_rc=0
-          bsf report check --pr "$pr" --problems "$RUNNER_TEMP/pr-body.md.problems.json" || report_rc=$?
+          bsf report check --pr "$pr" --problems "$RUNNER_TEMP/pr-body.md.problems.json" \
+            --degraded "$RUNNER_TEMP/pr-body.md.degraded.json" || report_rc=$?
           # An amendment repairs the sandbox without a person when it is safe
           # to: only .factory/sandbox/ changes, no new host or secret, and at
           # least what main's sandbox proved. Then the changes that were stuck

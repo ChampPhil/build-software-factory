@@ -278,6 +278,30 @@ post-steps:
       ATTEMPT: ${{ inputs.attempt }}
       MODEL: ${{ inputs.model }}
     run: bsf step-report --role "$ROLE" --attempt "$ATTEMPT" --model "$MODEL" --out /tmp/gh-aw/agent/bsf/step-report.json
+  # Recordings are re-encoded and given an inline preview before anything is
+  # stored, and that needs ffmpeg, which the runner image does not carry. A PR
+  # whose video could not be shrunk used to arrive with its proof dropped and
+  # the check saying the PR showed none — the single most valuable thing on it,
+  # lost to a missing package. Installed only when there is a recording to
+  # process, so a change with no video pays nothing for this.
+  - name: Make ffmpeg available for the recordings
+    shell: bash
+    run: |
+      set -euo pipefail
+      if command -v ffmpeg >/dev/null 2>&1 && command -v ffprobe >/dev/null 2>&1; then
+        echo "ffmpeg is already here"
+        exit 0
+      fi
+      dir=/tmp/gh-aw/agent/bsf/report
+      found=$(find "$dir" -type f \( -name '*.webm' -o -name '*.mp4' -o -name '*.mov' \) -print -quit 2>/dev/null || true)
+      if [ -z "$found" ]; then
+        echo "no recordings to process"
+        exit 0
+      fi
+      # Not fatal: without it the recording is stored as it was written, which
+      # is proof a person can still watch.
+      sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg || \
+        echo "could not install ffmpeg; recordings will be stored as written"
   - name: Store the verifier's report for the PR
     shell: bash
     env:
