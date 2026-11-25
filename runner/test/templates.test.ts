@@ -363,6 +363,37 @@ describe("trigger workflows", () => {
     }
   });
 
+  it("every action is pinned to a commit SHA, in workflows this repo runs and workflows it ships", () => {
+    // An action referenced by a moving tag is whatever that tag points at the
+    // next time the workflow runs. These workflows are installed into other
+    // people's repositories and mint tokens, so a tag that moves under them is
+    // a supply-chain hole in every factory at once, not just in this repo.
+    //
+    // The compiled gh-aw locks are pinned by the compiler, which is why this was
+    // invisible for so long: `.lock.yml` looked fine while the plain `.yml` that
+    // actually runs did not. The `.md` sources are pinned too, so a lock
+    // compiled by hand matches the one CI compiles.
+    const uses = /uses: *([A-Za-z0-9._-]+\/[A-Za-z0-9._/-]+)@([A-Za-z0-9._-]+)/g;
+    const dirs = [WORKFLOWS, join(repoRoot(), ".github", "workflows")];
+    let checked = 0;
+    for (const dir of dirs) {
+      if (!existsSync(dir)) continue;
+      for (const f of readdirSync(dir).filter((x) => x.endsWith(".yml") || x.endsWith(".md"))) {
+        const text = readFileSync(join(dir, f), "utf8");
+        for (const m of text.matchAll(uses)) {
+          checked += 1;
+          expect(
+            /^[0-9a-f]{40}$/.test(m[2] ?? ""),
+            `${f}: ${m[1]}@${m[2]} is not pinned to a commit SHA. ` +
+              "Resolve the tag (git ls-remote --tags https://github.com/" +
+              `${m[1]}) and write it as ${m[1]}@<sha> # ${m[2]}.`,
+          ).toBe(true);
+        }
+      }
+    }
+    expect(checked).toBeGreaterThan(50);
+  });
+
   it("each scheduled workflow can also be started by hand, so nobody waits a day to test it", () => {
     for (const f of ["factory-garden.yml", "factory-review.yml", "factory-rollup.yml"]) {
       expect(load(f)["on"]).toHaveProperty("workflow_dispatch");

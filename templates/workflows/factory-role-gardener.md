@@ -120,7 +120,7 @@ pre-agent-steps:
   # .factory/bin, so it is taken from the default branch and parked outside the
   # workspace, which is the only directory the agent sandbox can write to.
   - name: Fetch the factory runner from the default branch
-    uses: actions/checkout@v4
+    uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
     with:
       ref: ${{ github.event.repository.default_branch }}
       path: .factory-trusted
@@ -159,7 +159,7 @@ pre-agent-steps:
   # A refusal fails here, before the agent spends anything.
   - name: Mint a token for the budget record
     id: budget-token
-    uses: actions/create-github-app-token@v1
+    uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1
     with:
       app-id: ${{ vars.FACTORY_APP_CLIENT_ID }}
       private-key: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
@@ -179,7 +179,7 @@ pre-agent-steps:
   # reach the agent's sandbox.
   - name: Mint a read-only token for the factory's data
     id: read-token
-    uses: actions/create-github-app-token@v1
+    uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1
     with:
       app-id: ${{ vars.FACTORY_APP_CLIENT_ID }}
       private-key: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
@@ -223,7 +223,7 @@ post-steps:
     run: bsf budget measure --key "$BUDGET_KEY" --pipeline "$PIPELINE" --model "$MODEL" --detection-artifact "$DETECTION_ARTIFACT" --out /tmp/gh-aw/bsf-budget/measure.json
   - name: Upload the budget measure
     if: always()
-    uses: actions/upload-artifact@v4
+    uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
     with:
       name: budget-${{ inputs.budget_key || format('{0}-{1}-x', github.run_id, github.run_attempt) }}
       path: /tmp/gh-aw/bsf-budget/measure.json
@@ -232,7 +232,7 @@ post-steps:
   # what it produced on the factory's data ref.
   - name: Mint a token to store this step's results
     id: write-token
-    uses: actions/create-github-app-token@v1
+    uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1
     with:
       app-id: ${{ vars.FACTORY_APP_CLIENT_ID }}
       private-key: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
@@ -253,7 +253,7 @@ post-steps:
   # The run record is made from these: model, tokens and cost for each role.
   - name: Upload the StepReport
     if: always()
-    uses: actions/upload-artifact@v4
+    uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
     with:
       name: step-report-gardener
       path: /tmp/gh-aw/agent/bsf/step-report.json
