@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { conversationLive, useBrainstorm, useCheckRuns, useIssueComments, usePull, useVerifierReport } from "@/lib/data";
 import { questionFrom } from "@/lib/questions";
+import { isFrameTurn, plain, questionOf, sentence } from "@/lib/frame";
 import type { Need } from "@/lib/view";
 import { ago, pipeName, summaryOf, usd } from "@/lib/view";
 import { evidenceOf } from "@/lib/evidence";
@@ -65,7 +66,13 @@ function QuestionCard({ id, issue, title, since }: { id: string; issue: number |
       <h3>
         <Link href={requestHref(id, "talk")}>{title}</Link>
       </h3>
-      <p className="voice">{question ?? "The factory has a question about this request."}</p>
+      {b?.frame?.named !== undefined && b.frame.named.trim() !== "" && (
+        <p className="named">
+          <span>What it is</span>
+          {sentence(b.frame.named)}
+        </p>
+      )}
+      <p className="voice">{question === null ? "The factory has a question about this request." : isFrameTurn(plain(question)) ? questionOf(plain(question)) : plain(question)}</p>
       {issue === null ? (
         <p className="muted">This came from somewhere without an issue, so there&rsquo;s nowhere to answer it. Send it again as a new request.</p>
       ) : sent ? (

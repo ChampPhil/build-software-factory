@@ -56,6 +56,52 @@ budget:
 `;
 
 /**
+ * The words the conversation worked out for the date filter, ranked by how
+ * much each changes what gets built. Six here, four shown, as the runner does.
+ */
+const FRAME_0143 = {
+  named: "A date-range filter: narrowing order history, refunds included, to what happened between two dates",
+  terms: [
+    { term: "Transaction date", means: "The day money moved, as distinct from the day the order was placed", names: "\u201ca refund is part of the order's story\u201d", unlocks: "deciding whether a refund appears under its own date or its order's" },
+    { term: "Time zone of record", means: "The zone whose midnight decides which day something happened on", names: "nothing yet. It decides whether an order at 11pm counts as today or tomorrow", unlocks: "dates in the filter that match the dates on the customer's receipts" },
+    { term: "Inclusive range", means: "A range that counts both its first and last day", names: "\u201cby date\u201d, which leaves open whether the end day is in", unlocks: "presets like Last 30 days that mean the same thing every time" },
+    { term: "Filter state in the URL", means: "The chosen range kept in the page address", names: "nothing yet", unlocks: "a filtered history the customer can bookmark or send to support", prior_art: "most store admin panels, Shopify's among them" },
+    { term: "Statement period", means: "A fixed span, usually a month, that a summary covers", names: "what a customer reaching for a month at a time is really after", unlocks: "one-click months as well as free ranges" },
+    { term: "Empty state", means: "What a list says when nothing matches", names: "a range with no orders in it", unlocks: "a message that says no orders rather than looking broken" },
+  ],
+  neighbors: [
+    { field: "Bank statements", carries_over: "A date range over a mixed list of payments and refunds, each on the day the money moved", breaks_down: "A statement carries a running balance from one period to the next; order history has no balance to carry", terms: ["posting date", "value date"] },
+    { field: "Calendar search", carries_over: "Picking a range of days quickly, with presets for the common ones", breaks_down: "Calendar events have a start and an end; an order happens at one moment" },
+  ],
+  unmentioned: [
+    "Which time zone decides the day an order falls on",
+    "Whether the range is kept when the customer comes back",
+    "What an empty range should say",
+  ],
+  readings: [
+    { problem: "Narrow the list to a range of dates", term: "date-range filter", tells_it_apart: "the list stays the same, only shorter" },
+    { problem: "A downloadable statement for a period", term: "statement", tells_it_apart: "a new document with totals, not a filtered list" },
+  ],
+  reading_taken: "A filter on the list, because the request is about finding orders, not about a document to keep.",
+};
+
+/** The frame turn as the runner writes it into the log: Markdown, ending on the question. */
+function frameText(f: typeof FRAME_0143, question: string): string {
+  const terms = f.terms.slice(0, 4).map((t) => `- **${t.term}** — ${t.means}.\n  From what you wrote: ${t.names}.\n  Lets you ask for: ${t.unlocks}.`).join("\n");
+  const near = f.neighbors.map((n) => `- **${n.field}** — ${n.carries_over}.\n  Where it stops being the same problem: ${n.breaks_down}.`).join("\n");
+  return [
+    `Before I ask anything else — **${f.named}**`,
+    "The four words that change what gets built here:",
+    terms,
+    "Where this has been solved before, under other names:",
+    near,
+    "Things you did not mention that will decide something:",
+    f.unmentioned.map((u) => `- ${u}.`).join("\n"),
+    question,
+  ].join("\n\n");
+}
+
+/**
  * A small online shop with a factory three weeks old. Every state a request
  * can be in appears once, so every page and every action has something real
  * to show: a question being answered live, a change ready to merge with its
@@ -183,13 +229,13 @@ export function sampleFactory(now: number): {
       turns: [
         { at: at(26 * HOUR - 4 * MIN), who: "factory", text: "When a customer picks a date range, should refunds in that range show too, or only orders?" },
         { at: at(25 * HOUR), who: "person", text: "Both. A refund is part of the order's story." },
-        { at: at(25 * HOUR - MIN), who: "factory", text: "Should a refund show under the date it happened, or under the date of the order it refunds?" },
+        { at: at(25 * HOUR - MIN), who: "factory", text: frameText(FRAME_0143, "Should a refund show under the date it happened, or under the date of the order it refunds?") },
       ],
       understood: null,
       open: ["Which date a refund is filed under"],
       holder: run(33),
       heartbeat_at: at(20_000),
-      frame: { named: "A date-range filter on order history that includes refunds" },
+      frame: FRAME_0143,
     },
     "brainstorms/wi-0146.json": {
       work_item: "wi-0146",
