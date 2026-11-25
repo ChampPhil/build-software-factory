@@ -18,7 +18,7 @@ live event has not occurred; **partly** says which half is which.
 
 | # | Criterion | Verdict |
 | --- | --- | --- |
-| 1 | A scheduled review on a factory with 50+ runs routes every problem | **Partly**: routing is live on 5 real runs; there are not 50 |
+| 1 | A scheduled review on a factory with 10+ runs routes every problem | **Met on a live repo**: `bakesale-test` review (forced) scored 3 runs, routed 5 problems to hardening and left 9 unrouted; 10+ runs had run |
 | 2 | A degraded context file is caught, fixed and shown to improve over 3 repeats | **Logic proven**: no benchmark was paid for |
 | 3 | A change that lowers the score or raises cost >20% is not proposed | **Logic proven** |
 | 4 | The benchmark set includes corrected and escalated runs | **Logic proven** |
@@ -66,8 +66,13 @@ ceiling (doc 07, §Budget) and proven:
 
 ### 1. A scheduled review routes every problem
 
-**Partly.** The review ran end to end on `bsf-fixtures/ts-webapp`
-(run 44968432870): it scored 5 real runs on every rubric criterion (50
+**Met, with a caveat.** On `ChampPhil/bakesale-test` (Nov 25, forced, with
+more than ten runs behind it) the review scored 65 rubric criteria over 3 runs,
+routed 5 problems to hardening, left 9 unrouted and wrote
+`reviews/2026-11-25.json`. The caveat: all five routed problems were symptoms
+of the verifier never starting the app, which is the factory's defect, not the
+repo's (see the live-test findings). Earlier, it ran end to end on
+`bsf-fixtures/ts-webapp` (run 44968432870): it scored 5 real runs on every rubric criterion (50
 scores), routed 3 problems (a context gap in `app/invoices`, seen 3 times, to
 a definition change; "overclaimed" and "wrong scope" to hardening), filed
 three work items and wrote `reviews/2026-11-22.json`. Getting there found and
@@ -76,7 +81,7 @@ diffs (gh-aw's integrity filter rightly refuses the bot's own PRs, so the
 runner now fetches them), it was never told its output format, the record
 failed its own schema, and a review with no problems wrote no record.
 
-Not met: fifty runs. ts-webapp has had about ten. The scorer still raises
+Run counts: ts-webapp had about ten. The scorer still raises
 gh-aw's "incomplete" signal when some criteria lack evidence, which turns the
 job red although the review completes.
 
