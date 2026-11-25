@@ -73,3 +73,114 @@ describe("the factory/conflicts check's button", async () => {
     }
   });
 });
+
+/**
+ * Rebuilding every conflicting PR at once rebuilds them all against the same
+ * main. Each new PR is clean against main and conflicts with its siblings, so
+ * the first to merge sends the rest back for another rebuild — five PRs on one
+ * file can cost twenty builder runs that way. One at a time costs five, and
+ * the queue drains itself: a rebuild that lands is a push to main, which is
+ * this scan's trigger, and factory-conflicts has an hourly schedule for when
+ * one never lands.
+ */
+describe("the order rebuilds go out in", async () => {
+  const { rebuildOrder } = await import("../src/commands/conflicts.js");
+  const c = (work_item: string, pr: number) => ({ work_item, pr });
+
+  it("takes the oldest work item first", () => {
+    const order = rebuildOrder(
+      [c("wi-3", 30), c("wi-1", 10), c("wi-2", 20)],
+      new Map([
+        ["wi-1", "2026-11-01T00:00:00Z"],
+        ["wi-2", "2026-11-02T00:00:00Z"],
+        ["wi-3", "2026-11-03T00:00:00Z"],
+      ]),
+    );
+    expect(order.map((o) => o.work_item)).toEqual(["wi-1", "wi-2", "wi-3"]);
+  });
+
+  it("goes by age, not by PR number, when the two disagree", () => {
+    // An item queued long ago can get a high PR number after a rebuild or two,
+    // and it is still the one that has waited longest.
+    const order = rebuildOrder(
+      [c("wi-new", 50), c("wi-old", 90)],
+      new Map([
+        ["wi-new", "2026-11-20T00:00:00Z"],
+        ["wi-old", "2026-11-01T00:00:00Z"],
+      ]),
+    );
+    expect(order[0]?.work_item).toBe("wi-old");
+  });
+
+  it("falls back to the PR number, which rises with time", () => {
+    const order = rebuildOrder([c("wi-b", 44), c("wi-a", 12)], new Map());
+    expect(order.map((o) => o.work_item)).toEqual(["wi-a", "wi-b"]);
+  });
+
+  it("puts an item with a timestamp ahead of one with none", () => {
+    const order = rebuildOrder([c("wi-none", 5), c("wi-dated", 99)], new Map([["wi-dated", "2026-11-01T00:00:00Z"]]));
+    expect(order[0]?.work_item).toBe("wi-dated");
+  });
+
+  it("is the same on every scan, so nothing is starved by a tie", () => {
+    const items = [c("wi-b", 7), c("wi-a", 7), c("wi-c", 7)];
+    const once = rebuildOrder(items, new Map()).map((o) => o.work_item);
+    const again = rebuildOrder([...items].reverse(), new Map()).map((o) => o.work_item);
+    expect(once).toEqual(["wi-a", "wi-b", "wi-c"]);
+    expect(again).toEqual(once);
+  });
+
+  it("leaves the caller's list alone", () => {
+    const items = [c("wi-b", 20), c("wi-a", 10)];
+    rebuildOrder(items, new Map());
+    expect(items.map((o) => o.work_item)).toEqual(["wi-b", "wi-a"]);
+  });
+});
+
+describe("what a queued PR is told", async () => {
+  const { conflictCheck } = await import("../src/commands/conflicts.js");
+
+  const titleAndSummary = async (ahead?: number) => {
+    let body: { output: { title: string; summary: string } } | undefined;
+    const gh = {
+      repo: "o/r",
+      pull: async () => ({ head: { sha: "abc" } }),
+      send: async (_m: string, _p: string, b: unknown) => { body = b as typeof body; },
+    } as never;
+    await conflictCheck(gh, 33, ahead);
+    return body!.output;
+  };
+
+  it("says it is being rebuilt when it is the one going out", async () => {
+    const out = await titleAndSummary();
+    expect(out.title).toMatch(/rebuilding on main/i);
+    expect(out.summary).not.toMatch(/queued/i);
+  });
+
+  it("says how many are ahead of it when it is waiting", async () => {
+    // A PR that conflicts and says nothing reads as forgotten.
+    expect((await titleAndSummary(1)).title).toMatch(/queued behind 1 other rebuild\b/);
+    expect((await titleAndSummary(3)).title).toMatch(/queued behind 3 other rebuilds\b/);
+  });
+
+  it("explains why it is waiting rather than just that it is", async () => {
+    expect((await titleAndSummary(2)).summary).toMatch(/one change at a time/i);
+  });
+
+  it("offers the button either way, for someone who will not wait", async () => {
+    let body: { actions: { identifier: string }[] } | undefined;
+    const gh = {
+      repo: "o/r",
+      pull: async () => ({ head: { sha: "abc" } }),
+      send: async (_m: string, _p: string, b: unknown) => { body = b as typeof body; },
+    } as never;
+    await conflictCheck(gh, 33, 2);
+    expect(body!.actions.map((a) => a.identifier)).toEqual(["rebuild"]);
+  });
+
+  it("keeps the approval-carries-over promise on both", async () => {
+    for (const ahead of [undefined, 2]) {
+      expect((await titleAndSummary(ahead)).summary).toMatch(/approval given here carries over/i);
+    }
+  });
+});

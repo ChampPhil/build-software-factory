@@ -74,23 +74,77 @@ const SEEN_CAP = 500;
 
 export const seenPath = (home = homedir()): string => join(home, ".cache", "bsf", "sent-corrections.json");
 
-export function alreadySent(key: string, path = seenPath()): boolean {
-  try {
-    return (JSON.parse(readFileSync(path, "utf8")) as string[]).includes(key);
-  } catch {
-    return false;
-  }
+/**
+ * What this machine has sent, readable by the person who sent it.
+ *
+ * The file used to hold hashes and nothing else, which is enough to stop the
+ * same correction going twice and no use at all to the person whose words went
+ * out. The hook reads what someone types at an agent in their own session and
+ * turns it into a work item in a repository, so "what left my machine" has to
+ * be a question they can answer, and answer locally without reading the
+ * repository's issues.
+ *
+ * Still capped, still only this machine's own sends, and still never written
+ * anywhere but the local cache.
+ */
+export interface SentRecord {
+  readonly key: string;
+  readonly at: string;
+  /** The title the work item got: the correction's own first line, redacted. */
+  readonly title: string;
+  /** The repository it went to. */
+  readonly repo: string;
 }
 
-export function markSent(key: string, path = seenPath()): void {
-  let seen: string[] = [];
+/**
+ * Reads both shapes: the bare array of hashes written before there was a log,
+ * and the file with records. An existing install keeps its dedupe either way.
+ */
+export function readSent(path = seenPath()): readonly SentRecord[] {
+  let doc: unknown;
   try {
-    seen = JSON.parse(readFileSync(path, "utf8")) as string[];
+    doc = JSON.parse(readFileSync(path, "utf8"));
   } catch {
-    seen = [];
+    return [];
   }
+  if (Array.isArray(doc)) {
+    return doc
+      .filter((k): k is string => typeof k === "string")
+      .map((key) => ({ key, at: "", title: "", repo: "" }));
+  }
+  const sent: unknown = (doc as { sent?: unknown } | null)?.sent;
+  if (!Array.isArray(sent)) return [];
+  return (sent as unknown[]).filter(
+    (r): r is SentRecord => typeof r === "object" && r !== null && typeof (r as { key?: unknown }).key === "string",
+  );
+}
+
+export function alreadySent(key: string, path = seenPath()): boolean {
+  return readSent(path).some((r) => r.key === key);
+}
+
+export function markSent(key: string, path = seenPath(), about?: { readonly at: string; readonly title: string; readonly repo: string }): void {
+  const sent = [
+    ...readSent(path),
+    { key, at: about?.at ?? "", title: about?.title ?? "", repo: about?.repo ?? "" },
+  ].slice(-SEEN_CAP);
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, JSON.stringify([...seen, key].slice(-SEEN_CAP)));
+  writeFileSync(path, JSON.stringify({ sent }, null, 2));
+}
+
+/** What `bsf local-hook --sent` prints: newest last, so a terminal shows the latest. */
+export function renderSent(sent: readonly SentRecord[]): string {
+  if (sent.length === 0) {
+    return "Nothing has been sent from this machine.\n\nThe hook turns a correction you type at an agent into hardening work in a repository. Turn it off with: bsf local-hook --uninstall";
+  }
+  const lines = [`${sent.length} correction(s) sent from this machine, oldest first:`, ""];
+  for (const r of sent) {
+    const when = r.at === "" ? "(before this was recorded)" : r.at;
+    const what = r.title === "" ? "(not recorded)" : r.title;
+    lines.push(`${when}  ${r.repo === "" ? "" : `${r.repo}  `}${what}`);
+  }
+  lines.push("", "Each one became a work item in that repository. Turn the hook off with: bsf local-hook --uninstall");
+  return lines.join("\n");
 }
 
 /* ----------------------------------------------------------------- install */

@@ -93,6 +93,53 @@ export function scoreCorrection(text: string): { confidence: number; signals: re
 }
 
 
+/* ------------------------------------------------------- what it is about */
+
+/**
+ * Whether a correction is about this repository or about the factory itself.
+ *
+ * These are two different things and the difference matters. "Use the api
+ * client, not fetch" is this codebase's convention, and a guardrail here is
+ * exactly right. "Stop attaching a screenshot of the title page and calling it
+ * proof" is not about this codebase at all — it is a defect in how the factory
+ * works, and a local guardrail for it is a private patch for a bug every other
+ * factory also has. Hardened locally, it is fixed once for one person; sent
+ * upstream, it is fixed once for everyone.
+ *
+ * Nothing routes on this yet: recording it now means the question can be asked
+ * of history later instead of re-mining it, and it is already worth seeing on
+ * the dashboard — a column of corrections marked `factory` is a list of bugs
+ * somebody is working around.
+ *
+ * `repo` is the default and the safe one. A correction misread as a factory
+ * defect would, once anything does route on this, leave a real convention
+ * unenforced here.
+ */
+export type CorrectionTarget = "repo" | "factory";
+
+/**
+ * Words about the machinery rather than the code. Role names, the artefacts a
+ * run produces, the things the factory does to a repository.
+ */
+const FACTORY_SIGNALS: readonly RegExp[] = [
+  /\bfactory\b/i,
+  /\b(the )?(builder|verifier|gardener|hardener|scorer|triage) (role|agent|keeps|should|is|did|never|always)\b/i,
+  /\byou (keep|always|never) (open|opening|attach|attaching|file|filing) (a |the )?(pr|pull request|issue|screenshot|video|proof)\b/i,
+  /\b(the )?(proof|screenshot|video|recording) (is|was|shows|never|just|only)\b/i,
+  /\bstop (opening|filing|attaching|creating) (prs|pull requests|issues)\b/i,
+  /\b(the )?(gate|gates|guardrail|baseline|ratchet|sandbox|work item|data ref)\b/i,
+  /\bthe (bot|agent|app) (keeps|should|never|always|did)\b/i,
+  /\b(spec|triage) (step|stage|role)\b/i,
+  /\bauto[- ]?merge\b/i,
+  /\brun (cost|budget|minutes)\b/i,
+];
+
+/** Where a correction is aimed, read from its own words. */
+export function correctionTarget(text: string): { target: CorrectionTarget; signals: readonly string[] } {
+  const signals = FACTORY_SIGNALS.filter((re) => re.test(text)).map((re) => re.source.slice(0, 28));
+  return { target: signals.length > 0 ? "factory" : "repo", signals };
+}
+
 /* ------------------------------------------------------------ consent first */
 
 export interface SessionSummary {
@@ -539,6 +586,9 @@ export function candidatesFrom(
         };
       }),
       proposed_fix: proposedFix(cl.corrections.map((c) => c.text).join(" ")),
+      // The cluster's own text decides, not one member's: a theme is what the
+      // corrections have in common.
+      target: correctionTarget(cl.corrections.map((c) => c.text).join(" ")).target,
       status: "pending" as const,
     };
   });

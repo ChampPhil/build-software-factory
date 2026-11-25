@@ -10,6 +10,23 @@ import { FactoryStore } from "../lib/store.js";
  * unnoticed until someone looked. So this command retries the unknowns, and
  * says which ones it still could not determine rather than reporting them
  * clean.
+ *
+ * One rebuild goes out per scan, not one per conflicting PR. When main moves
+ * under several PRs that touch the same file, rebuilding them all at once
+ * rebuilds them all against the same main: each new PR is clean against main
+ * and conflicts with its siblings, so the first to merge sends the rest back
+ * for another rebuild. Five PRs on one file can cost twenty rebuilds that way,
+ * each one a full builder run.
+ *
+ * Serialising costs nothing because the queue drains itself: a rebuild that
+ * lands is a push to main, which is this scan's trigger. A rebuild that fails
+ * or escalates makes no push, so factory-conflicts also runs when factory-run
+ * completes — a run finishing is when the queue can move, and an idle factory
+ * then runs nothing at all, where a timer would spend a fifth of a month's
+ * free Actions minutes finding nothing. Re-dispatching the head while its
+ * rebuild is still running is harmless: factory-run keeps one concurrency
+ * group per work item, so the second dispatch waits and then finds the PR
+ * already replaced and stands down.
  */
 
 export interface ConflictsOptions {
@@ -33,6 +50,8 @@ export interface ConflictsReport {
   readonly clean: readonly number[];
   readonly unknown: readonly number[];
   readonly dispatched: readonly string[];
+  /** Conflicting, and waiting for the one ahead of it: one rebuild at a time. */
+  readonly queued: readonly string[];
 }
 
 export async function runConflictsCommand(opts: ConflictsOptions): Promise<ConflictsReport> {
@@ -52,20 +71,63 @@ export async function runConflictsCommand(opts: ConflictsOptions): Promise<Confl
     else unknown.push(pr);
   }
 
+  const ordered = rebuildOrder(conflicting, new Map(ledger.open.map((o) => [o.work_item, o.created_at ?? null])));
+
   const dispatched: string[] = [];
+  const queued: string[] = [];
   if (opts.dispatch !== false) {
-    for (const c of conflicting) {
-      await requestRebuild(opts.gh, c.work_item, c.pr, opts.ref);
-      dispatched.push(c.work_item);
-      if (opts.checks !== undefined) {
-        await conflictCheck(opts.checks, c.pr).catch((e: Error) => {
+    const [head, ...waiting] = ordered;
+    if (head !== undefined) {
+      await requestRebuild(opts.gh, head.work_item, head.pr, opts.ref);
+      dispatched.push(head.work_item);
+    }
+    for (const w of waiting) queued.push(w.work_item);
+
+    // Every conflicting PR gets the check, so each one says what is happening
+    // to it. A queued PR that said nothing would read as forgotten.
+    if (opts.checks !== undefined) {
+      for (let i = 0; i < ordered.length; i++) {
+        const c = ordered[i]!;
+        await conflictCheck(opts.checks, c.pr, i === 0 ? undefined : i).catch((e: Error) => {
           process.stderr.write(`could not put the factory/conflicts check on #${c.pr}: ${e.message}\n`);
         });
       }
     }
+  } else {
+    for (const c of ordered) queued.push(c.work_item);
   }
 
-  return { conflicting, clean, unknown, dispatched };
+  return { conflicting, clean, unknown, dispatched, queued };
+}
+
+export interface Conflicting {
+  readonly pr: number;
+  readonly work_item: string;
+}
+
+/**
+ * The order rebuilds go out in: oldest first.
+ *
+ * One at a time means something has to be passed over, so the order has to be
+ * one a person can predict and one that cannot starve an item. Oldest first
+ * does both: the thing that has waited longest is never the thing passed over
+ * again. `created_at` where the ledger has it, then the PR number, which rises
+ * with time, then the id — so two items with neither are still ordered the
+ * same way on every scan rather than by whatever order the ledger happened to
+ * list them in.
+ */
+export function rebuildOrder(
+  conflicting: readonly Conflicting[],
+  createdAt: ReadonlyMap<string, string | null>,
+): readonly Conflicting[] {
+  return [...conflicting].sort((a, b) => {
+    const at = createdAt.get(a.work_item) ?? null;
+    const bt = createdAt.get(b.work_item) ?? null;
+    if (at !== null && bt !== null && at !== bt) return at < bt ? -1 : 1;
+    if (at !== null && bt === null) return -1;
+    if (at === null && bt !== null) return 1;
+    return a.pr - b.pr || a.work_item.localeCompare(b.work_item);
+  });
 }
 
 async function mergeability(
@@ -106,20 +168,35 @@ export async function requestRebuild(gh: GitHub, workItem: string, pr: number, r
 
 const CONFLICT_CHECK = "factory/conflicts";
 
-/** A grey check on the PR with a button that starts the rebuild again. */
-export async function conflictCheck(checks: GitHub, pr: number): Promise<void> {
+/**
+ * A grey check on the PR with a button that starts the rebuild again.
+ *
+ * `ahead` is how many rebuilds are in front of this one; leave it out for the
+ * one being rebuilt now. A queued PR says so, because a PR that conflicts and
+ * says nothing reads as forgotten, and the button is still there for someone
+ * who does not want to wait their turn.
+ */
+export async function conflictCheck(checks: GitHub, pr: number, ahead?: number): Promise<void> {
   const p = await checks.pull(pr);
+  const waiting = ahead !== undefined && ahead > 0;
   await checks.send("POST", `repos/${checks.repo}/check-runs`, {
     name: CONFLICT_CHECK,
     head_sha: p.head.sha,
     status: "completed",
     conclusion: "neutral",
     output: {
-      title: "Conflicts with main: rebuilding on main",
+      title: waiting
+        ? `Conflicts with main: queued behind ${ahead} other rebuild${ahead === 1 ? "" : "s"}`
+        : "Conflicts with main: rebuilding on main",
       summary:
-        "This branch conflicts with main, so the factory is making the same change again on the current main, " +
-        "as a new PR that replaces this one. An approval given here carries over when the rebuilt change adds " +
-        "the same lines and removes nothing new. If the rebuild does not finish, press **Rebuild on main** above to start it again.",
+        (waiting
+          ? "This branch conflicts with main. The factory rebuilds one change at a time, because rebuilding " +
+            "several at once rebuilds them all against the same main and the first to merge sends the rest " +
+            "back again. This one starts when the rebuild ahead of it lands. "
+          : "This branch conflicts with main, so the factory is making the same change again on the current main, " +
+            "as a new PR that replaces this one. ") +
+        "An approval given here carries over when the rebuilt change adds the same lines and removes nothing new. " +
+        "To start this one now instead of waiting, press **Rebuild on main** above.",
     },
     actions: [{ label: "Rebuild on main", description: "Remake this change on the current main", identifier: "rebuild" }],
   });

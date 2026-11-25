@@ -254,7 +254,8 @@
           "problem_class",
           "proposed_fix",
           "sources",
-          "status"
+          "status",
+          "target"
         ],
         "required": [
           "id",
@@ -369,6 +370,13 @@
       },
       "/properties/candidates/items/properties/contributed_by": {
         "type": "null|string"
+      },
+      "/properties/candidates/items/properties/target": {
+        "type": "string",
+        "enum": [
+          "\"factory\"",
+          "\"repo\""
+        ]
       }
     },
     "coverage.json": {
@@ -2008,6 +2016,7 @@
         "type": "object",
         "properties": [
           "detail",
+          "problem",
           "reason",
           "run",
           "tag"
@@ -2029,6 +2038,9 @@
         "type": "string"
       },
       "/properties/unrouted/items/properties/detail": {
+        "type": "string"
+      },
+      "/properties/unrouted/items/properties/problem": {
         "type": "string"
       }
     },

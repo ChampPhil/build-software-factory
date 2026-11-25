@@ -4,33 +4,73 @@
   "title": "Review report",
   "description": "What the scheduled review found and where each failure was routed. Doc 09.",
   "type": "object",
-  "required": ["schema", "id", "window", "scores", "problems"],
+  "required": [
+    "schema",
+    "id",
+    "window",
+    "scores",
+    "problems"
+  ],
   "additionalProperties": false,
   "properties": {
-    "schema": { "const": "review/1" },
-    "id": { "$ref": "_common.json#/$defs/reviewId" },
+    "schema": {
+      "const": "review/1"
+    },
+    "id": {
+      "$ref": "_common.json#/$defs/reviewId"
+    },
     "window": {
       "type": "object",
-      "required": ["from", "to", "runs"],
+      "required": [
+        "from",
+        "to",
+        "runs"
+      ],
       "additionalProperties": false,
       "properties": {
-        "from": { "$ref": "_common.json#/$defs/timestamp" },
-        "to": { "$ref": "_common.json#/$defs/timestamp" },
-        "runs": { "type": "integer", "minimum": 0 }
+        "from": {
+          "$ref": "_common.json#/$defs/timestamp"
+        },
+        "to": {
+          "$ref": "_common.json#/$defs/timestamp"
+        },
+        "runs": {
+          "type": "integer",
+          "minimum": 0
+        }
       }
     },
     "scores": {
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["run", "criterion", "score"],
+        "required": [
+          "run",
+          "criterion",
+          "score"
+        ],
         "additionalProperties": false,
         "properties": {
-          "run": { "$ref": "_common.json#/$defs/runId" },
-          "criterion": { "type": "string" },
-          "score": { "type": "integer", "minimum": 1, "maximum": 5 },
-          "tags": { "type": "array", "items": { "type": "string" } },
-          "note": { "type": "string" }
+          "run": {
+            "$ref": "_common.json#/$defs/runId"
+          },
+          "criterion": {
+            "type": "string"
+          },
+          "score": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 5
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "note": {
+            "type": "string"
+          }
         }
       }
     },
@@ -38,15 +78,47 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["title", "route"],
+        "required": [
+          "title",
+          "route"
+        ],
         "additionalProperties": false,
         "properties": {
-          "title": { "type": "string", "minLength": 1 },
-          "runs": { "type": "array", "items": { "$ref": "_common.json#/$defs/runId" } },
-          "route": { "type": "string", "enum": ["hardening"] },
-          "work_item": { "oneOf": [{ "$ref": "_common.json#/$defs/workItemId" }, { "type": "null" }] },
-          "change": { "type": "string" },
-          "pr": { "type": ["integer", "null"] }
+          "title": {
+            "type": "string",
+            "minLength": 1
+          },
+          "runs": {
+            "type": "array",
+            "items": {
+              "$ref": "_common.json#/$defs/runId"
+            }
+          },
+          "route": {
+            "type": "string",
+            "enum": [
+              "hardening"
+            ]
+          },
+          "work_item": {
+            "oneOf": [
+              {
+                "$ref": "_common.json#/$defs/workItemId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "change": {
+            "type": "string"
+          },
+          "pr": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
         }
       }
     },
@@ -55,13 +127,29 @@
       "description": "Failures the review saw but did not turn into work: found in a hardening run, so a person sees them and no new hardening item is filed for them.",
       "items": {
         "type": "object",
-        "required": ["run", "tag", "reason"],
+        "required": [
+          "run",
+          "tag",
+          "reason"
+        ],
         "additionalProperties": false,
         "properties": {
-          "run": { "$ref": "_common.json#/$defs/runId" },
-          "tag": { "type": "string" },
-          "reason": { "type": "string" },
-          "detail": { "type": "string" }
+          "run": {
+            "$ref": "_common.json#/$defs/runId"
+          },
+          "tag": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "problem": {
+            "type": "string",
+            "description": "The stable problem id, so a later review can tell whether a thing it has just seen once is the same thing this one saw once. A problem is routed to hardening on its second sighting, never its first."
+          }
         }
       }
     }

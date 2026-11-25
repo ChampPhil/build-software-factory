@@ -79,14 +79,19 @@ describe("groupAndRoute", () => {
   });
 
   it("groups by tag and area", () => {
-    const { problems } = groupAndRoute([f({ run: "a" }), f({ run: "b" }), f({ run: "c", area: "search" })]);
+    const { problems } = groupAndRoute([
+      f({ run: "a" }),
+      f({ run: "b" }),
+      f({ run: "c", area: "search" }),
+      f({ run: "d", area: "search" }),
+    ]);
     expect(problems).toHaveLength(2);
     expect(problems[0]?.occurrences).toBe(2);
   });
 
   it("explains every problem as something a check can catch, whatever its tag", () => {
     for (const tag of ["weak_tests", "pattern_drift", "context_gap", "wrong_model_fit", "something_new"]) {
-      const p = groupAndRoute([f({ tag })]).problems[0];
+      const p = groupAndRoute([f({ tag, run: "a" }), f({ tag, run: "b" })]).problems[0];
       expect(p?.why).toContain("a check can catch");
       expect(p).not.toHaveProperty("destination");
     }
@@ -109,7 +114,7 @@ describe("groupAndRoute", () => {
 
   it("still routes the same failure from a product-work run", () => {
     const pipelineOf = (): string => "product_work";
-    const { problems, unrouted } = groupAndRoute([f({ run: "p" })], { pipelineOf });
+    const { problems, unrouted } = groupAndRoute([f({ run: "p" }), f({ run: "p2" })], { pipelineOf });
     expect(problems).toHaveLength(1);
     expect(unrouted).toEqual([]);
   });
@@ -127,7 +132,77 @@ describe("groupAndRoute", () => {
   });
 
   it("routes a failure with no run id (a gardener hand-off) even when a lookup exists", () => {
-    const { problems } = groupAndRoute([f({ run: "" })], { pipelineOf: () => "hardening" });
+    // The lookup can say nothing about a failure with no run, so it is not set
+    // aside as hardening's own work. It still needs a second sighting, like
+    // every other problem.
+    const { problems, unrouted } = groupAndRoute([f({ run: "" }), f({ run: "" })], {
+      pipelineOf: () => "hardening",
+    });
     expect(problems).toHaveLength(1);
+    expect(unrouted).toEqual([]);
+  });
+});
+
+/**
+ * Every problem the review found used to become a guardrail, and a problem can
+ * be one scored failure in one run. So one bad afternoon — a flaky dependency,
+ * an odd issue, a model having a bad time — could install a rule that every
+ * future change is judged against for years. Nobody is asked: this is the
+ * autonomous path.
+ */
+describe("a problem seen once is watched, not hardened", async () => {
+  const { groupAndRoute, seenOnceIds, SEEN_ONCE_REASON } = await import("../src/commands/review.js");
+  const g = (over: Partial<ScoredFailure>): ScoredFailure => ({
+    run: "run-1", role: "builder", area: "checkout", tag: "weak_tests", kind: "low_score", ...over,
+  });
+
+  it("files nothing for a single sighting", () => {
+    const { problems, unrouted } = groupAndRoute([g({ run: "a" })]);
+    expect(problems).toEqual([]);
+    expect(unrouted).toHaveLength(1);
+    expect(unrouted[0]?.reason).toBe(SEEN_ONCE_REASON);
+  });
+
+  it("records it against a stable id, so the next review can match it", () => {
+    const once = groupAndRoute([g({ run: "a" })]).unrouted[0];
+    const twice = groupAndRoute([g({ run: "b" })]).unrouted[0];
+    expect(once?.problem).toBeDefined();
+    expect(once?.problem).toBe(twice?.problem);
+  });
+
+  it("routes it on the second sighting in one window", () => {
+    const { problems, unrouted } = groupAndRoute([g({ run: "a" }), g({ run: "b" })]);
+    expect(problems).toHaveLength(1);
+    expect(unrouted).toEqual([]);
+  });
+
+  it("routes it when an earlier review saw it once", () => {
+    const first = groupAndRoute([g({ run: "a" })]);
+    const seenBefore = seenOnceIds([{ unrouted: first.unrouted }]);
+    const second = groupAndRoute([g({ run: "b" })], { seenBefore });
+    expect(second.problems).toHaveLength(1);
+    expect(second.problems[0]?.id).toBe(first.unrouted[0]?.problem);
+  });
+
+  it("does not let a different problem's id unlock this one", () => {
+    const other = groupAndRoute([g({ run: "a", tag: "pattern_drift" })]);
+    const seenBefore = seenOnceIds([{ unrouted: other.unrouted }]);
+    expect(groupAndRoute([g({ run: "b" })], { seenBefore }).problems).toEqual([]);
+  });
+
+  it("ignores a set-aside hardening failure when reading what was seen once", () => {
+    // Those are recorded for a person, not as a sighting waiting to recur, and
+    // they carry no problem id.
+    const aside = groupAndRoute([g({ run: "h" })], { pipelineOf: () => "hardening" });
+    expect(seenOnceIds([{ unrouted: aside.unrouted }]).size).toBe(0);
+  });
+
+  it("keeps the area on the record, so a person can tell two sightings apart", () => {
+    const { unrouted } = groupAndRoute([g({ run: "a", area: "checkout" })]);
+    expect(unrouted[0]?.detail).toBe("in checkout");
+  });
+
+  it("copes with a review record that has no unrouted list", () => {
+    expect(seenOnceIds([{}, { unrouted: [] }]).size).toBe(0);
   });
 });
