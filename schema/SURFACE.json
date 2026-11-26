@@ -2930,7 +2930,8 @@
           "static_checks",
           "stubs",
           "tier",
-          "tier_reason"
+          "tier_reason",
+          "ui_paths"
         ],
         "required": [
           "capabilities",
@@ -3474,6 +3475,13 @@
         "minLength": 1
       },
       "/properties/sign_in/properties/why": {
+        "type": "string",
+        "minLength": 1
+      },
+      "/properties/ui_paths": {
+        "type": "array"
+      },
+      "/properties/ui_paths/items": {
         "type": "string",
         "minLength": 1
       }
