@@ -213,7 +213,8 @@ describe("the bsf CLI", () => {
   });
 
   it("prints its version", () => {
-    expect(execFileSync("node", [cli, "version"], { encoding: "utf8" }).trim()).toBe("0.1.0");
+    const pkg = JSON.parse((await import("node:fs")).readFileSync(join(ROOT, "runner/package.json"), "utf8")) as { version: string };
+    expect(execFileSync("node", [cli, "version"], { encoding: "utf8" }).trim()).toBe(pkg.version);
   });
 
   it("lists the schemas it reads and writes", () => {
