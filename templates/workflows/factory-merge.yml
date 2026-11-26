@@ -29,7 +29,9 @@ concurrency:
 
 jobs:
   queue:
-    if: github.event.action != 'closed'
+    # A check_suite that belongs to no pull request (a push to main, a
+    # scheduled run) has nothing to queue (fix 5).
+    if: ${{ github.event.action != 'closed' && (github.event_name != 'check_suite' || toJSON(github.event.check_suite.pull_requests) != '[]') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4

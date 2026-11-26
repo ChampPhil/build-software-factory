@@ -40,3 +40,27 @@ describe("factory-intake (fix 4)", () => {
     expect(run).toContain("bsf intake --record-only");
   });
 });
+
+describe("bot noise (fix 5)", () => {
+  it("intake ignores a bot's issue events but not a CI run or the dashboard's dispatch", () => {
+    const i = wf("factory-intake.yml")["jobs"];
+    for (const job of ["record", "process"]) {
+      const cond = String(i[job]["if"]);
+      expect(cond).toContain("github.event.sender.type != 'Bot'");
+      expect(cond).toContain("workflow_run");
+      expect(cond).toContain("workflow_dispatch");
+    }
+  });
+
+  it("policy skips labels it does not judge", () => {
+    const cond = String(wf("factory-policy.yml")["jobs"]["policy"]["if"]);
+    expect(cond).toContain("factory:hardening");
+    expect(cond).not.toContain("factory:cleared");
+    expect(cond).not.toContain("factory:escalated");
+  });
+
+  it("merge ignores a check suite with no pull request", () => {
+    const cond = String(wf("factory-merge.yml")["jobs"]["queue"]["if"]);
+    expect(cond).toContain("check_suite.pull_requests");
+  });
+});

@@ -24,6 +24,9 @@ concurrency:
 
 jobs:
   policy:
+    # Labels the factory puts on and takes off for its own bookkeeping change
+    # nothing the policy judges; only these labels do (fix 5).
+    if: ${{ (github.event.action != 'labeled' && github.event.action != 'unlabeled') || contains(fromJSON('["factory:settings","factory:product-work","factory:gardening","factory:hardening","factory:definition","factory:conflict","factory:accept"]'), github.event.label.name) }}
     runs-on: ubuntu-latest
     steps:
       # Checks out main — never the PR's head. policy.yaml and the runner come
