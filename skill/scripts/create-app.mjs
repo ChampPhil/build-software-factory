@@ -450,10 +450,13 @@ async function main() {
     log("");
   }
 
-  // The App exists; it is not installed on the repository yet. The browser is
-  // already on its way to the install page (the callback redirected there), so
-  // the person never sees an intermediate page.
-  log(`  One step left: install it on ${args.repo}. Your browser is already on the page.`);
+  // The App exists; it is not installed on the repository yet. The install
+  // page is already "Only select repositories" with this repository selected.
+  // The person clicks Install. This process does not drive their browser.
+  log(`  One step left: install it on ${args.repo} only.`);
+  log(`  Open this link and press Install. Nothing here will click it for you:`);
+  log(`    ${result.installUrl}`);
+  openBrowser(result.installUrl);
   log("");
   log("  Waiting for the install… (this continues by itself)");
 
@@ -601,8 +604,10 @@ function runFlow({ manifest, state, args, kind }) {
       for (const [k, v] of Object.entries(manifest.default_permissions)) log(`    ${k}: ${v}`);
       if (!args.recompiler) log("    workflows: not requested — so it can never edit your gates");
       log("");
-      if (openBrowser(start)) log("  Opening your browser. Press Create GitHub App when it loads.");
-      else log(`  Open this in your browser:\n    ${start}`);
+      // Print the link either way. Opening a tab is optional. Nothing in this
+      // script clicks, types, or drives the page. The person does that.
+      log(`  Open this link and press Create GitHub App. Nothing here will click it for you:\n    ${start}`);
+      openBrowser(start);
       log("");
       log("  Waiting… (GitHub's manifest flow expires after an hour)");
     });
