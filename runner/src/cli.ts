@@ -93,7 +93,7 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
       Gate 1. Runs the repo's own linters, compares every rule's count per
       file against the baselines on the base ref, and checks for weakening.
 
-  bsf gates coverage [--base REF] [--report-check NAME]
+  bsf gates coverage [--base REF] [--pr N] [--report-check NAME]
       Gate 2's coverage half. Diff coverage of the changed files is the main
       check; total coverage must stay above the floor.
 
@@ -895,8 +895,23 @@ async function gatesCoverage(args: Args): Promise<number> {
   const base = baseRef(args);
   const loaded = loadManifest(root);
   const report = loaded.kind === "ok" ? loaded.manifest.coverage_report : undefined;
+  // The PR's pipeline, from the ledger: gardening and hardening are held to
+  // the coverage floor but not to diff coverage (fix 20).
+  let pipeline: string | undefined;
+  const prNumber = Number(args["pr"]);
+  if (prNumber > 0 && process.env["GITHUB_REPOSITORY"] !== undefined && process.env["GITHUB_REPOSITORY"] !== "") {
+    try {
+      const { FactoryStore } = await import("./lib/store.js");
+      const store = new FactoryStore(new GitHub({ repo: process.env["GITHUB_REPOSITORY"] }));
+      const led = await store.ledger(new Date().toISOString());
+      pipeline = led.open.find((o: { pr?: number | null }) => o.pr === prNumber)?.pipeline;
+    } catch {
+      pipeline = undefined;
+    }
+  }
   const result = await runCoverageGate({
     root,
+    ...(pipeline === undefined ? {} : { pipeline }),
     current: await loadCoverage(new DiskLoader(root)),
     changedFiles: changedFilesSince(base),
     changedLines: changedLinesSince(base),

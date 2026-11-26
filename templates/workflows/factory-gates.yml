@@ -246,7 +246,7 @@ jobs:
         if: needs.plan.outputs.coverage == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: bsf gates coverage --report-check factory/gate-coverage
+        run: bsf gates coverage --pr "${{ github.event.pull_request.number }}" --report-check factory/gate-coverage
 
   agent-verification:
     needs: [plan, verification]

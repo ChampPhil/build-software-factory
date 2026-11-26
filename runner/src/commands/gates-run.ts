@@ -343,6 +343,8 @@ export async function runCoverageGate(args: {
   readonly report?: SandboxManifest["coverage_report"];
   /** The lines the change adds, per file, for line-level diff coverage. */
   readonly changedLines?: Readonly<Record<string, ReadonlySet<number>>>;
+  /** The PR's pipeline, from the ledger. Gardening and hardening change no behaviour on purpose. */
+  readonly pipeline?: string;
 }): Promise<CoverageGateResult> {
   const coverage = readCoverage(args.root, args.report);
   const skips = await countSkips(args.root);
@@ -384,10 +386,14 @@ export async function runCoverageGate(args: {
   }
 
   const diff = diffCoverage(coverage, args.changedFiles, args.changedLines);
+  // The pipeline already encodes the intent: a gardening or hardening PR
+  // changes no behaviour, so there is no new behaviour for tests to cover.
+  // The total floor and the skip cap still apply.
+  const behaviourPreserving = args.pipeline === "gardening" || args.pipeline === "hardening";
   const verdict = checkCoverage(args.current, {
     // Nothing measurable in the changed files is not zero coverage: it means
     // the change touched nothing the report covers, such as a config file.
-    diff_pct: diff ?? 100,
+    diff_pct: behaviourPreserving ? 100 : (diff ?? 100),
     total_pct: coverage.total_pct,
     skips,
   });
@@ -396,11 +402,14 @@ export async function runCoverageGate(args: {
   lines.push(
     `| | measured | required |`,
     `| --- | --- | --- |`,
-    `| diff coverage | ${diff === null ? "nothing measurable" : `${diff}%`} | ${args.current.diff_min_pct}% |`,
+    `| diff coverage | ${diff === null ? "nothing measurable" : `${diff}%`} | ${behaviourPreserving ? "not required" : `${args.current.diff_min_pct}%`} |`,
     `| total coverage | ${coverage.total_pct}% | ${args.current.floor_pct}% floor |`,
     `| skipped tests | ${skips} | ${args.current.skips.cap} cap |`,
     "",
   );
+  if (behaviourPreserving) {
+    lines.push("Diff coverage is not required for a behaviour-preserving change; total coverage must not fall below the floor.", "");
+  }
   if (diff === null) {
     lines.push(
       "None of the changed files appear in the coverage report, so there is no diff coverage to measure. That is different from measuring zero.",
