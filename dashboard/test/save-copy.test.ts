@@ -13,3 +13,11 @@ describe("settings save copy on an audit repository", () => {
     expect(saveButtonLabel("branch_protection", 1)).toBe("Save 1 change");
   });
 });
+
+describe("audit wording when the plan is not the reason", () => {
+  it("does not blame the plan unless setup found the plan cannot require checks", () => {
+    expect(saveHint("audit", false)).not.toContain("free private plan");
+    expect(saveHint("audit", false)).toContain("branch protection");
+    expect(saveHint("audit", true)).toContain("free private plan");
+  });
+});

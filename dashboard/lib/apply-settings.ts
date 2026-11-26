@@ -44,6 +44,8 @@ export interface ApplyOptions {
    * nothing explaining why. When this says `audit`, say so at once instead.
    */
   readonly enforcement?: "branch_protection" | "audit" | null;
+  /** True when setup found the plan itself cannot require checks; false when they are merely not switched on. */
+  readonly planLimited?: boolean;
 }
 
 const POLICY_CHECK = "factory/policy";
@@ -138,8 +140,11 @@ export async function applySettingsChange(
         pr: pr.number,
         url,
         reason:
-          "Saved as a pull request. On this repository GitHub does not offer required checks (free private plan), " +
-          "so the factory cannot merge it by itself: you merge it. GitHub Pro or a public repository lets the factory merge by itself.",
+          opts.planLimited === false
+            ? "Saved as a pull request. GitHub is not set to require the factory's checks on this repository yet, " +
+              "so the factory cannot merge it by itself: you merge it. Turning on branch protection lets the factory merge by itself."
+            : "Saved as a pull request. On this repository GitHub does not offer required checks (free private plan), " +
+              "so the factory cannot merge it by itself: you merge it. GitHub Pro or a public repository lets the factory merge by itself.",
       };
     }
 
