@@ -1,0 +1,148 @@
+# The factory's runner upgrade path.
+#
+# Workflows keep running the runner vendored in .factory/bin, taken from the
+# default branch, so a pull request can never grade itself with a modified copy.
+# The line below is the version marker Dependabot can see: when a new runner
+# release is published, Dependabot opens a pull request that bumps this one SHA
+# (and the version in its comment), with the release notes. Merging that PR is
+# the approval. The `sync` job then opens a second pull request that brings
+# .factory/bin up to the pinned release, which a person merges too, because the
+# runner is a protected path.
+#
+# Nothing here executes code from the new release: the pinned action only reads
+# two values out of it, and `sync` copies files. The new runner first runs after
+# a person has merged it.
+name: factory-runner-pin
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/factory-runner-pin.yml"
+      - ".factory/bin/**"
+  push:
+    branches: [main, master]
+    paths:
+      - ".github/workflows/factory-runner-pin.yml"
+      - ".factory/bin/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: factory-runner-pin-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      stale: ${{ steps.compare.outputs.stale }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: The pinned runner release
+        id: pinned
+        uses: __RUNNER_REPO__/runner@__RUNNER_SHA__ # __RUNNER_VERSION__
+      - name: Compare with the vendored runner
+        id: compare
+        shell: bash
+        env:
+          PINNED_VERSION: ${{ steps.pinned.outputs.version }}
+          PINNED_SHA256: ${{ steps.pinned.outputs.sha256 }}
+        run: |
+          have_version="$(head -n1 .factory/bin/VERSION 2>/dev/null || true)"
+          have_sha256="$(sha256sum .factory/bin/runner.tgz 2>/dev/null | cut -d' ' -f1 || true)"
+          if [ "$have_version" = "$PINNED_VERSION" ] && [ "$have_sha256" = "$PINNED_SHA256" ]; then
+            echo "stale=false" >> "$GITHUB_OUTPUT"
+            echo "The vendored runner is the pinned release ($PINNED_VERSION)." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "stale=true" >> "$GITHUB_OUTPUT"
+            msg="The pin says $PINNED_VERSION and .factory/bin has ${have_version:-nothing}. After this is merged to the default branch, the factory opens a pull request that brings the runner up to the pinned release."
+            echo "::notice title=factory-runner-pin::$msg"
+            echo "$msg" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  sync:
+    needs: check
+    if: needs.check.outputs.stale == 'true' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Is the recompiler App installed?
+        id: app
+        env:
+          CLIENT_ID: ${{ vars.RECOMPILER_APP_CLIENT_ID }}
+        run: |
+          if [ -z "$CLIENT_ID" ]; then
+            echo "The recompiler App is not set up, so the vendored runner is not brought up to the pin automatically. Run the setup skill's upgrade, or copy skill/runner from the pinned release into .factory/bin yourself." >> "$GITHUB_STEP_SUMMARY"
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        if: steps.app.outputs.present == 'true'
+        with:
+          persist-credentials: false
+      - name: Read the pin
+        if: steps.app.outputs.present == 'true'
+        id: pin
+        shell: bash
+        run: |
+          sha="$(grep -oE '/runner@[0-9a-f]{40}' .github/workflows/factory-runner-pin.yml | head -n1 | cut -d@ -f2)"
+          [ -n "$sha" ] || { echo "no pinned SHA found" >&2; exit 1; }
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+      - name: Fetch the pinned release's runner
+        if: steps.app.outputs.present == 'true'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: __RUNNER_REPO__
+          ref: ${{ steps.pin.outputs.sha }}
+          path: .runner-release
+          sparse-checkout: skill/runner
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Copy it over .factory/bin
+        if: steps.app.outputs.present == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Only the factory's own launchers and the packed runner; files are
+          # copied, never run.
+          rm -rf .factory/bin
+          mkdir -p .factory/bin
+          cp -R .runner-release/skill/runner/. .factory/bin/
+          rm -rf .runner-release
+      - name: Mint the recompiler's token
+        if: steps.app.outputs.present == 'true'
+        id: token
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1
+        with:
+          app-id: ${{ vars.RECOMPILER_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RECOMPILER_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+      - name: Open a pull request
+        if: steps.app.outputs.present == 'true'
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          BASE: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          git add .factory/bin
+          if git diff --cached --quiet; then echo "the runner is already at the pin"; exit 0; fi
+          # A file's mode is part of the change: the launcher must stay executable.
+          git update-index --chmod=+x .factory/bin/bsf
+          version="$(head -n1 .factory/bin/VERSION)"
+          branch="factory/runner-${GITHUB_RUN_ID}"
+          git config user.name "factory-recompiler[bot]"
+          git config user.email "factory-recompiler[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git commit -q -m "Bring the vendored runner up to ${version}"
+          git push -q "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "$branch"
+          gh api "repos/${GITHUB_REPOSITORY}/pulls" -f title="Bring the vendored runner up to ${version}" \
+            -f head="$branch" -f base="$BASE" \
+            -f body="The runner pin was bumped, so this copies that release's packed runner into .factory/bin. It changes a protected path, so it needs a person's approval. Nothing from the new release has run yet." \
+            --jq .html_url

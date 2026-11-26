@@ -95,7 +95,7 @@ tests:
   declared_edits: required        # edits to existing test files must be listed in the spec
 runner_upgrades:
   author: "dependabot[bot]"
-  may_change: runner_pin          # only the `uses: build-software-factory/runner@<sha> # vX` lines
+  may_change: runner_pin          # only the `uses: <owner>/build-software-factory/runner@<sha> # vX` line in factory-runner-pin.yml
   requires: trusted_human_approval  # never auto-merged
 weakening:
   requires: trusted_human_approval

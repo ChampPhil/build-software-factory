@@ -1,0 +1,24 @@
+name: Build Software Factory runner
+description: >
+  The pin Dependabot upgrades. It reports which runner release this reference
+  points at and the checksum of the packed runner inside it, and does nothing
+  else: no network, no secrets, no writes. A repository's workflows keep running
+  the vendored copy in .factory/bin, taken from the default branch; this action
+  exists so that a new release shows up as an ordinary, reviewable pull request.
+outputs:
+  version:
+    description: The release's VERSION line (version and bundle hash)
+    value: ${{ steps.report.outputs.version }}
+  sha256:
+    description: sha256 of the packed runner in this release
+    value: ${{ steps.report.outputs.sha256 }}
+runs:
+  using: composite
+  steps:
+    - id: report
+      shell: bash
+      run: |
+        set -euo pipefail
+        dir="${{ github.action_path }}/../skill/runner"
+        echo "version=$(head -n1 "$dir/VERSION")" >> "$GITHUB_OUTPUT"
+        echo "sha256=$(sha256sum "$dir/runner.tgz" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"

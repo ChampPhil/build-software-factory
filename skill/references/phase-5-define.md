@@ -22,10 +22,14 @@ Write the factory definition and install the workflows.
    pinned to the runner's commit SHA with the version in a trailing comment
    (`runner@<sha> # v0.1.0`). Nothing runs on a polling timer except nightly
    gardening, the daily review check and the daily rollup sweep.
-7. **Runner upgrades**: a `.github/dependabot.yml` entry for the
-   `github-actions` ecosystem, limited to the runner, with a 3-day cooldown. If
-   the repo already has a `dependabot.yml`, add the entry **without touching
-   the others**.
+7. **Runner upgrades**: `install-factory.mjs` has already written
+   `factory-runner-pin.yml` and a `.github/dependabot.yml` entry for the
+   `github-actions` ecosystem, limited to the runner, with a 3-day cooldown
+   (an existing `dependabot.yml` is added to without touching the other
+   entries). **Check, do not retype:** both files exist, the entry is present,
+   and the pin line names a real release. If the install printed that no
+   release is pinned, say so in the setup summary: upgrades will not open
+   themselves until the factory publishes one.
 8. **Local session hooks** for Claude Code, and for any other agent CLI the
    repo's developers use, found in the repo (these only capture past sessions
    for correction mining; they run no factory step). Each hook asks its developer once, on first run on their machine,
