@@ -1,3 +1,4 @@
+import { knownScopesOverlap, scopeOf, filesNamedIn } from "../lib/scope.js";
 import type { GitHub } from "../lib/github.js";
 import { FactoryStore, LEDGER, json, workItemPath, reviewPath } from "../lib/store.js";
 import type { Change } from "../lib/dataref.js";
@@ -374,7 +375,30 @@ export async function runReviewRoute(
   const filed: { work_item: string; destination: string }[] = [];
   const open = [...ledger.open];
 
+  // One overlap rule for every pipeline: a problem whose files another open
+  // item is already changing is added to that item's PR, not filed again.
+  const openBodies = new Map<string, string>();
+  if (problems.length > 0) {
+    for (const o of ledger.open) {
+      const doc = await store.get<{ body?: string }>(workItemPath(o.work_item), "work-item").catch(() => null);
+      if (doc?.body !== undefined) openBodies.set(o.work_item, doc.body);
+    }
+  }
   for (const p of problems) {
+    const looksLikePath = p.area !== "" && /[/.]/.test(p.area) && !/\s/.test(p.area);
+    const mine = looksLikePath ? scopeOf([p.area]) : null;
+    const clash = ledger.open.find((o) => {
+      const body = openBodies.get(o.work_item);
+      return body !== undefined && knownScopesOverlap(mine, scopeOf(filesNamedIn(body)));
+    });
+    if (clash !== undefined) {
+      if (typeof clash.pr === "number" && opts.plan !== true) {
+        await opts.gh
+          .send("POST", `repos/${opts.gh.repo}/issues/${clash.pr}/comments`, { body: `Also requested: ${p.why}` })
+          .catch(() => undefined);
+      }
+      continue;
+    }
     const pipeline: Pipeline = "hardening";
     const id = workItemId(Date.parse(opts.now) || Date.now());
     const item = {

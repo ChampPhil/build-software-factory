@@ -452,8 +452,19 @@ async function intakeImpl(opts: IntakeRunOptions): Promise<IntakeRunReport | Int
     if (heldLive(convo, new Date(opts.now))) liveConversations.push(o.work_item);
   }
 
+  // What each open item is already doing, so a correction that repeats it or
+  // edits the same files folds into it rather than opening a second PR.
+  const openItemBodies: Record<string, string> = {};
+  if (queued.some((e) => e.pr !== undefined && e.id > cursor)) {
+    for (const o of openItems) {
+      const doc = await store.get<{ body?: string }>(workItemPath(o.work_item), "work-item").catch(() => null);
+      if (doc?.body !== undefined) openItemBodies[o.work_item] = doc.body;
+    }
+  }
+
   const result = runIntake(queued, {
     prItems,
+    openItemBodies,
     policy: opts.policy,
     triggers: opts.triggers,
     cursor,
@@ -549,6 +560,20 @@ async function intakeImpl(opts: IntakeRunOptions): Promise<IntakeRunReport | Int
   // What a person corrected is kept on the run it corrected, which is where
   // scoring and the review read `human_corrections` from.
   changes.push(...(await correctionChanges(store, result.decisions)));
+  // Say on the existing PR that the same thing was asked again, and on the
+  // source PR that it is already covered.
+  for (const d of result.decisions) {
+    const a = d.alsoRequested;
+    if (a === undefined || opts.plan === true) continue;
+    if (a.pr !== null) {
+      await opts.gh.send("POST", `repos/${opts.gh.repo}/issues/${a.pr}/comments`, { body: `Also requested: ${a.text}` }).catch(() => undefined);
+    }
+    await opts.gh
+      .send("POST", `repos/${opts.gh.repo}/issues/${a.sourcePr}/comments`, {
+        body: a.pr !== null ? `Already covered by #${a.pr}.` : "Already covered by work the factory has open.",
+      })
+      .catch(() => undefined);
+  }
 
   if (newItems.length > 0 || requeued.size > 0 || result.cursor !== cursor) {
     const nextLedger = {

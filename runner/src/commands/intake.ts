@@ -3,6 +3,7 @@ import type { Association, Pipeline, Policy, TriggerClass } from "../lib/types.j
 import { isTrustedActor } from "./policy.js";
 import type { Routing } from "./chief-of-staff.js";
 import { ASK_LABEL, extractGoal, TIDY_LABEL } from "./request-text.js";
+import { knownScopesOverlap, normaliseText, filesNamedIn, scopeOf } from "../lib/scope.js";
 import { classifyCorrection, recordOf, workItemBody, workItemTitle, type CorrectionKind, type CorrectionRecord } from "./corrections.js";
 
 /**
@@ -123,6 +124,11 @@ export interface IntakeDecision {
   readonly correctedItem?: string;
   /** The open item an answer or an admission applies to. */
   readonly openItem?: string;
+  /**
+   * Set when a correction was folded into an open item because it repeats it
+   * or edits the same files: the PR the caller comments on, and the text.
+   */
+  readonly alsoRequested?: { readonly pr: number | null; readonly text: string; readonly sourcePr: number; readonly exact: boolean };
   /** Open items whose fingerprint is close enough to be worth triage's attention. */
   readonly duplicateShortlist: readonly string[];
 }
@@ -156,6 +162,8 @@ export interface IntakeContext {
   /** Highest event id already processed. Events at or below it are skipped. */
   readonly cursor: number;
   readonly openItems: readonly LedgerOpenItem[];
+  /** The body of each open work item, so a correction can be compared with what is already being done. */
+  readonly openItemBodies?: Readonly<Record<string, string>>;
   /**
    * Work items with a conversation already being held open.
    *
@@ -557,6 +565,25 @@ function decidePrCorrection(event: IncomingEvent, ctx: IntakeContext, trusted: b
       reason: `${folded.work_item} is already hardening against this same correction`,
       duplicateShortlist: [],
     };
+  }
+
+  // The same words already asked for, or the same files already being
+  // changed, by any open item of any pipeline: say so on that item's PR
+  // instead of opening a second PR over the same lines.
+  const norm = normaliseText(record.text);
+  const scope = scopeOf(event.files ?? []);
+  for (const o of ctx.openItems) {
+    const body = ctx.openItemBodies?.[o.work_item];
+    if (body === undefined || o.work_item === target.work_item) continue;
+    const exact = norm !== "" && normaliseText(body).includes(norm);
+    if (exact || knownScopesOverlap(scope, scopeOf(filesNamedIn(body)))) {
+      return {
+        event, workItem: null, outcome: "context_for_open_item", openItem: o.work_item, correction: record, correctedItem: target.work_item,
+        alsoRequested: { pr: o.pr ?? null, text: record.text, sourcePr: pr, exact },
+        reason: exact ? `already covered by ${o.work_item}` : `${o.work_item} is already changing the same files`,
+        duplicateShortlist: [],
+      };
+    }
   }
 
   const item: WorkItemDraft = {

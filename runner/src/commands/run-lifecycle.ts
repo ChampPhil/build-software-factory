@@ -1,3 +1,5 @@
+import { scopeOf, scopesOverlap, filesNamedIn } from "../lib/scope.js";
+import { closePullWithReason } from "../lib/github.js";
 import { runId as newRunId } from "../lib/ids.js";
 import { FactoryStore, LEDGER, json, livePath, runPath, workItemPath, type Ledger } from "../lib/store.js";
 import { appendTurn, closeBrainstorm } from "./brainstorm.js";
@@ -333,13 +335,24 @@ export async function finishRun(opts: FinishRunOptions): Promise<AfterGatesRepor
             body: `Rebuilt on the current main as #${pr}, because this branch conflicted with it. An approval given here carries to #${pr} when the rebuilt change adds the same lines and removes nothing new.`,
           })
           .catch(() => undefined);
-        await opts.gh.send("PATCH", `repos/${opts.gh.repo}/pulls/${replaced}`, { state: "closed" }).catch(() => undefined);
+        // The comment above says why; closing goes through the one helper.
+        await closePullWithReason(opts.gh, replaced, `Replaced by #${pr} because this branch conflicted with main.`);
       }
     }
+    // A hardening PR changes the files its correction named, and tests for
+    // them. Anything else (rules, dependencies, config nobody asked for) is
+    // a person's to decide, so the run stops here.
+    const stray = item.pipeline === "hardening" ? await strayHardeningFiles(opts.gh, pr, item as { body?: string }) : [];
+    const strayReport: typeof report = {
+      next: "escalate",
+      reason: `this hardening PR changes files its correction did not name: ${stray.slice(0, 5).join(", ")}${stray.length > 5 ? ` and ${stray.length - 5} more` : ""}`,
+      pr,
+      attempt: opts.attempt,
+    };
     const deadline = Date.parse(opts.now()) + opts.waitMs;
     let head = (await opts.gh.pull(pr)).head.sha;
-    let checks = await gateChecks(opts.gh, head);
-    for (;;) {
+    let checks = stray.length > 0 ? [] : await gateChecks(opts.gh, head);
+    for (; stray.length === 0; ) {
       const agg = checks.find((c) => c.name === GATES_CHECK);
       if (agg !== undefined && agg.status === "completed") break;
       if (Date.parse(opts.now()) >= deadline) break;
@@ -350,7 +363,9 @@ export async function finishRun(opts: FinishRunOptions): Promise<AfterGatesRepor
     finalChecks = checks;
     finalHead = head;
     const agg = checks.find((c) => c.name === GATES_CHECK);
-    if ((agg === undefined || agg.status !== "completed") && opts.waitMs <= 0) {
+    if (stray.length > 0) {
+      report = strayReport;
+    } else if ((agg === undefined || agg.status !== "completed") && opts.waitMs <= 0) {
       // Hand off: the gates' own workflow finishes this run when they report,
       // so no job here sits billing minutes while it waits (fix 6).
       report = { next: "awaiting_gates", reason: `${GATES_CHECK} has not reported on ${head.slice(0, 7)} yet`, pr, attempt: opts.attempt };
@@ -990,11 +1005,7 @@ export async function dropItems(opts: {
       }
     }
     if (typeof item.pr === "number") {
-      await opts.gh.send("POST", `repos/${opts.gh.repo}/issues/${item.pr}/comments`, { body: `Dropped by an owner: ${opts.why}` }).catch(() => undefined);
-      await opts.gh.send("PATCH", `repos/${opts.gh.repo}/pulls/${item.pr}`, { state: "closed" }).then(
-        () => closedPrs.push(item.pr as number),
-        () => undefined,
-      );
+      if (await closePullWithReason(opts.gh, item.pr, `Closed because an owner dropped it: ${opts.why}`)) closedPrs.push(item.pr);
     }
     dropped.push(id);
   }
@@ -1051,4 +1062,18 @@ async function escalationBody(gh: GitHub, workItem: string, reason: string, fail
     footer: `Work item ${workItem}`,
   });
   return rendered.body;
+}
+
+
+/**
+ * The files a hardening PR changed that its correction did not name. Empty
+ * when the correction names no files (nothing to hold it to) or every changed
+ * file is named or is a test.
+ */
+export async function strayHardeningFiles(gh: GitHub, pr: number, item: { readonly body?: string } | object): Promise<string[]> {
+  const allowed = scopeOf(filesNamedIn((item as { body?: string }).body ?? ""));
+  if (allowed === null) return [];
+  const changed = (await gh.pullFiles(pr).catch(() => [])).map((f) => f.filename);
+  const isTest = (f: string) => /(^|\/)(tests?|__tests__|spec)\//.test(f) || /\.(test|spec)\.[a-z]+$/.test(f);
+  return changed.filter((f) => !isTest(f) && !scopesOverlap(scopeOf([f]), allowed));
 }

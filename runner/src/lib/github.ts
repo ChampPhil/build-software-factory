@@ -450,3 +450,16 @@ export async function effectiveAssociation(
     return association;
   }
 }
+
+
+/**
+ * Close a factory PR and say why first. Every path that closes one goes
+ * through here, so nobody finds a PR gone with no explanation.
+ */
+export async function closePullWithReason(gh: GitHub, pr: number, text: string): Promise<boolean> {
+  await gh.send("POST", `repos/${gh.repo}/issues/${pr}/comments`, { body: text }).catch(() => undefined);
+  return gh.send("PATCH", `repos/${gh.repo}/pulls/${pr}`, { state: "closed" }).then(
+    () => true,
+    () => false,
+  );
+}
