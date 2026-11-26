@@ -257,8 +257,22 @@ export function runIntake(events: readonly IncomingEvent[], ctx: IntakeContext):
   const pending = events.filter((e) => e.id > ctx.cursor).slice().sort((a, b) => a.id - b.id);
 
   let cursor = ctx.cursor;
+  // Items this batch has already made count as open for the events after
+  // them. Without this, the two events one action raises (an issue opened with
+  // a label on it sends `opened` and `labeled`) each made an item (D52).
+  const made: LedgerOpenItem[] = [];
   for (const event of pending) {
-    decisions.push(decide(event, ctx));
+    const d = decide(event, made.length === 0 ? ctx : { ...ctx, openItems: [...ctx.openItems, ...made] });
+    decisions.push(d);
+    if (d.workItem !== null) {
+      made.push({
+        work_item: d.workItem.id,
+        fingerprint: d.workItem.fingerprint,
+        source_ref: d.workItem.source.ref,
+        status: d.workItem.status,
+        pipeline: d.workItem.pipeline,
+      });
+    }
     cursor = Math.max(cursor, event.id);
   }
 
@@ -330,6 +344,20 @@ function decide(incoming: IncomingEvent, ctx: IntakeContext): IntakeDecision {
       reason: `review comment on PR #${event.pr} goes back to that PR's run as a revision`,
       duplicateShortlist: [],
     };
+  }
+
+  // The same issue, already hardening: the form's label arrives as `opened`
+  // and again as `labeled`, and both turn into corrections. One issue is one
+  // hardening item (D52).
+  if (event.kind === "correction" && incoming.kind !== "correction" && event.ref != null) {
+    const open = ctx.openItems.find((o) => o.source_ref === event.ref && o.pipeline === "hardening");
+    if (open !== undefined) {
+      return {
+        event, workItem: null, outcome: "context_for_open_item", openItem: open.work_item,
+        reason: `${event.ref} already has ${open.work_item} (${open.status})`,
+        duplicateShortlist: [],
+      };
+    }
   }
 
   const machineOrigin = event.kind === "schedule_gardening" || event.kind === "review_routed" || event.kind === "conflict_detected";

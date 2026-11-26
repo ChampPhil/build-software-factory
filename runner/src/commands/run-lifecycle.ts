@@ -127,6 +127,7 @@ export async function startRun(opts: {
   const issue = issueNumber(item.source?.ref);
   if (issue !== null && !opts.escalate && opts.attempt === 1) {
     await opts.gh.send("DELETE", `repos/${opts.gh.repo}/issues/${issue}/labels/${encodeURIComponent("factory:queued")}`).catch(() => undefined);
+    await opts.gh.send("DELETE", `repos/${opts.gh.repo}/issues/${issue}/labels/${encodeURIComponent("factory:awaiting-maintainer")}`).catch(() => undefined);
   }
   return { runId: id, status };
 }

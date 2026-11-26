@@ -48,7 +48,7 @@ const policy: Policy = {
   weakening: { requires: "trusted_human_approval", detects: ["rule_removed"] },
 };
 
-const posted: { path: string; body: string }[] = [];
+const posted: { path: string; body: string; labels?: string[] }[] = [];
 function runEvent(eventName: string, payload: unknown, dispatched: string[], now: string, record: true): Promise<Awaited<ReturnType<typeof recordIntakeCommand>>>;
 function runEvent(eventName: string, payload: unknown, dispatched: string[], now: string, record?: false): ReturnType<typeof runIntakeCommand>;
 function runEvent(eventName: string, payload: unknown, dispatched: string[], now: string, record = false): Promise<unknown> {
@@ -57,7 +57,7 @@ function runEvent(eventName: string, payload: unknown, dispatched: string[], now
   const gh = {
     repo: "o/r",
     get: async (path: string) => ({ permission: path.includes("/stranger/") ? "none" : "admin" }),
-    send: async (_m: string, p: string, b: { body: string }) => { posted.push({ path: p, body: b.body }); return {}; },
+    send: async (_m: string, p: string, b: { body: string; labels?: string[] }) => { posted.push({ path: p, body: b?.body, ...(b?.labels === undefined ? {} : { labels: b.labels }) }); return {}; },
     dispatchWorkflow: async (_w: string, _r: unknown, inputs: Record<string, string>) => { dispatched.push(inputs["work_item"]!); },
     defaultBranch: async () => "main",
   } as never;
@@ -159,5 +159,19 @@ describe("recording an event on its own (fix 4)", () => {
     const dispatched: string[] = [];
     await runEvent("issues", ev, dispatched, "2026-11-22T10:00:00Z");
     expect([...files.keys()].filter((k) => k.startsWith("work-items/"))).toHaveLength(1);
+  });
+});
+
+describe("the label an issue gets while it waits (D53)", () => {
+  it("says queued only for someone the factory trusts", async () => {
+    emptyFactory();
+    await runEvent("issues", opened("Add a thing", "philip", "OWNER"), [], "2026-11-22T10:00:00Z", true);
+    expect(posted.filter((p) => p.path.endsWith("/labels")).map((p) => p.labels)).toEqual([["factory:queued"]]);
+  });
+
+  it("says awaiting-maintainer for a stranger, never queued", async () => {
+    emptyFactory();
+    await runEvent("issues", opened("Add a thing", "stranger", "NONE"), [], "2026-11-22T10:00:00Z", true);
+    expect(posted.filter((p) => p.path.endsWith("/labels")).map((p) => p.labels)).toEqual([["factory:awaiting-maintainer"]]);
   });
 });

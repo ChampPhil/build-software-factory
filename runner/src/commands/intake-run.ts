@@ -336,6 +336,9 @@ export async function runIntakeCommand(opts: IntakeRunOptions): Promise<IntakeRu
   return r;
 }
 
+/** Put on an issue from someone the factory does not trust, in place of factory:queued. */
+export const AWAITING_LABEL = "factory:awaiting-maintainer";
+
 /** The first intake job: write the event down and mark the issue queued (fix 4). */
 export async function recordIntakeCommand(opts: IntakeRunOptions): Promise<IntakeRecordedReport> {
   const r = await intakeImpl({ ...opts, recordOnly: true });
@@ -420,7 +423,10 @@ async function intakeImpl(opts: IntakeRunOptions): Promise<IntakeRunReport | Int
     // The issue says "queued" from here until a run starts (fix 3).
     const num = incoming?.kind === "issue_opened" ? /^#(\d+)$/.exec(incoming.ref ?? "")?.[1] : undefined;
     if (num !== undefined) {
-      await opts.gh.send("POST", `repos/${opts.gh.repo}/issues/${num}/labels`, { labels: ["factory:queued"] }).catch(() => undefined);
+      // Someone the factory does not trust gets a different label: nothing is
+      // queued for them until a maintainer accepts it (D53).
+      const trusted = incoming !== null && isTrustedActor(opts.policy, incoming.actor, incoming.actor_association as Association, { isBot: incoming.actor_is_bot === true });
+      await opts.gh.send("POST", `repos/${opts.gh.repo}/issues/${num}/labels`, { labels: [trusted ? "factory:queued" : AWAITING_LABEL] }).catch(() => undefined);
     }
     return { recorded: true, event: incoming?.id ?? null };
   }
@@ -544,6 +550,13 @@ async function intakeImpl(opts: IntakeRunOptions): Promise<IntakeRunReport | Int
       }
     }
     changes.push({ path: workItemPath(d.openItem), content: json(next) });
+    if (d.outcome === "admits_open_item" && opts.plan !== true) {
+      const n = /^#(\d+)$/.exec(String((doc["source"] as { ref?: string | null } | undefined)?.ref ?? ""))?.[1];
+      if (n !== undefined) {
+        await opts.gh.send("DELETE", `repos/${opts.gh.repo}/issues/${n}/labels/${encodeURIComponent(AWAITING_LABEL)}`).catch(() => undefined);
+        await opts.gh.send("POST", `repos/${opts.gh.repo}/issues/${n}/labels`, { labels: ["factory:queued"] }).catch(() => undefined);
+      }
+    }
     requeued.set(d.openItem, { status: String(next["status"]), pipeline: String(next["pipeline"] ?? doc["pipeline"]) });
   }
 
