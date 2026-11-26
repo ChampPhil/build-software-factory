@@ -44,7 +44,7 @@ describe("findings about missing proof (fix 8)", () => {
       gh: gh(dispatched), now: "2026-11-26T00:00:00Z",
       failures: [finding("missing_evidence"), finding("overclaimed")],
     });
-    const items = written.filter((w) => w.path.startsWith("work-items/")).map((w) => JSON.parse(w.content!) as unknown);
+    const items = written.filter((w) => w.path.startsWith("work-items/")).map((w) => JSON.parse(w.content!) as { title?: string; pipeline?: string });
     expect(items.filter((i) => i.pipeline === "hardening")).toHaveLength(0);
     expect(items.filter((i) => i.pipeline === "factory_health")).toHaveLength(1);
     expect(dispatched).toEqual([]);
