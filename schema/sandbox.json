@@ -552,6 +552,14 @@
           "minLength": 1
         }
       }
+    },
+    "ui_paths": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "Globs for the files that make up the UI. A product-work PR that changes one of them must carry a video; setup finds them by looking for the directories that depend on a UI framework."
     }
   }
 }

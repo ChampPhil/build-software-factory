@@ -324,6 +324,8 @@ jobs:
           # needs; a secret scanner cannot tell them from real ones and would
           # block this PR over a value that was never a secret.
           bsf sandbox scrub --file .factory/sandbox/manifest.json
+          # Which files are the UI, so a video is asked for only when one changes.
+          bsf sandbox ui-paths --file .factory/sandbox/manifest.json
           if [ -d "$design/stubs" ]; then rm -rf .factory/sandbox/stubs; cp -R "$design/stubs" .factory/sandbox/stubs; fi
           if [ -f "$design/research-domains.txt" ]; then cp "$design/research-domains.txt" .factory/sandbox/research-domains.txt; fi
           # An amendment changes the sandbox only; the context stays the

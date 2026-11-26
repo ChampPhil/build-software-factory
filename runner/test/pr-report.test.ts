@@ -171,10 +171,11 @@ describe("recordings on a PR", () => {
     expect(renderReport({ repo: "o/r", kind: "change", reports: [verifier] }).problems.join(" ")).not.toContain("video");
   });
 
-  it("needs a video only for product work the spec says touches the UI", () => {
-    expect(needsVideo({ pipeline: "product_work", spec: { ui_change: true } } as never)).toBe(true);
-    expect(needsVideo({ pipeline: "product_work", spec: { ui_change: false } } as never)).toBe(false);
-    expect(needsVideo({ pipeline: "gardening", spec: { ui_change: true } } as never)).toBe(false);
+  it("needs a video only for product work that changes a UI path, whatever the spec says", () => {
+    const ui = ["client/**"];
+    expect(needsVideo({ pipeline: "product_work", spec: { ui_change: false } } as never, ["client/src/App.jsx"], ui)).toBe(true);
+    expect(needsVideo({ pipeline: "product_work", spec: { ui_change: true } } as never, ["server/routes.js"], ui)).toBe(false);
+    expect(needsVideo({ pipeline: "gardening" } as never, ["client/src/App.jsx"], ui)).toBe(false);
     expect(needsVideo(null)).toBe(false);
   });
 });

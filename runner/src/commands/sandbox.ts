@@ -31,6 +31,8 @@ export interface SandboxManifest {
     readonly seed?: string | null;
     readonly coverage?: string | null;
   };
+  /** Globs for the UI's files; a product-work PR touching one needs a video (fix 28). */
+  readonly ui_paths?: readonly string[];
   readonly coverage_report?: { readonly path: string; readonly format: "lcov" | "cobertura" | "istanbul-summary" };
   readonly static_checks?: readonly StaticCheck[];
   readonly app_url?: string | null;

@@ -296,6 +296,7 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
       Declare a practice every agent follows from now on. Opens a PR adding it to
       practices.md, and a rule where one can enforce it. Same as commenting
       /practice TEXT on any issue or PR.
+  bsf sandbox ui-paths [--file PATH]   (record which files are the UI)
   bsf sandbox scrub [--file PATH]   (replace secret-shaped placeholder values)
   bsf sandbox dry-run   (start the sandbox and serve the app, as the checker will)
   bsf sandbox start
@@ -2610,6 +2611,18 @@ async function sandboxCommandCli(second: string | undefined, args: Args): Promis
         return 1;
       }
     }
+    return 0;
+  }
+  if (second === "ui-paths") {
+    // `bsf sandbox ui-paths [--file PATH]`: record which files are the UI, so
+    // the PR report needs a video only for changes to them.
+    const file = typeof args["file"] === "string" ? args["file"] : ".factory/sandbox/manifest.json";
+    if (!existsSync(file)) die(`${file} does not exist`);
+    const { detectUiPaths } = await import("./lib/ui-paths.js");
+    const manifest = JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>;
+    const found = detectUiPaths(process.cwd());
+    writeFileSync(file, `${JSON.stringify({ ...manifest, ui_paths: found }, null, 2)}\n`);
+    process.stdout.write(`ui paths: ${found.length === 0 ? "none found" : found.join(", ")}\n`);
     return 0;
   }
   if (second === "scrub") {

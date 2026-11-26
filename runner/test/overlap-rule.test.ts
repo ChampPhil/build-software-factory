@@ -153,3 +153,56 @@ describe("spend has one source (fix 23)", () => {
     expect(parseBudgetKey("nonsense")).toBeNull();
   });
 });
+
+describe("gh-aw's own report issues are not requests (fix 24)", () => {
+  it("creates no event for an [aw] issue, however it is marked", async () => {
+    const { normalizeEvent } = await import("../src/commands/intake-run.js");
+    const base = { action: "opened", sender: { login: "github-actions[bot]", type: "Bot" } };
+    const mk = (issue: Record<string, unknown>) => normalizeEvent("issues", { ...base, issue: { number: 18, user: { login: "x", type: "Bot" }, author_association: "NONE", ...issue } } as never, "2026-11-25T00:00:00Z");
+    expect(mk({ title: "[aw] Triage: finished without a terminal safe output", labels: [{ name: "agentic-workflows" }] })).toBeNull();
+    expect(mk({ title: "[aw] Verifier incomplete", labels: [] })).toBeNull();
+    expect(mk({ title: "Something", body: "<!-- gh-aw-agentic-workflow: x -->", labels: [] })).toBeNull();
+    expect(mk({ title: "Add a badge", labels: [] })).not.toBeNull();
+  });
+});
+
+describe("PR reports (fix 28)", () => {
+  it("asks for a video only when a UI path changed", async () => {
+    const { needsVideo } = await import("../src/commands/pr-report.js");
+    const item = { id: "wi", pipeline: "product_work", spec: { ui_change: true } };
+    const ui = ["client/**"];
+    expect(needsVideo(item, ["server/routes/products.js"], ui)).toBe(false);
+    expect(needsVideo(item, ["client/src/App.jsx"], ui)).toBe(true);
+    expect(needsVideo({ ...item, pipeline: "gardening" }, ["client/src/App.jsx"], ui)).toBe(false);
+    expect(needsVideo(item, ["client/src/App.jsx"], [])).toBe(false);
+  });
+
+  it("finds the UI directories and html files in a repo", async () => {
+    const { detectUiPaths, globToRegExp } = await import("../src/lib/ui-paths.js");
+    const { mkdtempSync, mkdirSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const root = mkdtempSync(join(tmpdir(), "bsf-ui-"));
+    mkdirSync(join(root, "client"));
+    mkdirSync(join(root, "server"));
+    writeFileSync(join(root, "client/package.json"), JSON.stringify({ dependencies: { react: "1", vite: "1" } }));
+    writeFileSync(join(root, "server/package.json"), JSON.stringify({ dependencies: { express: "1" } }));
+    writeFileSync(join(root, "index.html"), "<html></html>");
+    expect(detectUiPaths(root)).toEqual(["client/**", "index.html"]);
+    expect(globToRegExp("client/**").test("client/src/App.jsx")).toBe(true);
+    expect(globToRegExp("client/**").test("server/x.js")).toBe(false);
+  });
+
+  it("never renders an empty Summary, and fails when nothing can stand in", async () => {
+    const { renderReport, fallbackSummaryFor } = await import("../src/commands/pr-report.js");
+    const item = { id: "wi", title: "T", pipeline: "product_work", spec: { goal: "Make the list sortable" } };
+    const fb = fallbackSummaryFor(item, ["server/a.js"]);
+    expect(fb.length).toBeGreaterThan(0);
+    const reports = [{ role: "builder", report: { schema: "pr-report/1", summary: [], blocks: [] }, problems: [], degraded: [] }];
+    const ok = renderReport({ repo: "o/r", kind: "change", reports, links: [], fallbackSummary: fb, footer: "f" } as never);
+    expect(ok.body).toContain("Make the list sortable");
+    expect(ok.problems.some((p: string) => p.startsWith("no summary"))).toBe(false);
+    const bad = renderReport({ repo: "o/r", kind: "change", reports, links: [], footer: "f" } as never);
+    expect(bad.problems.some((p: string) => p.startsWith("no summary"))).toBe(true);
+  });
+});

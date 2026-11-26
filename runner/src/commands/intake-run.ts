@@ -119,6 +119,9 @@ export function normalizeEvent(
   if (eventName === "issues" && payload.issue !== undefined) {
     const kind: EventKind = payload.action === "labeled" ? "issue_labeled" : "issue_opened";
     if (payload.action !== "opened" && payload.action !== "labeled") return null;
+    // The report issues gh-aw files about its own runs ("[aw] Triage: finished
+    // without a terminal safe output") are the factory's noise, not a request.
+    if (isGhAwReport(payload.issue)) return null;
     return {
       id, kind, at: now,
       actor: payload.issue.user?.login ?? payload.sender?.login ?? "unknown",
@@ -836,4 +839,14 @@ export async function missedIssues(
 export function commentIdOf(url: string | undefined): number | null {
   const m = /(?:issuecomment-|#c|discussion_r)(\d+)/.exec(url ?? "");
   return m === null ? null : Number(m[1]);
+}
+
+
+/** An issue gh-aw filed about one of its own runs: labelled, titled or marked as one. */
+export function isGhAwReport(issue: { title?: string | undefined; body?: string | null | undefined; labels?: readonly { name?: string | undefined }[] | undefined }): boolean {
+  return (
+    (issue.labels ?? []).some((l) => l.name === "agentic-workflows") ||
+    (issue.title ?? "").startsWith("[aw] ") ||
+    (issue.body ?? "").includes("gh-aw-agentic-workflow")
+  );
 }
