@@ -8,6 +8,11 @@ sees in their upgrade pull request.
 
 Schemas: reads `*/1`, writes `*/1`.
 
+### Fixed
+
+- **One issue is one hardening item.** The "Harden this" form applies its label when it opens the issue, so GitHub sends `opened` and `labeled` together and intake made a work item for each: two cards on the dashboard, two hardening runs. Intake now counts the items it has just made as open for the events after them in the same batch, and an issue that already has hardening work does not get a second item from the label.
+- **An issue waiting for a maintainer no longer says "queued".** Issues from people the factory does not trust get `factory:awaiting-maintainer` instead of `factory:queued`; accepting the issue swaps it for `factory:queued`, and a run starting removes both.
+
 ### Added
 
 - **The conversation happens in seconds instead of minutes.** A brainstorm turn was a whole workflow run — a comment woke intake, intake requeued the item, a role started from scratch and built a sandbox it never used in order to ask one question. Three to five minutes a turn, which is correspondence rather than conversation. One job now stays alive for the whole exchange: the agent asks with `bsf brainstorm say`, blocks on `bsf brainstorm wait`, and a turn costs the model call. The conversation is the agent's own session, so a fourth question knows what the first three answers settled without anything being re-read.

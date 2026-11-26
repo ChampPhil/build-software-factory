@@ -468,4 +468,36 @@ describe("the harden label", () => {
     const res = runIntake([ev({ id: 8, kind: "issue_opened", labels: ["factory:harden"] })], ctx());
     expect(res.decisions[0]!.workItem?.pipeline).toBe("hardening");
   });
+
+  it("makes one item, not two, when the form's label raises opened and labeled (D52)", () => {
+    const res = runIntake(
+      [
+        ev({ id: 10, kind: "issue_opened", labels: ["factory:harden"], title: "Same mistake", ref: "#42" }),
+        ev({ id: 11, kind: "issue_labeled", labels: ["factory:harden"], label_added: "factory:harden", labeled_by: "philip", actor: "philip", title: "Same mistake", ref: "#42" }),
+      ],
+      ctx(),
+    );
+    expect(res.decisions.filter((d) => d.workItem !== null)).toHaveLength(1);
+    expect(res.decisions[1]!.outcome).toBe("context_for_open_item");
+  });
+
+  it("does the same for a stranger whose first item is waiting for trust (D52)", () => {
+    const res = runIntake(
+      [
+        ev({ id: 12, kind: "issue_opened", actor: "stranger", actor_association: "NONE", labels: ["factory:harden"], title: "Hmm", ref: "#43" }),
+        ev({ id: 13, kind: "issue_labeled", actor: "stranger", actor_association: "NONE", labels: ["factory:harden"], label_added: "factory:harden", labeled_by: "stranger", title: "Hmm", ref: "#43" }),
+      ],
+      ctx(),
+    );
+    expect(res.decisions.filter((d) => d.workItem !== null)).toHaveLength(1);
+    expect(res.decisions[0]!.outcome).toBe("waiting_trust");
+  });
+
+  it("still makes a hardening item when the label is added later to an issue that already has product work", () => {
+    const res = runIntake(
+      [ev({ id: 14, kind: "issue_labeled", labels: ["factory:harden"], label_added: "factory:harden", labeled_by: "philip", actor: "philip", title: "Later", ref: "#44" })],
+      ctx({ openItems: [{ work_item: "wi_x", status: "queued", pipeline: "product_work", source_ref: "#44", fingerprint: "sha256:" + "1".repeat(64) }] }),
+    );
+    expect(res.decisions[0]!.workItem?.pipeline).toBe("hardening");
+  });
 });
