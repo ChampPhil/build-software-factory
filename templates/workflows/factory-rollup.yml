@@ -73,3 +73,13 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
         run: bsf rollup
+      # The two records of spend must agree to the cent, and the month's
+      # billed minutes are reported beside the dollars. A difference files a
+      # factory-health item; neither stops the rollup.
+      - name: Check the spend records agree
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+        run: |
+          bsf budget verify
+          bsf budget minutes

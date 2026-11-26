@@ -147,6 +147,8 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
       charged at the ceiling.
 
   bsf budget status
+  bsf budget verify   (budget.json and steps/ must agree to the cent)
+  bsf budget minutes   (Actions minutes billed this month against the limit)
       Spent, held and left this month.
 
   bsf merge-queue [--apply]
@@ -483,7 +485,9 @@ async function main(argv: readonly string[]): Promise<number> {
       if (second === "settle") return budgetSettleCommand(args);
       if (second === "measure") return budgetMeasureCommand(args);
       if (second === "status") return budgetStatusCommand();
-      if (second !== "check") die("usage: bsf budget check|reserve|measure|settle|status");
+      if (second === "verify") return budgetVerifyCommand();
+      if (second === "minutes") return budgetMinutesCommand();
+      if (second !== "check") die("usage: bsf budget check|reserve|measure|settle|status|verify|minutes");
       return budgetCommand(args);
 
     case "merge-queue":
@@ -1807,17 +1811,119 @@ async function budgetSettleCommand(args: Args): Promise<number> {
   const { FactoryStore } = await import("./lib/store.js");
   const store = new FactoryStore(gh);
   const now = nowIso();
+  let heldSince: string | null = null;
   const r = await store.data.updateJson<BudgetDoc, ReturnType<typeof settleBudget>>(
     BUDGET_PATH,
     (current) => {
       const base = current !== null && current.schema === "budget/2" ? current : null;
+      heldSince = base?.inflight.find((f) => f.key === key)?.started_at ?? null;
       const out = settleBudget(base, { key, agentUsd, detectionUsd: detUsd, ...(pipeline === undefined ? {} : { pipeline }) }, now);
       return { next: out.doc === base || (base !== null && base.settled.includes(key)) ? null : out.doc, result: out };
     },
     `budget: settle ${key}`,
   );
   process.stdout.write(`${key}: ${r.reason}\n`);
+  // The same command that charged the budget records the step, so the two
+  // cannot disagree about what a run cost (fix 23).
+  const parsed = (await import("./commands/run-lifecycle.js")).parseBudgetKey(key);
+  if (parsed !== null && r.chargedUsd > 0) {
+    const started = heldSince === null ? Date.parse(now) : Date.parse(heldSince);
+    const billed = await billedMinutes(gh, parsed.run);
+    const record: import("./commands/run-lifecycle.js").StepRecord = {
+      role: parsed.role,
+      run_id: parsed.run,
+      attempt: parsed.attempt,
+      at: now,
+      cost_usd: r.chargedUsd,
+      duration_sec: Math.max(0, Math.round((Date.parse(now) - started) / 1000)),
+      ...(billed === null ? {} : { billed_minutes: billed }),
+    };
+    await store.put([{ path: `steps/${parsed.run}/${parsed.role}-${parsed.attempt}.json`, content: `${JSON.stringify(record, null, 2)}\n` }], `steps: ${key}`);
+  }
   return 0;
+}
+
+/**
+ * `bsf budget verify`: budget.json and steps/ must agree to the cent. When
+ * they do not, say so, file a factory_health item once, and exit 1.
+ */
+async function budgetVerifyCommand(): Promise<number> {
+  const gh = new GitHub({ repo: requireRepo() });
+  const { FactoryStore, LEDGER, json, workItemPath } = await import("./lib/store.js");
+  const store = new FactoryStore(gh);
+  const raw = await store.data.readJson<BudgetDoc>(BUDGET_PATH);
+  const doc = raw !== null && raw.schema === "budget/2" ? raw : null;
+  const names = (await store.data.list("steps/")).filter((n) => n.endsWith(".json"));
+  const steps: { at: string; cost_usd: number }[] = [];
+  for (const n of names) {
+    const d = await store.data.readJson<{ at?: string; cost_usd?: number }>(n).catch(() => null);
+    if (d !== null && typeof d.cost_usd === "number" && typeof d.at === "string") steps.push({ at: d.at, cost_usd: d.cost_usd });
+  }
+  const { verifySpend } = await import("./commands/budget.js");
+  const v = verifySpend(doc, steps);
+  process.stdout.write(`budget.json $${v.budget_usd.toFixed(4)}, steps/ $${v.steps_usd.toFixed(4)}: ${v.ok ? "they agree" : `they differ by $${v.difference_usd.toFixed(4)}`}\n`);
+  if (v.ok) return 0;
+  const { fingerprint } = await import("./commands/intake.js");
+  const { workItemId } = await import("./lib/ids.js");
+  const now = nowIso();
+  const ledger = await store.ledger(now);
+  const fp = fingerprint({ title: "factory_health", body: "spend_mismatch" });
+  if (!ledger.open.some((o: { fingerprint?: string; status: string }) => o.fingerprint === fp && o.status === "queued")) {
+    const id = workItemId(Date.parse(now));
+    const item = {
+      schema: "work-item/1" as const, id, created_at: now,
+      source: { kind: "review_routed", ref: null, actor: "factory", via: null },
+      trigger_class: "self" as const, pipeline: "factory_health" as const,
+      title: "The factory's two records of spend disagree",
+      body: `budget.json says $${v.budget_usd.toFixed(4)} and steps/ says $${v.steps_usd.toFixed(4)}. They are written by the same command, so a write was lost.`,
+      priority: "high" as const, fingerprint: fp, status: "queued" as const, runs: [], pr: null, parent: null, related: [], spec: null,
+    };
+    await store.put(
+      [
+        { path: workItemPath(id), content: json(item) },
+        { path: LEDGER, content: json({ ...ledger, updated_at: now, open: [...ledger.open, { work_item: id, pipeline: "factory_health", status: "queued", fingerprint: fp, priority: "high", created_at: now, fixes: ["spend_mismatch"] }] }) },
+      ],
+      "budget verify: spend records disagree",
+    );
+  }
+  return 1;
+}
+
+/**
+ * `bsf budget minutes`: Actions minutes billed this month, from the steps'
+ * billed_minutes, against the plan's limit. A null limit (public repos,
+ * where standard runners are free) is never exceeded.
+ */
+async function budgetMinutesCommand(): Promise<number> {
+  const cfg = await factoryConfig();
+  const gh = new GitHub({ repo: requireRepo() });
+  const { FactoryStore } = await import("./lib/store.js");
+  const store = new FactoryStore(gh);
+  const month = nowIso().slice(0, 7);
+  let used = 0;
+  for (const n of (await store.data.list("steps/")).filter((x) => x.endsWith(".json"))) {
+    const d = await store.data.readJson<{ at?: string; billed_minutes?: number }>(n).catch(() => null);
+    if (d !== null && typeof d.at === "string" && d.at.startsWith(month) && typeof d.billed_minutes === "number") used += d.billed_minutes;
+  }
+  const limit = cfg.budget?.monthly_actions_minutes ?? null;
+  setOutput("minutes_used", String(used));
+  if (limit === null) {
+    process.stdout.write(`${used} Actions minutes billed this month; no limit applies here\n`);
+    return 0;
+  }
+  process.stdout.write(`${used} of ${limit} Actions minutes billed this month${used > limit ? ": over the limit" : ""}\n`);
+  return used > limit ? 1 : 0;
+}
+
+/** Minutes GitHub billed for a run, from its timing; null when unreadable. */
+async function billedMinutes(gh: GitHub, runId: string): Promise<number | null> {
+  try {
+    const t = await gh.get<{ run_duration_ms?: number; billable?: Record<string, { total_ms?: number }> }>(`repos/${gh.repo}/actions/runs/${runId}/timing`);
+    const ms = Object.values(t.billable ?? {}).reduce((a, b) => a + (b.total_ms ?? 0), 0);
+    return ms > 0 ? Math.ceil(ms / 60_000) : null;
+  } catch {
+    return null;
+  }
 }
 
 /** `bsf budget status`: spent, held and left, for a person reading a log. */

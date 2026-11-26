@@ -259,7 +259,13 @@ export async function finishRun(opts: FinishRunOptions): Promise<AfterGatesRepor
   // A run that handed off to the gates' workflow comes back here once they
   // finish. Its item waits in review, not running.
   const handed = await store.data.readJson<Handoff>(handoffPath(opts.runId)).catch(() => null);
-  const steps = opts.steps ?? handed?.steps ?? [];
+  // The data ref is the one place a step's cost is recorded: `bsf budget
+  // settle` writes steps/<run>/<role>-<attempt>.json in the same command that
+  // charges the budget. The artifacts are evidence, and fill in only a role
+  // the ref has no record of, so the two can no longer disagree.
+  const recorded = await stepsFromRef(store, opts.runId);
+  const carried = opts.steps ?? handed?.steps ?? [];
+  const steps = [...recorded, ...carried.filter((c) => !recorded.some((r) => r.role === c.role))];
   const record = (report: AfterGatesReport, checks: readonly GateCheck[], commit: string | null, status: string) => ({
     path: runPath(opts.runId),
     content: json(
@@ -1162,4 +1168,45 @@ export async function failStep(opts: {
     action: escalate ? "escalated" : "requeued",
     reason: `${opts.step} failed before its agent finished`,
   };
+}
+
+
+/** The steps `bsf budget settle` recorded for a run, from `steps/<run>/`. */
+export async function stepsFromRef(store: FactoryStore, runId: string): Promise<StepReportDoc[]> {
+  const names = await store.data.list(`steps/${runId}/`).catch(() => [] as readonly string[]);
+  const out: StepReportDoc[] = [];
+  for (const n of names.filter((x) => x.endsWith(".json"))) {
+    const d = await store.data.readJson<StepRecord>(n).catch(() => null);
+    if (d === null) continue;
+    out.push({
+      role: d.role,
+      model: d.model ?? "unknown",
+      exit: "ok",
+      duration_sec: d.duration_sec,
+      tokens: d.tokens ?? { in: 0, out: 0 },
+      cost_usd: d.cost_usd,
+      transcript: null,
+    });
+  }
+  return out;
+}
+
+/** What `bsf budget settle` writes for each step it charges. */
+export interface StepRecord {
+  readonly role: string;
+  readonly run_id: string;
+  readonly attempt: number;
+  readonly at: string;
+  readonly model?: string;
+  readonly cost_usd: number;
+  readonly duration_sec: number;
+  readonly tokens?: { readonly in: number; readonly out: number };
+  /** Minutes GitHub billed for the job, when it could be read (fix 6). */
+  readonly billed_minutes?: number;
+}
+
+/** Split a budget key `<run>-<attempt>-<role>`. */
+export function parseBudgetKey(key: string): { run: string; attempt: number; role: string } | null {
+  const m = /^(\d+)-(\d+)-(.+)$/.exec(key);
+  return m === null ? null : { run: m[1]!, attempt: Number(m[2]), role: m[3]! };
 }

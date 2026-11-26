@@ -131,3 +131,25 @@ describe("one comment is recorded once (fix 22)", () => {
     }
   });
 });
+
+describe("spend has one source (fix 23)", () => {
+  it("agrees when the steps add up to the budget, and says how far apart when not", async () => {
+    const { verifySpend, emptyBudget } = await import("../src/commands/budget.js");
+    const doc = { ...emptyBudget("2026-11-25T00:00:00Z"), spent_usd: { product_work: 3.5, gardening: 0.26 } };
+    const steps = [
+      { at: "2026-11-25T01:00:00Z", cost_usd: 3.0 },
+      { at: "2026-11-25T02:00:00Z", cost_usd: 0.76 },
+      { at: "2026-10-31T02:00:00Z", cost_usd: 9 },
+    ];
+    expect(verifySpend(doc, steps).ok).toBe(true);
+    const off = verifySpend(doc, steps.slice(0, 1));
+    expect(off.ok).toBe(false);
+    expect(off.difference_usd).toBeCloseTo(0.76, 4);
+  });
+
+  it("parses a budget key into run, attempt and role", async () => {
+    const { parseBudgetKey } = await import("../src/commands/run-lifecycle.js");
+    expect(parseBudgetKey("45708583255-1-builder-host")).toEqual({ run: "45708583255", attempt: 1, role: "builder-host" });
+    expect(parseBudgetKey("nonsense")).toBeNull();
+  });
+});

@@ -439,3 +439,26 @@ export function canStart(
   }
   return { ok: true, reason: `its largest step (up to $${need.toFixed(2)}) fits` };
 }
+
+
+/* ----------------------------------------------------------------- verify */
+
+export interface SpendCheck {
+  readonly ok: boolean;
+  readonly budget_usd: number;
+  readonly steps_usd: number;
+  readonly difference_usd: number;
+}
+
+/**
+ * Do the two records of the month's spend agree? `budget.json` holds a total
+ * per pipeline; `steps/` holds one record per charged step. They are written
+ * by the same command, so a difference means one write was lost.
+ */
+export function verifySpend(budget: BudgetDoc | null, steps: readonly { readonly at: string; readonly cost_usd: number }[], tolerance = 0.01): SpendCheck {
+  const month = budget?.month ?? "";
+  const budgetUsd = budget === null ? 0 : Object.values(budget.spent_usd).reduce((a, b) => a + b, 0);
+  const stepsUsd = steps.filter((s) => month === "" || s.at.startsWith(month)).reduce((a, s) => a + s.cost_usd, 0);
+  const diff = Math.abs(round4(budgetUsd) - round4(stepsUsd));
+  return { ok: diff <= tolerance, budget_usd: round4(budgetUsd), steps_usd: round4(stepsUsd), difference_usd: round4(diff) };
+}
