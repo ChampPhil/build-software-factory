@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { applySettingsChange, type SettingsOutcome, type Stage } from "@/lib/apply-settings";
 import { SETTINGS, applySettings, changesFrom, describeValue, readSettings, type Setting, type SettingValue } from "@/lib/settings";
 import { saveButtonLabel, saveHint } from "@/lib/save-copy";
+import { storedEnforcement } from "@/lib/settings";
 import { GOAL_LANES, liveGoals } from "@/lib/routing";
 import { day, hourLabel, pipeName } from "@/lib/view";
 import type { StandingGoalsFile } from "@/lib/types";
@@ -46,7 +47,7 @@ export function SettingsForm({ yaml, enforcement }: { yaml: string; enforcement:
   const save = async (): Promise<void> => {
     setOutcome(null);
     try {
-      const result = await applySettingsChange(client, changes, { onStage: setStage, enforcement });
+      const result = await applySettingsChange(client, changes, { onStage: setStage, enforcement, planLimited: storedEnforcement(yaml) === "audit" });
       setOutcome(result);
       if (result.status === "applied") {
         toast("Settings saved.");
@@ -174,7 +175,7 @@ export function SettingsForm({ yaml, enforcement }: { yaml: string; enforcement:
               ? problem
               : demo
                 ? "In the demo, saving is refused like every change."
-                : saveHint(enforcement)}
+                : saveHint(enforcement, storedEnforcement(yaml) === "audit")}
         </span>
       </div>
       {outcome !== null && (
