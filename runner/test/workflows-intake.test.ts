@@ -64,3 +64,15 @@ describe("bot noise (fix 5)", () => {
     expect(cond).toContain("check_suite.pull_requests");
   });
 });
+
+describe("factory-run routes on state (fix 7)", () => {
+  const run = wf("factory-run.yml")["jobs"];
+  it("exposes skip_triage and brainstorm_open from plan", () => {
+    expect(run["plan"]["outputs"]["skip_triage"]).toBeDefined();
+    expect(run["plan"]["outputs"]["brainstorm_open"]).toBeDefined();
+  });
+  it("a reply to an open conversation goes to brainstorm and spec waits for it", () => {
+    expect(String(run["brainstorm"]["if"])).toContain("brainstorm_open == 'true'");
+    expect(String(run["spec"]["if"])).toContain("brainstorm_open != 'true'");
+  });
+});

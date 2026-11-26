@@ -55,6 +55,8 @@ jobs:
       pipeline: ${{ steps.plan.outputs.pipeline }}
       protected_files_policy: ${{ steps.plan.outputs.protected_files_policy }}
       needs_triage: ${{ steps.plan.outputs.needs_triage }}
+      skip_triage: ${{ steps.plan.outputs.skip_triage }}
+      brainstorm_open: ${{ steps.plan.outputs.brainstorm_open }}
       # Proceed only once the run has claimed the item: a run that could not
       # (the item was already taken, or escalated) starts no role.
       proceed: ${{ steps.start.outputs.run_id != '' && steps.plan.outputs.proceed == 'true' }}
@@ -243,7 +245,7 @@ jobs:
     needs: [plan, triage, triaged, triage-budget]
     if: >-
       always() && needs.plan.outputs.proceed == 'true' &&
-      needs.triaged.outputs.wants_conversation == 'true'
+      (needs.triaged.outputs.wants_conversation == 'true' || needs.plan.outputs.brainstorm_open == 'true')
     # What the compiled role's own jobs request. A caller must grant at
     # least this, or GitHub refuses to start the run.
     permissions:
@@ -361,6 +363,7 @@ jobs:
       always() && needs.plan.outputs.proceed == 'true' && needs.plan.outputs.needs_spec == 'true' &&
       (needs.triage.result == 'skipped' || needs.triaged.outputs.proceed == 'true' ||
        needs.brainstormed.outputs.understood == 'true') &&
+      (needs.plan.outputs.brainstorm_open != 'true' || needs.brainstormed.outputs.understood == 'true') &&
       (needs.brainstorm.result == 'skipped' || needs.brainstorm.result == 'success') &&
       (needs.hardener.result == 'success' || needs.hardener.result == 'skipped') &&
       needs.hardener.outputs.created_pr_number == ''

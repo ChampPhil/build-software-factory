@@ -320,6 +320,15 @@ export function nextAnswer(
   return fresh[0] ?? null;
 }
 
+/**
+ * "Build it": the person is done talking. Matched on the start of the reply so
+ * "build it, but keep the old button" still counts. Anything else is an answer.
+ */
+export const GO_AHEAD = /^(build it|go ahead|ship it|yes|do it|lgtm)\b/;
+export function isGoAhead(text: string): boolean {
+  return GO_AHEAD.test(text.trim().toLowerCase().replace(/^[^a-z]+/, ""));
+}
+
 /** Marks a comment the factory wrote, so the loop never reads its own question as an answer. */
 export const FACTORY_MARKER = "<!-- bsf:brainstorm -->";
 
@@ -657,6 +666,8 @@ export interface WaitOptions {
    */
   readonly onAnswer: (c: IssueComment) => Promise<void>;
   readonly onHeartbeat: () => Promise<void>;
+  /** A go-ahead closes the conversation with what was understood so far (fix 7). */
+  readonly onGoAhead?: (c: IssueComment) => Promise<void>;
 }
 
 /**
@@ -690,6 +701,10 @@ export async function waitForAnswer(gh: GitHub, opts: WaitOptions): Promise<Wait
       const answer = nextAnswer(res.body, { after, trusted: opts.trusted });
       if (answer !== null) {
         await opts.onAnswer(answer);
+        if (opts.onGoAhead !== undefined && isGoAhead(answer.body ?? "")) {
+          await opts.onGoAhead(answer);
+          return { kind: "closed" };
+        }
         return {
           kind: "answer",
           text: (answer.body ?? "").trim(),

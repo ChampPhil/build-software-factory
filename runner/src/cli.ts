@@ -1276,13 +1276,30 @@ async function runCommand(second: string | undefined, args: Args, third?: string
     const workItemId = third;
     let pipeline = typeof args["pipeline"] === "string" ? args["pipeline"] : undefined;
     let hasSpec = true;
-    if (pipeline === undefined && typeof workItemId === "string") {
+    // Fix 7: what the item already knows decides which steps a run repeats.
+    let skipTriage = false;
+    let brainstormOpen = false;
+    if (typeof workItemId === "string") {
       const { FactoryStore, workItemPath } = await import("./lib/store.js");
       const store = new FactoryStore(new GitHub({ repo: requireRepo() }));
-      const item = await store.get<{ pipeline: string; spec?: unknown }>(workItemPath(workItemId), "work-item");
-      if (item === null) die(`${workItemId} is not on the data ref`);
-      pipeline = item.pipeline;
-      hasSpec = item.spec !== null && item.spec !== undefined;
+      const item = await store.get<{ pipeline: string; spec?: unknown; triage_reason?: unknown }>(workItemPath(workItemId), "work-item");
+      if (item === null && pipeline === undefined) die(`${workItemId} is not on the data ref`);
+      if (item !== null) {
+        if (pipeline === undefined) {
+          pipeline = item.pipeline;
+          hasSpec = item.spec !== null && item.spec !== undefined;
+        }
+        // Triage already ran and a spec exists: a reply or an approval does
+        // not need the item read again (about 3 billable minutes each time).
+        const spec = item.spec;
+        skipTriage =
+          typeof item.triage_reason === "string" &&
+          spec !== null && typeof spec === "object" && Object.keys(spec as object).length > 0;
+        // A conversation is still open on this item: the reply goes to it.
+        const { brainstormPath } = await import("./commands/brainstorm.js");
+        const b = await store.data.readJson<{ closed_at?: string }>(brainstormPath(workItemId)).catch(() => null);
+        brainstormOpen = b !== null && b.closed_at === undefined;
+      }
     }
     // A conflict rebuild: the same change, rebuilt on the current main by the
     // builder and verified. The intent and spec are the item's already.
@@ -1337,7 +1354,10 @@ async function runCommand(second: string | undefined, args: Args, third?: string
     process.stdout.write(`${plan.reason}\nroles: ${roles.join(" -> ") || "(none)"}\n`);
     setOutput("pipeline", pipeline);
     setOutput("roles", roles.join(","));
-    setOutput("needs_triage", String(roles.includes("triage")));
+    const runsTriage = roles.includes("triage") && !skipTriage && !brainstormOpen;
+    setOutput("needs_triage", String(runsTriage));
+    setOutput("skip_triage", String(skipTriage || brainstormOpen));
+    setOutput("brainstorm_open", String(brainstormOpen));
     setOutput("needs_hardener", String(roles.includes("hardener")));
     setOutput("needs_spec", String(roles.includes("spec")));
     setOutput("protected_files_policy", protectedFilesPolicy);
@@ -2264,6 +2284,13 @@ async function brainstormTurnCommand(sub: "say" | "wait" | "close" | "frame", wo
     },
     onHeartbeat: async () => {
       await bs.mark(gh, workItem, { holder, now: nowIso() });
+    },
+    // "Build it" ends the conversation with what the factory understood, and
+    // says nothing back: the run goes straight on to spec (fix 7).
+    onGoAhead: async () => {
+      const current = await bs.readBrainstorm(gh, workItem);
+      const lastFactory = [...(current?.turns ?? [])].reverse().find((t) => t.who === "factory")?.text ?? "";
+      await bs.closeBrainstorm(gh, workItem, current?.understood ?? lastFactory, nowIso());
     },
   });
 
