@@ -68,6 +68,7 @@
         "enum": [
           "\"conflict\"",
           "\"definition\"",
+          "\"factory_health\"",
           "\"gardening\"",
           "\"hardening\"",
           "\"product_work\""

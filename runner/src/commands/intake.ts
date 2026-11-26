@@ -688,7 +688,7 @@ export function chooseDispatches(
   const paused = new Set(opts.pausedPipelines);
 
   const eligible = queued
-    .filter((q) => !paused.has(q.pipeline))
+    .filter((q) => !paused.has(q.pipeline) && q.pipeline !== "factory_health")
     .slice()
     .sort((a, b) => {
       if (a.priority !== b.priority) return a.priority === "high" ? -1 : 1;

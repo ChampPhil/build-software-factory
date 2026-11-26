@@ -205,6 +205,8 @@ const SHARE_OF: Readonly<Record<Pipeline, "product_work" | "gardening" | "review
   gardening: "gardening",
   hardening: "gardening",
   definition: "review_and_benchmarks",
+  // Filed for a person, never run, so it spends nothing (fix 8).
+  factory_health: "review_and_benchmarks",
 };
 
 /**

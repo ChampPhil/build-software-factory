@@ -101,6 +101,27 @@ export interface ScoredFailure {
   readonly score?: number;
   readonly kind: "low_score" | "escalation" | "revert" | "human_correction";
   readonly detail?: string;
+  /** Whose problem this is: the repo's, or the factory's own (fix 8). Set by the review, not the scorer. */
+  readonly target?: "repo" | "factory";
+}
+
+/**
+ * Findings whose cause is that the factory never produced the proof, not that
+ * the repo lacks it: a verifier that did not finish cannot have shown the
+ * checks passing.
+ */
+export const FACTORY_CLASSES: ReadonlySet<string> = new Set(["missing_evidence", "unverifiable_checks", "overclaimed"]);
+
+/** Whether a run's own record shows the factory failed to verify it. */
+export function factoryCouldNotVerify(run: {
+  readonly steps?: readonly { readonly role?: string; readonly exit?: string }[];
+  readonly app?: { readonly url?: string | null };
+  readonly gates?: { readonly verification?: string };
+} | null): boolean {
+  if (run === null) return false;
+  if ((run.steps ?? []).some((s) => s.role === "verifier" && s.exit !== undefined && s.exit !== "ok")) return true;
+  if (run.app !== undefined && run.app.url === null) return true;
+  return run.gates?.verification === "not_run";
 }
 
 export interface Problem {
@@ -323,17 +344,28 @@ export async function runReviewRoute(
   // Which pipeline each failing run belonged to, so a failure found in a
   // hardening run is set aside instead of hardened again.
   const pipelines = new Map<string, string>();
+  const cannotVerify = new Set<string>();
   for (const id of new Set(opts.failures.map((f) => f.run).filter((r) => r !== ""))) {
-    const doc = await store.data.readJson<{ pipeline?: string }>(`runs/${id}.json`).catch(() => null);
+    const doc = await store.data
+      .readJson<Parameters<typeof factoryCouldNotVerify>[0] & { pipeline?: string }>(`runs/${id}.json`)
+      .catch(() => null);
     if (doc?.pipeline !== undefined) pipelines.set(id, doc.pipeline);
+    if (factoryCouldNotVerify(doc)) cannotVerify.add(id);
   }
+  // A finding about missing proof, on a run the factory could not verify, is
+  // the factory's problem: it is filed once as a health item, never as a rule
+  // to harden the repo with.
+  const targetOf = (f: ScoredFailure): "repo" | "factory" =>
+    f.target ?? (FACTORY_CLASSES.has(f.tag) && cannotVerify.has(f.run) ? "factory" : "repo");
+  const factoryFindings = opts.failures.filter((f) => targetOf(f) === "factory");
+  const repoFailures = opts.failures.filter((f) => targetOf(f) === "repo");
   // What earlier reviews saw once. A problem this window saw once is routed
   // only if one of them saw it too — twice is the bar for installing a rule
   // nobody was asked about. The last few reviews are enough: a thing that has
   // not recurred in that long is not a problem class.
   const seenBefore = seenOnceIds(await recentReviews(store, 4));
 
-  const { problems, unrouted } = groupAndRoute(opts.failures, {
+  const { problems, unrouted } = groupAndRoute(repoFailures, {
     pipelineOf: (run) => pipelines.get(run),
     seenBefore,
   });
@@ -374,6 +406,38 @@ export async function runReviewRoute(
       fixes: [p.tag],
     });
     filed.push({ work_item: id, destination: "hardening" });
+  }
+
+  if (factoryFindings.length > 0) {
+    const tags = [...new Set(factoryFindings.map((f) => f.tag))].sort();
+    const runs = [...new Set(factoryFindings.map((f) => f.run))].sort();
+    const fp = fingerprint({ title: "factory_health", body: tags.join(",") });
+    if (!open.some((o) => o.fingerprint === fp && o.status === "queued")) {
+      const id = workItemId((Date.parse(opts.now) || Date.now()) + 1);
+      const doc = {
+        schema: "work-item/1" as const,
+        id,
+        created_at: opts.now,
+        source: { kind: sourceKind("review_routed"), ref: null, actor: "factory", via: null },
+        trigger_class: "self" as const,
+        pipeline: "factory_health" as const,
+        title: `The factory could not verify ${runs.length} run${runs.length === 1 ? "" : "s"}`,
+        body:
+          `The review found missing proof (${tags.join(", ")}) on runs where the verifier did not finish or the app did not start. ` +
+          `That is the factory's fault, not the repository's, so no rule was proposed.\n\nRuns:\n${runs.map((r) => `- ${r}`).join("\n")}`,
+        priority: "high" as const,
+        fingerprint: fp,
+        status: "queued" as const,
+        runs,
+        pr: null,
+        parent: null,
+        related: [],
+        spec: null,
+      };
+      changes.push({ path: workItemPath(id), content: json(doc) });
+      open.push({ work_item: id, pipeline: "factory_health", status: "queued", fingerprint: fp, priority: "high", created_at: opts.now, fixes: tags });
+      // Never dispatched: it is listed on the dashboard's Factory health section.
+    }
   }
 
   const recorded = opts.allScores ?? opts.failures;

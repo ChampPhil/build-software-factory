@@ -28,9 +28,9 @@ describe("planRun", () => {
     expect(plan.roles).toHaveLength(0);
   });
 
-  it("every pipeline ends in a verifier, except definition", () => {
+  it("every pipeline ends in a verifier, except definition and factory_health", () => {
     for (const [pipeline, roles] of Object.entries(ROLE_SEQUENCE)) {
-      if (pipeline === "definition") continue;
+      if (pipeline === "definition" || pipeline === "factory_health") continue;
       expect(roles[roles.length - 1], `${pipeline} does not end in verification`).toBe("verifier");
     }
   });

@@ -25,6 +25,8 @@ const SEQUENCE: Readonly<Record<Pipeline, readonly Role[]>> = {
   // A definition change comes from a /practice comment; the builder writes the
   // change itself, and a trusted human approves the PR.
   definition: ["builder"],
+  // Never dispatched: a person decides what a problem with the factory needs.
+  factory_health: [],
 };
 
 export interface PlanInput {
