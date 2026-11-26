@@ -213,7 +213,7 @@ describe("the bsf CLI", () => {
   });
 
   it("prints its version", () => {
-    const pkg = JSON.parse(readFileSync.readFileSync(join(ROOT, "runner/package.json"), "utf8")) as { version: string };
+    const pkg = JSON.parse(readFileSync(join(ROOT, "runner/package.json"), "utf8")) as { version: string };
     expect(execFileSync("node", [cli, "version"], { encoding: "utf8" }).trim()).toBe(pkg.version);
   });
 
