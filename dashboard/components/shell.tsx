@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
@@ -11,7 +11,7 @@ import { isDemo } from "@/lib/demo";
 import { completeGithubLogin, needsRefresh, refreshSession, REFRESH_MARGIN_MS } from "@/lib/github-login";
 import { GitHubClient } from "@/lib/github";
 import { useClient, useFactorySettings, useGuardrails, useIndex, useIssues, useLedger, useLive, usePulls, useWorkItems } from "@/lib/data";
-import { runAction, type Optimistic } from "@/lib/optimistic";
+import { runAction, sweep, type Held, type HeldData } from "@/lib/optimistic";
 import { needsFrom, requestsFrom, requestIds, statusName } from "@/lib/view";
 import type { FirstRequest } from "@/lib/request";
 import { SignIn } from "@/components/sign-in";
@@ -259,11 +259,47 @@ function SignedIn({
   const [composing, setComposing] = useState<(FirstRequest & { kind?: string }) | null | false>(false);
   const [palette, setPalette] = useState(false);
 
+  // What the page has already shown as done, until the records say so (or sixty seconds pass).
+  const [held, setHeld] = useState<Held>({});
   const act = useCallback(
-    (fn: () => Promise<unknown>, done: string, optimistic?: Optimistic): Promise<boolean> =>
-      runAction(fn, done, { say: toast, refresh: bump }, optimistic, explain),
+    (fn: () => Promise<unknown>, done: string, key?: string): Promise<boolean> =>
+      runAction(
+        fn,
+        done,
+        {
+          say: toast,
+          refresh: bump,
+          hold: (k) => setHeld((h) => ({ ...h, [k]: Date.now() })),
+          release: (k) =>
+            setHeld((h) => {
+              const { [k]: _gone, ...rest } = h;
+              return rest;
+            }),
+        },
+        key,
+        explain,
+      ),
     [toast, bump],
   );
+  const heldData: HeldData = {
+    pulls: pulls.state === "ready" ? pulls.data : null,
+    issues: issues.state === "ready" ? issues.data : null,
+    open: ledger.state === "ready" ? (ledger.data?.open ?? []) : null,
+    pendingCandidates: guardrails.state === "ready" ? (guardrails.data.candidates?.candidates ?? []).filter((c) => c.status === "pending").map((c) => c.id) : null,
+  };
+  const heldNow = useRef(heldData);
+  heldNow.current = heldData;
+  useEffect(() => {
+    if (Object.keys(held).length === 0) return;
+    const check = (): void => {
+      const r = sweep(held, Date.now(), heldNow.current);
+      if (r.timedOut.length > 0) toast("That did not go through. It is back on the list.");
+      if (Object.keys(r.held).length !== Object.keys(held).length) setHeld(r.held);
+    };
+    check();
+    const id = window.setInterval(check, 5_000);
+    return () => window.clearInterval(id);
+  }, [held, pulls, issues, ledger, guardrails, toast]);
 
   // Every 15 seconds while the page is visible, ask whether the factory's records moved. A 304 costs nothing.
   useEffect(() => {
@@ -322,7 +358,7 @@ function SignedIn({
 
   const app: App = {
     repo: session.repo, demo, client, version, bump, index, ledger, live, pulls, issues, guardrails, settings, installed,
-    toast, act, ask, compose: (initial) => setComposing(initial ?? null),
+    toast, act, held: (key) => key in held, ask, compose: (initial) => setComposing(initial ?? null),
   };
 
   return (

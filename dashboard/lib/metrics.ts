@@ -111,7 +111,7 @@ export interface ShareUse {
   readonly paused: boolean;
 }
 
-const SHARE_OF: Readonly<Record<Pipeline, ShareUse["share"]>> = {
+export const SHARE_OF: Readonly<Record<Pipeline, ShareUse["share"]>> = {
   product_work: "product_work",
   conflict: "product_work",
   gardening: "gardening",
@@ -122,6 +122,8 @@ const SHARE_OF: Readonly<Record<Pipeline, ShareUse["share"]>> = {
 export function shareUse(
   index: IndexFile | null,
   shares: Readonly<Record<ShareUse["share"], number>>,
+  /** What was actually spent per share, from the step records. When given, it replaces the index's per-pipeline totals. */
+  spentOverride?: Readonly<Record<ShareUse["share"], number>>,
 ): readonly ShareUse[] {
   const budget = index?.metrics.budget_usd ?? 0;
   const byPipeline = index?.metrics.by_pipeline ?? {};
@@ -139,6 +141,8 @@ export function shareUse(
     spent[share] += metrics.spend_usd ?? 0;
     if (metrics.paused === true) paused[share] = true;
   }
+
+  if (spentOverride !== undefined) for (const k of Object.keys(spent) as ShareUse["share"][]) spent[k] = spentOverride[k] ?? 0;
 
   return (Object.keys(shares) as ShareUse["share"][]).map((share) => {
     const allowance = (budget * shares[share]) / 100;

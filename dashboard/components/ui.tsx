@@ -92,7 +92,14 @@ export function Badge({ status }: { status: string }) {
   return <span className={`badge ${toneOf(status)}`}>{statusName(status)}</span>;
 }
 
-export function OutcomeBadge({ outcome }: { outcome: string }) {
+/**
+ * A run that opened a pull request is "Opened PR #N", whatever the run's own
+ * outcome says: the work exists and is waiting, which is not a failure.
+ */
+export function OutcomeBadge({ outcome, pr }: { outcome: string; pr?: number | null | undefined }) {
+  if (pr != null && (outcome === "failed" || outcome === "draft_pr")) {
+    return <span className="badge">Opened PR #{pr}</span>;
+  }
   if (outcome === "running") {
     return (
       <span className="badge busy">

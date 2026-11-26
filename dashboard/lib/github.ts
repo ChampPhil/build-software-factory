@@ -599,6 +599,8 @@ export interface IssueSummary {
   readonly user: { readonly login: string } | null;
   readonly labels: readonly { readonly name: string }[];
   readonly author_association: string;
+  /** The issue text; GitHub sends it on the list. */
+  readonly body?: string | null;
   /** How many comments the issue has; GitHub always sends it. */
   readonly comments?: number;
   /** Present on PRs; absent on true issues. */

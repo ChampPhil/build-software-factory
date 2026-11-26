@@ -2,8 +2,9 @@
 
 import { useEffect, useState } from "react";
 import type { WorkflowRunSummary } from "@/lib/github";
+import { storedEnforcement } from "@/lib/settings";
 import { useActions, useHealthIssues, useStandingGoals, useWriters } from "@/lib/data";
-import { ago, clock, day } from "@/lib/view";
+import { ago, day } from "@/lib/view";
 import { useApp } from "@/components/app";
 import { AskFactory, Goals, SettingsForm } from "@/components/settings";
 import { WorkflowState } from "@/components/run-view";
@@ -82,7 +83,7 @@ export default function Factory() {
             <h2 className="sect">Settings</h2>
             {settings.state === "loading" && <Loading what="the settings" />}
             {settings.state === "ready" && settings.data === null && <p className="muted">There&rsquo;s no settings file yet. Setup writes it.</p>}
-            {settings.state === "ready" && settings.data !== null && <SettingsForm yaml={settings.data} enforcement={health?.enforcement ?? null} />}
+            {settings.state === "ready" && settings.data !== null && <SettingsForm yaml={settings.data} enforcement={health?.enforcement ?? storedEnforcement(settings.data)} />}
           </section>
 
           <section id="goals">
@@ -226,7 +227,7 @@ export default function Factory() {
                 <dd>{data.factory.harness.replace(/-/g, " ")}</dd>
                 <dt>Records</dt>
                 <dd>
-                  Kept in this repository under <code>refs/factory/data</code>, last written {clock(data.updated_at)}.
+                  Kept in this repository under <code>refs/factory/data</code>.
                 </dd>
               </dl>
             )}

@@ -139,6 +139,7 @@ pre-agent-steps:
       echo "BSF_TRUSTED_ROOT=$RUNNER_TEMP/bsf-trusted" >> "$GITHUB_ENV"
       rm -rf .factory-trusted
       echo "$RUNNER_TEMP/bsf" >> "$GITHUB_PATH"
+      chmod +x "$RUNNER_TEMP/bsf/"*
       "$RUNNER_TEMP/bsf/bsf" --version
   # The conventions this repository writes down for agents: AGENTS.md,
   # CLAUDE.md, .claude/skills/ and anything policy.yaml declares. Resolved on
