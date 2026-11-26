@@ -1,0 +1,20 @@
+# Secret scanning for this repository. CI runs gitleaks over the full history
+# on every pull request (.github/workflows/secret-scan.yml).
+#
+# The default rules apply. The paths below are the only exceptions, and each
+# holds text that merely looks like a secret. They were checked by hand against
+# the full history before the repository went public (Nov 2026): fake keys that
+# the redaction tests need, a public sample token, and a sentence in a vendored
+# schema. A new real secret anywhere else fails the check.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Test fixtures and vendored documentation that look like secrets and are not"
+paths = [
+  '''runner/test/product-intent\.test\.ts''',      # fake sk_test / sk_live strings the redaction test feeds in
+  '''runner/test/sandbox\.test\.ts''',              # asserts a PEM header on a generated, throwaway key
+  '''runner/test/mine\.test\.ts''',                 # the public jwt.io sample token, to check it is redacted
+  '''runner/vendor/ghaw-main-workflow-schema\.json''', # a description sentence about `secrets.MY_SECRET`
+]
