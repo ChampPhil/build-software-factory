@@ -22,13 +22,15 @@ No phase names. No secrets. No "what I need from you". The dashboard appears
 once, as its own bullet, with its address. Do not turn that into a sign-in
 step.
 
-Open with these three sentences, then the bullets. Do not collapse the
+Open with these two sentences, then the bullets. Do not collapse the
 bullets into one sentence about a garden.
 
-A software factory is a standing crew for a codebase you already have. You
-describe a change in ordinary words, and agents carry it out in a private
-copy of the app, check that copy, and hand you a pull request. These are
-the ways it works:
+A software factory fully automates coding, from the start of a change to
+the end, and runs that work on sandboxed cloud agents. It is an open,
+adaptable infrastructure stack defined in code, and it supercharges how
+much gets built while supercharging the quality of the code.
+
+These are the ways it works:
 
 - **Product work.** You tell a chief of staff what you want. It brainstorms
   with you until the request is specific, then kicks off the cloud agents.
