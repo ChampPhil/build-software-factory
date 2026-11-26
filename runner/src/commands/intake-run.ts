@@ -523,6 +523,7 @@ async function intakeImpl(opts: IntakeRunOptions): Promise<IntakeRunReport | Int
         at: opts.now,
         who: "person",
         text: (d.event.body ?? "").trim(),
+        ...(commentIdOf(d.event.url) === null ? {} : { comment: commentIdOf(d.event.url) as number }),
       }).catch(() => undefined);
     }
     let next: Record<string, unknown> = { ...doc, status: "queued", body };
@@ -828,4 +829,11 @@ export async function missedIssues(
     });
   }
   return out;
+}
+
+
+/** The comment id in a GitHub comment URL (`...#issuecomment-123`), or null. */
+export function commentIdOf(url: string | undefined): number | null {
+  const m = /(?:issuecomment-|#c|discussion_r)(\d+)/.exec(url ?? "");
+  return m === null ? null : Number(m[1]);
 }

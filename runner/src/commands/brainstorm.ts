@@ -37,6 +37,8 @@ export interface BrainstormTurn {
   readonly at: string;
   readonly who: "factory" | "person";
   readonly text: string;
+  /** The GitHub comment this turn came from: one comment is recorded once. */
+  readonly comment?: number;
 }
 
 /**
@@ -175,6 +177,8 @@ export async function appendTurn(
 ): Promise<Brainstorm> {
   const store = new FactoryStore(gh);
   const current = (await store.get<Brainstorm>(brainstormPath(workItem), "brainstorm")) ?? empty(workItem);
+  // The same comment seen by the held job and by intake is one answer.
+  if (turn.comment !== undefined && current.turns.some((t) => t.comment === turn.comment)) return current;
   const next: Brainstorm = {
     ...current,
     turns: [...current.turns, turn],

@@ -184,9 +184,61 @@ jobs:
     secrets:
       FACTORY_APP_PRIVATE_KEY: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
 
-  triaged:
+  # A failed triage must not look like success, and a triage that only failed
+  # in gh-aw's closing report must not stop the run. When triage decides to
+  # proceed it has nothing to emit, so gh-aw's conclusion job reports it
+  # "could not complete" and the whole called workflow fails although the
+  # agent finished. This job looks at the jobs, and either lets the run carry
+  # on (recovered) or queues the item again through the requeue counter.
+  triage-failed:
     needs: [plan, triage, triage-budget]
-    if: always() && needs.triage.result == 'success'
+    if: always() && needs.triage.result == 'failure'
+    runs-on: ubuntu-latest
+    outputs:
+      recovered: ${{ steps.fail.outputs.recovered }}
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Fetch the factory runner from the default branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: .factory-trusted
+          sparse-checkout: |
+            .factory/bin
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Put the trusted runner on PATH
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/bsf"
+          cp -R .factory-trusted/.factory/bin/. "$RUNNER_TEMP/bsf/"
+          rm -rf .factory-trusted
+          echo "$RUNNER_TEMP/bsf" >> "$GITHUB_PATH"
+          chmod +x "$RUNNER_TEMP/bsf/"*
+          "$RUNNER_TEMP/bsf/bsf" --version
+      - name: Mint a token for the work item and its issue
+        id: token
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1
+        with:
+          app-id: ${{ vars.FACTORY_APP_CLIENT_ID }}
+          private-key: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-issues: write
+          permission-actions: read
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+      - name: Recover, or queue the item again
+        id: fail
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          WORK_ITEM: ${{ inputs.work_item }}
+        run: bsf run fail-step "$WORK_ITEM" --step triage
+
+  triaged:
+    needs: [plan, triage, triage-budget, triage-failed]
+    if: always() && (needs.triage.result == 'success' || needs.triage-failed.outputs.recovered == 'true')
     runs-on: ubuntu-latest
     outputs:
       proceed: ${{ steps.status.outputs.proceed }}
@@ -500,11 +552,13 @@ jobs:
     # The hardener builds its rule and opens the PR itself (its prompt asks
     # for the rule, its proof and the violations fixed); spec and build are
     # then skipped, and the run finishes with the hardener's PR.
-    needs: [plan, hardener, build, build-host, hardener-budget, build-budget, build-host-budget]
+    needs: [plan, triage-failed, hardener, build, build-host, hardener-budget, build-budget, build-host-budget]
     # Runs whatever the build did, so the item always leaves "running". It no
     # longer waits for the gates: it hands the run over and factory-gates'
     # decide job finishes it when they report (fix 6).
-    if: always() && needs.plan.outputs.proceed == 'true'
+    # A triage that failed and was queued again by triage-failed already told
+    # the person and counted the attempt; this job must not do both again.
+    if: always() && needs.plan.outputs.proceed == 'true' && needs.triage-failed.outputs.recovered != 'false'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     # actions: read for this run's StepReport artifacts.

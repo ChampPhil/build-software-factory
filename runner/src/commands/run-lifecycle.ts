@@ -1077,3 +1077,89 @@ export async function strayHardeningFiles(gh: GitHub, pr: number, item: { readon
   const isTest = (f: string) => /(^|\/)(tests?|__tests__|spec)\//.test(f) || /\.(test|spec)\.[a-z]+$/.test(f);
   return changed.filter((f) => !isTest(f) && !scopesOverlap(scopeOf([f]), allowed));
 }
+
+/* ------------------------------------------------------ a step that failed */
+
+export interface JobSummary {
+  readonly name: string;
+  readonly conclusion: string | null;
+}
+
+/**
+ * Did the role's agent actually finish? gh-aw wraps every role in jobs named
+ * `<caller> / <job>`. When triage decides to proceed it has nothing to emit,
+ * gh-aw's `conclusion` job reports it "could not complete", and the whole
+ * called workflow fails although the agent, its detection and its safe
+ * outputs all succeeded. That is a recovery, not a failure; any other failed
+ * job is a real one.
+ */
+export function agentFinishedCleanly(jobs: readonly JobSummary[], step: string): boolean {
+  const mine = jobs.filter((j) => j.name.toLowerCase().startsWith(`${step} / `) || j.name.toLowerCase().startsWith(`${step}/`));
+  const part = (j: JobSummary) => j.name.split("/").pop()!.trim().toLowerCase();
+  const agent = mine.find((j) => part(j) === "agent");
+  if (agent?.conclusion !== "success") return false;
+  return mine.every((j) => part(j) === "conclusion" || j.conclusion === "success" || j.conclusion === "skipped");
+}
+
+export interface FailStepReport {
+  readonly recovered: boolean;
+  readonly action: "recovered" | "requeued" | "escalated";
+  readonly reason: string;
+}
+
+/**
+ * `bsf run fail-step ITEM --step triage`: a step ended in failure.
+ *
+ * If its agent in fact finished, the run carries on. Otherwise the item goes
+ * back in the queue through the same counter as a run that ended before the
+ * build (fix 3), and the person is told once, on their issue.
+ */
+export async function failStep(opts: {
+  readonly gh: GitHub;
+  readonly workItem: string;
+  readonly step: string;
+  readonly runId: string;
+  readonly now: string;
+  readonly jobs?: readonly JobSummary[];
+}): Promise<FailStepReport> {
+  const jobs =
+    opts.jobs ??
+    (
+      await opts.gh
+        .get<{ jobs: { name: string; conclusion: string | null }[] }>(`repos/${opts.gh.repo}/actions/runs/${opts.runId}/jobs?per_page=100`)
+        .catch(() => ({ jobs: [] }))
+    ).jobs;
+  if (agentFinishedCleanly(jobs, opts.step)) {
+    return { recovered: true, action: "recovered", reason: `the ${opts.step} agent finished; only gh-aw's closing report failed` };
+  }
+  const store = new FactoryStore(opts.gh);
+  const item = await store.get<WorkItemDoc>(workItemPath(opts.workItem), "work-item");
+  if (item === null) throw new Error(`${opts.workItem} is not on the data ref`);
+  const requeues = item.requeues ?? 0;
+  const escalate = requeues >= 2;
+  const status: Status = escalate ? "escalated" : "queued";
+  const ledger = await store.ledger(opts.now);
+  await store.put(
+    [
+      { path: workItemPath(item.id), content: json({ ...item, status, requeues: escalate ? requeues : requeues + 1 }) },
+      { path: LEDGER, content: json(withStatus(ledger, item, status, item.pr ?? null, opts.now)) },
+    ],
+    `${item.id}: ${opts.step} failed, ${escalate ? "escalated" : "queued again"}`,
+  );
+  const issue = issueNumber(item.source?.ref);
+  if (issue !== null) {
+    await opts.gh
+      .send("POST", `repos/${opts.gh.repo}/issues/${issue}/comments`, {
+        body: escalate
+          ? `The factory could not read this request (${opts.step} failed twice), so it has stopped and needs a person. Comment /retry once that is sorted.`
+          : `The factory could not read this request (${opts.step} failed). Trying again in 5 minutes.`,
+      })
+      .catch(() => undefined);
+    if (!escalate) await opts.gh.send("POST", `repos/${opts.gh.repo}/issues/${issue}/labels`, { labels: ["factory:queued"] }).catch(() => undefined);
+  }
+  return {
+    recovered: false,
+    action: escalate ? "escalated" : "requeued",
+    reason: `${opts.step} failed before its agent finished`,
+  };
+}

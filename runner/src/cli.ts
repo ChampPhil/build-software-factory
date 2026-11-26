@@ -244,6 +244,7 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
   bsf write-triage WORK_ITEM --from PATH
   bsf guardrails record [--out PATH]
   bsf run status WORK_ITEM
+  bsf run fail-step WORK_ITEM --step triage
   bsf run announce WORK_ITEM
       Make sure a run that produced no PR still told the author why.
   bsf run closed --pr N --merged true|false
@@ -1445,6 +1446,18 @@ async function runCommand(second: string | undefined, args: Args, third?: string
     return 0;
   }
 
+  if (second === "fail-step") {
+    // `bsf run fail-step ITEM --step triage`: a role's job failed. Carry on if
+    // its agent in fact finished; otherwise queue the item again.
+    if (third === undefined || typeof args["step"] !== "string") die("usage: bsf run fail-step WORK_ITEM --step triage");
+    const { failStep } = await import("./commands/run-lifecycle.js");
+    const gh = new GitHub({ repo: requireRepo() });
+    const r = await failStep({ gh, workItem: third, step: args["step"], runId: process.env["GITHUB_RUN_ID"] ?? "", now: new Date().toISOString() });
+    process.stdout.write(`${r.action}: ${r.reason}\n`);
+    setOutput("recovered", String(r.recovered));
+    return 0;
+  }
+
   if (second === "status") {
     // `bsf run status WORK_ITEM`: proceed=true while the item is still the run's.
     if (third === undefined) die("usage: bsf run status WORK_ITEM");
@@ -2311,6 +2324,7 @@ async function brainstormTurnCommand(sub: "say" | "wait" | "close" | "frame", wo
         at: c.created_at ?? nowIso(),
         who: "person",
         text: (c.body ?? "").trim(),
+        comment: c.id,
       });
     },
     onHeartbeat: async () => {

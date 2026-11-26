@@ -192,6 +192,7 @@
         "type": "object",
         "properties": [
           "at",
+          "comment",
           "text",
           "who"
         ],
@@ -213,6 +214,9 @@
       },
       "/properties/turns/items/properties/text": {
         "type": "string"
+      },
+      "/properties/turns/items/properties/comment": {
+        "type": "integer"
       },
       "/properties/understood": {
         "type": "null|string"
