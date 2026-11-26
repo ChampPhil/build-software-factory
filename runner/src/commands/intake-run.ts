@@ -425,7 +425,7 @@ async function intakeImpl(opts: IntakeRunOptions): Promise<IntakeRunReport | Int
     if (num !== undefined) {
       // Someone the factory does not trust gets a different label: nothing is
       // queued for them until a maintainer accepts it (D53).
-      const trusted = incoming !== null && isTrustedActor(opts.policy, incoming.actor, incoming.actor_association as Association, { isBot: incoming.actor_is_bot === true });
+      const trusted = incoming !== null && isTrustedActor(opts.policy, incoming.actor, incoming.actor_association, { isBot: incoming.actor_is_bot === true });
       await opts.gh.send("POST", `repos/${opts.gh.repo}/issues/${num}/labels`, { labels: [trusted ? "factory:queued" : AWAITING_LABEL] }).catch(() => undefined);
     }
     return { recorded: true, event: incoming?.id ?? null };
