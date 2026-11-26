@@ -2359,7 +2359,48 @@ async function sandboxCommandCli(second: string | undefined, args: Args): Promis
         log: (l) => process.stdout.write(`${l}\n`),
       });
       setOutput("app_url", served.url ?? "");
+      // An app the manifest says to run that never answered is a failure of
+      // this step, not a quiet note for the agent to trip over: the role
+      // cannot verify anything without it (fix 1).
+      if (served.appExpected && served.url === null) {
+        process.stdout.write(`${served.failure ?? "the app did not start"}; the last lines of its log are in app.json\n`);
+        return 1;
+      }
     }
+    return 0;
+  }
+  if (second === "dry-run") {
+    // `bsf sandbox dry-run`: do exactly what the checker does before its
+    // agent starts (start the sandbox, serve the app on the host) and say
+    // whether the app answered. Setup runs it so it cannot finish with a
+    // sandbox the checker could not use.
+    const loaded = loadManifest(process.cwd());
+    if (loaded.kind !== "ok") {
+      process.stdout.write("dry run: no usable sandbox manifest\n");
+      return 1;
+    }
+    const workspace = process.env["GITHUB_WORKSPACE"] ?? process.cwd();
+    await startSandbox({
+      root: process.cwd(),
+      workspace,
+      ...(process.env["FACTORY_SANDBOX_ENV"] === undefined ? {} : { secretBlob: process.env["FACTORY_SANDBOX_ENV"] }),
+    });
+    const { mkdtempSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const served = await serveOnHost({
+      manifest: loaded.manifest,
+      workspace,
+      env: closedEnv(workspace) ?? {},
+      infoFile: join(mkdtempSync(join(tmpdir(), "bsf-dry-")), "app.json"),
+      log: (l) => process.stdout.write(`${l}\n`),
+    });
+    const { stopServing } = await import("./commands/sandbox.js");
+    stopServing();
+    if (served.appExpected && served.url === null) {
+      process.stdout.write(`dry run failed: ${served.failure ?? "the app did not start"}\n`);
+      return 1;
+    }
+    process.stdout.write(`dry run passed: ${served.url ?? "no app to serve"}\n`);
     return 0;
   }
   if (second === "report") {
