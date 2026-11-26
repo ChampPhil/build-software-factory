@@ -28,10 +28,14 @@ export interface Loader {
 /** Reads from a checkout on disk. */
 /**
  * Paths that decide how a change is judged — the definition (policy, factory
- * config, roles) and the frozen sandbox (which test command runs). In CI these
- * are read from the default branch, never from the change under judgement.
+ * config, roles). In CI these are read from the default branch, never from
+ * the change under judgement. The sandbox manifest is not in this list: the
+ * gate runs the manifest in the checkout (the pull request head), so a fix
+ * to how tests run is visible on the pull request that brings it. Workflow
+ * YAML is not a credential source. Secret values still come only from the
+ * one sandbox secret, never from the pull request.
  */
-const TRUSTED_PREFIXES = [".factory/definition/", ".factory/sandbox/"];
+const TRUSTED_PREFIXES = [".factory/definition/"];
 
 /**
  * Where the default branch's copy of the trusted paths is, when a workflow
@@ -55,11 +59,11 @@ export function resolveRead(root: string, path: string): string {
 /**
  * Reads files from a checkout.
  *
- * A gate checks out the change it is judging, so reading `factory.yaml` or the
- * sandbox manifest from that checkout let a pull request choose its own test
- * command, or point `existing_ci.test_check` at a check that always passes.
- * With a trusted root set, the judging paths come from the default branch and
- * only the code being judged comes from the change.
+ * A gate checks out the change it is judging. Reading `factory.yaml` from that
+ * checkout let a pull request point `existing_ci.test_check` at a check that
+ * always passes, so the definition still comes from the default branch.
+ * The sandbox manifest is read from the checkout: it is the pull request
+ * head's copy, not a fetch of the default branch.
  */
 export class DiskLoader implements Loader {
   constructor(private readonly root: string = process.cwd()) {}

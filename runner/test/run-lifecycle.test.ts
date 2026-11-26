@@ -35,7 +35,7 @@ vi.mock("../src/lib/store.js", async (orig) => {
   return { ...real, FactoryStore };
 });
 
-const { startRun, finishRun, gateVerdicts, gateFailuresPath, reapStaleRuns, prClosed, dropItems, clearHeldChange } = await import("../src/commands/run-lifecycle.js");
+const { startRun, finishRun, gateVerdicts, gateFailuresPath, reapStaleRuns, prClosed, dropItems, clearHeldChange, advanceLiveFromSteps, furthestLiveStep } = await import("../src/commands/run-lifecycle.js");
 
 const WI = "wi_01M7XHGA7F5CNWC3BD3BSP0WYW";
 const RUN = "run_01M7XHGA7F5CNWC3BD3BSP0WYX";
@@ -163,6 +163,12 @@ describe("finishRun", () => {
     expect(files.has(`live/${RUN}.json`)).toBe(true);
     expect(JSON.parse(files.get(`handoff/${RUN}.json`)!)).toMatchObject({ pr: 5, attempt: 1, work_item: WI });
     expect(sent.some((x) => x.method === "READY")).toBe(false);
+    const opened = JSON.parse(files.get(`runs/${RUN}.json`)!);
+    expect(opened.outcome).toBe("draft_pr");
+    expect(opened.pr).toBe(5);
+    expect(opened.steps).toEqual([]);
+    expect(opened.gates).toEqual([]);
+    expect(opened.cost_usd).toBe(0);
   });
 
   it("when the gates have reported, the parked run is finished and the handoff is removed (fix 6)", async () => {
@@ -180,6 +186,7 @@ describe("finishRun", () => {
     expect(files.has(`handoff/${RUN}.json`)).toBe(false);
     expect(files.has(`live/${RUN}.json`)).toBe(false);
     expect(sent.some((x) => x.method === "READY")).toBe(true);
+    expect(JSON.parse(files.get(`runs/${RUN}.json`)!).gates.length).toBeGreaterThan(0);
   });
 
   it("waits for factory/gates, then clears: PR ready, labelled, item in review, live record gone", async () => {
@@ -496,5 +503,26 @@ describe("clearHeldChange", () => {
     const { gh: g, sent } = gh("success", ["factory:cleared"], false);
     expect(await clearHeldChange({ gh: g, pr: 5, now })).toContain("already cleared");
     expect(sent).toEqual([]);
+  });
+});
+
+describe("live status", () => {
+  it("moves forward to a later step file and does not move backward", async () => {
+    expect(furthestLiveStep("product_work", "triage", ["builder"])).toBe("builder");
+    expect(furthestLiveStep("product_work", "builder", ["spec"])).toBe("builder");
+    expect(furthestLiveStep("hardening", "hardener", ["builder"])).toBe("builder");
+    expect(furthestLiveStep("hardening", "builder", ["hardener"])).toBe("builder");
+
+    files.set(`live/${RUN}.json`, JSON.stringify({
+      schema: "live/1",
+      run: RUN,
+      work_item: WI,
+      pipeline: "product_work",
+      step: "triage",
+      started_at: "2026-11-20T00:30:00Z",
+    }));
+    files.set(`steps/${RUN}/builder-1.json`, JSON.stringify({ role: "builder" }));
+    expect(await advanceLiveFromSteps(fakeGh([]).gh, RUN)).toBe("builder");
+    expect(JSON.parse(files.get(`live/${RUN}.json`)!).step).toBe("builder");
   });
 });

@@ -29,6 +29,20 @@ const SEQUENCE: Readonly<Record<Pipeline, readonly Role[]>> = {
   factory_health: [],
 };
 
+/**
+ * The live-status order for a pipeline, ending at the gates and the merge.
+ *
+ * A step file moves the live step forward along this list only, so a
+ * hardening run that starts at the hardener does not jump backward when an
+ * earlier name shows up in another pipeline's sequence.
+ *
+ * @param pipeline - the work item's pipeline
+ */
+export function rolesInOrder(pipeline: string): readonly string[] {
+  const seq = SEQUENCE[pipeline as Pipeline] ?? [];
+  return [...seq, "gate", "merge"];
+}
+
 export interface PlanInput {
   readonly pipeline: Pipeline;
   readonly attempt: number;

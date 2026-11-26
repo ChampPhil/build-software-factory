@@ -274,8 +274,10 @@ export function refreshSession(session: Session, f: Fetch = defaultFetch): Promi
       if (!res.ok) return { ok: false, reason: "offline" };
       const next = sessionFrom((await res.json()) as TokenFields, session.repo, session.remembered, Date.now());
       if (next === null) return { ok: false, reason: "offline" };
-      writeSession(next);
-      return { ok: true, session: next };
+      // The renewed token keeps the repositories already connected.
+      // Omit `repos` when this session has none, so the stored list is kept.
+      const kept = session.repos === undefined ? next : { ...next, repos: session.repos };
+      return { ok: true, session: writeSession(kept) };
     } catch {
       return { ok: false, reason: "offline" };
     }

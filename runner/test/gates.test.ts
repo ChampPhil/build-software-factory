@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   checkRatchet, countsFromBaselines, checkGardeningLowersTarget,
-  checkWeakening, checkCoverage, planGates,
+  checkWeakening, checkCoverage, zeroFloorWithTests, planGates,
   type RuleCounts, type WeakeningInput,
 } from "../src/commands/gates.js";
 import type { Baselines, Coverage, Policy } from "../src/lib/types.js";
@@ -228,6 +228,12 @@ describe("coverage ratchet", () => {
   it("never lowers the floor by itself", () => {
     const v = checkCoverage(coverage, { diff_pct: 95, total_pct: 81.2, skips: 4 });
     expect(v.next.floor_pct).toBe(81);
+  });
+
+  it("fails a floor of 0 when the repo has tests, and not when it has none", () => {
+    expect(zeroFloorWithTests(0, true)).toMatch(/floor is 0%/);
+    expect(zeroFloorWithTests(0, false)).toBeNull();
+    expect(zeroFloorWithTests(80, true)).toBeNull();
   });
 
   it("fails when skips exceed the cap", () => {

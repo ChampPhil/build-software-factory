@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useFirstRequest, useRunFiles, useStandingGoals, useWorkItems } from "@/lib/data";
+import { useActions, useFirstRequest, useRunFiles, useStandingGoals, useWorkItems } from "@/lib/data";
+import { failedFactoryAudit, type AuditWorkflowRun } from "@/lib/audit";
 import { liveGoals } from "@/lib/routing";
 import { readSettings } from "@/lib/settings";
 import { countWord, day, hourLocal, needsFrom, pct, pipeName, requestIds, titleOf, usd, whenLine, ago, clock } from "@/lib/view";
@@ -11,7 +12,7 @@ import { NeedCard } from "@/components/needs";
 import { RunLine } from "@/components/run-view";
 import { RequestForm } from "@/components/request-form";
 import { EmptyFactoryNote } from "@/components/empty-factory";
-import { Bar, Check, Loading, Problem } from "@/components/ui";
+import { Bar, Check, Loading, Out, Problem } from "@/components/ui";
 
 /**
  * The briefing: the page a person opens first, every time.
@@ -44,6 +45,8 @@ export default function Briefing() {
     return mine.length === 0 ? null : mine.reduce((n, r) => n + r.cost_usd, 0);
   };
   const goals = useStandingGoals(client);
+  const actions = useActions(client, app.version);
+  const audit = actions.state === "ready" && actions.data !== null ? failedFactoryAudit(actions.data.runs) : null;
   const untouched = ledger.state === "ready" && (L === null || (L.open.length === 0 && L.recent.length === 0));
   const first = useFirstRequest(client, untouched);
 
@@ -92,13 +95,14 @@ export default function Briefing() {
       <main className="wrap">
         <section className="lede">
           <p className="when">{L === null ? "Nothing waiting on you yet." : `${whenLine()} Nothing is waiting on you.`}</p>
-          <h1>{installed === false ? "There's no factory here yet." : "The factory is ready for its first request."}</h1>
+          <h1>{audit !== null ? "The factory audit failed." : installed === false ? "There's no factory here yet." : "The factory is ready for its first request."}</h1>
           <p className="rest">
             Describe one change. It will ask you a few questions, build it, check it in a sandbox, and come back with a pull request and a recording of it working.
           </p>
         </section>
         <div className="cols">
           <div className="main-col">
+            {audit !== null && <AuditAlarm run={audit} />}
             <EmptyFactoryNote installed={installed} />
             {installed === true && <RequestForm first={suggestion !== null} initial={suggestion ?? undefined} />}
           </div>
@@ -118,7 +122,8 @@ export default function Briefing() {
     );
   }
 
-  const head = needs.length === 0 ? "Nothing needs you." : `${countWord(needs.length)} ${needs.length === 1 ? "thing needs" : "things need"} you.`;
+  const attention = needs.length + (audit === null ? 0 : 1);
+  const head = attention === 0 ? "Nothing needs you." : `${countWord(attention)} ${attention === 1 ? "thing needs" : "things need"} you.`;
   const queued = (L?.open ?? []).filter((o) => o.status === "queued");
   const queue = L?.merge_queue ?? [];
   const m = index.state === "ready" ? index.data?.metrics : undefined;
@@ -150,7 +155,7 @@ export default function Briefing() {
       <div className="cols">
         <div className="main-col">
           <h2 className="part">Waiting on you</h2>
-          {needs.length === 0 ? (
+          {needs.length === 0 && audit === null ? (
             <p className="all-clear">
               When something needs you, it shows up here first: a question to answer, a change to merge, or a request that got stuck.{" "}
               <button className="link" type="button" onClick={() => app.compose()}>
@@ -159,6 +164,7 @@ export default function Briefing() {
             </p>
           ) : (
             <section className="needs" aria-label="Waiting on you">
+              {audit !== null && <AuditAlarm run={audit} />}
               {needs.map((n, i) => (
                 <NeedCard key={`${n.kind}-${i}`} need={n} title={title} cost={cost} issues={issueList} />
               ))}
@@ -262,5 +268,29 @@ export default function Briefing() {
         </aside>
       </div>
     </main>
+  );
+}
+
+/**
+ * A red briefing item for a factory-audit run that has not gone green.
+ *
+ * It stays until a later run of that workflow succeeds. The link is the
+ * Actions log the dashboard already has for that run.
+ *
+ * run: the failed factory-audit run to show.
+ */
+function AuditAlarm({ run }: { run: AuditWorkflowRun }) {
+  return (
+    <article className="item alarm">
+      <div className="where">
+        <span className="tag stop">Audit failed</span>
+        <span>{ago(run.created_at)}</span>
+      </div>
+      <h3>The factory audit is red</h3>
+      <p>A run of factory-audit failed. It stays here until that workflow is green.</p>
+      <p>
+        <Out href={run.html_url}>Open the run</Out>
+      </p>
+    </article>
   );
 }

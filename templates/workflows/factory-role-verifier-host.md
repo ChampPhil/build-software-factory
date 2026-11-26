@@ -359,6 +359,13 @@ its own work.
 
 ## What to do
 
+This sandbox was just booted for this check. It is not the writer's machine,
+and it does not keep the writer's leftovers. Sign in as the sandbox test user
+and drive the journeys this change touches. You may change the test database
+and the dev integrations to arrange a case: Stripe test mode, the Clerk dev
+instance, the mail catcher, and the other test surfaces the sandbox manifest
+names. Do not use production credentials.
+
 1. Start the app with the manifest's `run` command, from a shell that has
    sourced the sandbox's environment first:
 
@@ -408,46 +415,30 @@ do not start the app or source `.runtime.env` yourself.
    When a host is missing, the fix is `.factory/sandbox/research-domains.txt`:
    say which host, so whoever reads this can add it.
 
-3. Work through the spec's `acceptance_checks` **one at a time**. For each, use
-   the app the way a developer would: click through it in the browser, call the
-   API, query the database. Record what you observe, not what you expect.
-4. Record the browser, and capture evidence as you go, into
-   `/tmp/gh-aw/agent/bsf/media/`.
-
-   **Record every browser session.** A person reviewing this PR watches a
-   video before they read anything. Once the app is open (after `state-load`,
-   if you load a session), start recording, and stop only after your last
-   check:
+3. Drive the journeys this change touches, one at a time. They are the spec's
+   `acceptance_checks`. For each one, signed in as the test user, click
+   through the running app and check the side effect (a saved row, a caught
+   message, a test payment, or the response the action wrote). Record what
+   you observe. A journey you skip is a fail. A public page, with nobody
+   signed in, is not evidence. When the journey has no screen, exercise it
+   through the running app and keep the side effect. A screenshot of that
+   result still belongs on the pull request.
+4. When the pipeline is gardening, show the same journeys before and after.
+5. Save the proof in `/tmp/gh-aw/agent/bsf/media/`. The pull request needs the
+   side effect, a screenshot, and at least one diagram. A short video is
+   encouraged. If you record one:
 
    ```bash
    playwright-cli video-start /tmp/gh-aw/agent/bsf/media/recordings/verification.webm
-   playwright-cli video-chapter "Check 1: <the check, in a few words>"
-   # ... do check 1 in the browser ...
-   playwright-cli video-chapter "Check 2: <the check>"
-   # ... do check 2 ...
    playwright-cli video-stop
    ```
 
-   One recording covers the session. Give every acceptance check its own
-   chapter, so the video reads as the checks, in order. A check that passed
-   quickly is still recorded: the video is how a person sees that it did. Run
-   `playwright-cli video-stop` before you close the browser. If the session
-   restarts (a new `state-load`, a closed browser), record the next part under
-   another name, such as `verification-2.webm`. If `video-start` fails, say so
-   in your report rather than going on without one.
-
-   A change with no screen (an API, a command, a library) has nothing to
-   record: its evidence is the commands you ran and what they printed, as
-   `.txt`, `.log` or `.json` files.
-
-   Alongside the recording:
-   - a screenshot for each acceptance check, named for the check
-   - for a bug fix, the before state as well, so a reviewer sees the change
-   - the console and network panels where either is relevant to the claim
-5. Try the obvious ways the change could be wrong but still look right: the
-   empty case, the error case, the second click, a reload, a different route
-   into the same screen.
-6. Write your verdict, and the report a person sees on the PR.
+   Run `video-stop` before you close the browser. A missing video does not
+   fail. A missing side effect, screenshot, or diagram does.
+6. Try the empty case, the error case, a second click, a reload, and another
+   route into the same screen.
+7. A new markdown file the request did not name fails.
+8. Write your verdict, and the report a person sees on the pull request.
 
 ## What the PR shows
 
@@ -462,30 +453,36 @@ any text. Write `/tmp/gh-aw/agent/bsf/media/report.json`
   "blocks": [
     { "type": "file", "file": "check1-filtered.png", "caption": "Acceptance check 1: choosing Sent shows only sent invoices" },
     { "type": "diagram", "title": "What each check exercised", "mermaid": "flowchart LR\n  A[Status chips] --> B[?status=sent] --> C[Table]" },
-    { "type": "file", "file": "check2-api.json", "caption": "GET /api/invoices?status=sent returned three rows" }
+    { "type": "file", "file": "check2-api.json", "caption": "Side effect: GET /api/invoices?status=sent returned three rows" }
   ]
 }
 ```
 
-- `blocks` are your proof files and any diagrams, in the order that tells the
-  story best, mixed freely: one per acceptance check at least, more where a
-  check needs them. A file is a path inside `/tmp/gh-aw/agent/bsf/media/`.
-- Screenshots and GIFs show inline. Your recording is added to the PR for you,
-  at the front, with a preview the factory makes from it, so you need no block
-  for it. Write one only to caption it
-  (`{ "type": "file", "file": "recordings/verification.webm", "caption": "Checks 1 to 4, in order" }`);
-  no `poster` is needed.
-  Logs and API responses (`.json`, `.txt`, `.log`) are shown inline as text.
-- A diagram is Mermaid, which GitHub draws: use one where a flow, a state or
-  the parts involved say more than a screenshot does.
+- `blocks` must include the side effect, a screenshot, and at least one
+  diagram, in the order that tells the story. A file path is inside
+  `/tmp/gh-aw/agent/bsf/media/`. A short video is encouraged. If you have one,
+  a caption is optional
+  (`{ "type": "file", "file": "recordings/verification.webm", "caption": "The journey, in order" }`).
+  Its absence does not fail. Logs and responses (`.json`, `.txt`, `.log`)
+  show inline as text. A diagram is Mermaid, which GitHub draws.
 - Every caption says what the file proves, in a reader's words.
 - A failed check gets its evidence here too, captioned with what went wrong.
 
 ## The verdict
 
-`pass` only when **every** acceptance check passed and you have evidence for
-each. Otherwise `fail`, with, for each failed check: what you did, what you
-expected, what happened, and the artifact that shows it.
+`pass` only when every journey passed and the pull request has the side
+effect, a screenshot, and at least one diagram. Otherwise `fail`. For each
+failed journey, say what you did, what you expected, what happened, and the
+file that shows it.
+
+Fail when those required files are missing, when a journey was skipped, when
+the only evidence is a public page, or when the change adds a markdown file
+the request did not name. A missing video does not fail.
+
+Repair is not done while the factory's own gates are red. Fail and name the
+red gate, so the builder repairs the change until those gates are green. Do
+not merge to the default branch just so a gate can see a file that exists on
+the pull request.
 
 A check you could not run is not a pass. Say so, and say why.
 
@@ -510,7 +507,9 @@ can be verified. It does not turn the check into a pass.
 ## Do not
 
 - Do not fix the code. If something is broken, report it; the builder gets
-  another attempt.
+  another attempt and repairs the change until the factory's own gates are green.
+- Do not merge to the default branch just so a gate can see a file that exists
+  on the pull request.
 - Do not take a passing test suite as evidence that the behavior works. The
   tests are a separate gate. Your job is the running app.
 - Do not describe evidence you did not capture.

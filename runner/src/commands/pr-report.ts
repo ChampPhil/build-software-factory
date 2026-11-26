@@ -1,7 +1,9 @@
 import { matchesAny } from "../lib/ui-paths.js";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { extname, join, normalize } from "node:path";
 import type { GitHub } from "../lib/github.js";
+import { filesNamedIn } from "../lib/scope.js";
+import { loadManifest } from "./sandbox.js";
 import { MEDIA_REF } from "../lib/dataref.js";
 import { FactoryStore, json, workItemPath } from "../lib/store.js";
 import { assertValid } from "../lib/schema.js";
@@ -283,6 +285,183 @@ export async function storeReport(opts: {
   return stored;
 }
 
+/* --------------------------------------------------------------- proof gate */
+
+/** Where a pull request's verification artifacts live, on the head being judged. */
+export const VERIFICATION_DIR = ".factory/verification";
+
+/**
+ * What the proof check reads besides the role reports.
+ *
+ * A product pull request is not cleared without a screenshot, a side-effect
+ * proof, and a diagram. A gardening pull request needs before and after.
+ * A video may be present; its absence is not a failure of this checklist.
+ */
+export interface ProofFacts {
+  /** The work item's pipeline. Only product work and gardening add the checklist. */
+  readonly pipeline?: string;
+  /** The pull request body, where a mermaid fence or a markdown image can count. */
+  readonly pullBody?: string | null;
+  /**
+   * Files under `.factory/verification/` on the pull request head: the diff,
+   * plus the same directory when this checkout is that head.
+   */
+  readonly verificationFiles?: readonly string[];
+  /** Files the pull request added. A new `.md` the request did not name fails. */
+  readonly addedMarkdown?: readonly string[];
+  /** Paths the request named: `spec.files` plus files named in the work item body. */
+  readonly namedPaths?: readonly string[];
+}
+
+/**
+ * Files under `.factory/verification/` in this checkout.
+ *
+ * Publish often runs on the default branch, so this is only half of the
+ * search. The pull request diff's copies of the same directory are the other.
+ *
+ * @param root - the checkout
+ */
+export function listVerification(root: string): string[] {
+  const dir = join(root, VERIFICATION_DIR);
+  if (!existsSync(dir)) return [];
+  const out: string[] = [];
+  const walk = (abs: string, rel: string): void => {
+    let entries: { name: string; isDirectory: () => boolean; isFile: () => boolean }[];
+    try {
+      entries = readdirSync(abs, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      const childRel = rel === "" ? e.name : `${rel}/${e.name}`;
+      if (e.isDirectory()) walk(join(abs, e.name), childRel);
+      else if (e.isFile()) out.push(`${VERIFICATION_DIR}/${childRel}`.replace(/\\/g, "/"));
+    }
+  };
+  walk(dir, "");
+  return out;
+}
+
+/**
+ * Proof the factory/pr-report check still requires.
+ *
+ * Accepted artifacts, in this order, and deduped by path:
+ * a role-report image is a screenshot, a non-image non-video file is a
+ * side-effect proof, and a diagram block is a diagram. A video is none of
+ * those. A ```mermaid fence in the pull request body is a diagram when no
+ * diagram was already found, and a markdown image whose URL ends in
+ * png, jpg, jpeg, webp, gif, or svg is a screenshot on the same terms.
+ * Under `.factory/verification/`, an image or `screenshot.*` is a screenshot,
+ * `diagram.*`, `*.mmd`, or `*.mermaid` is a diagram, and `side-effect.*`,
+ * `effect.*`, `response.*`, `trace.*`, `*.log`, or a text file
+ * (json, txt, log, html, xml, csv, yaml, yml) is a side-effect proof.
+ * Gardening passes with two of those proofs, or with a `before` path and a
+ * distinct `after` path (a path segment, not the prefix of "beforehand").
+ * An added markdown file fails unless its path is exactly one the request named.
+ *
+ * @param reports - the stored role reports
+ * @param facts - the pull request body, verification files, and named paths
+ */
+export function proofGaps(
+  reports: readonly { readonly role: string; readonly report: { readonly blocks: readonly Block[] } }[],
+  facts: ProofFacts,
+): string[] {
+  const screenshots = new Set<string>();
+  const sides = new Set<string>();
+  const diagrams = new Set<string>();
+  const placed: string[] = [];
+  const take = (kind: "screenshot" | "side" | "diagram" | "video" | null, key: string): void => {
+    if (kind === "screenshot") screenshots.add(key);
+    else if (kind === "side") sides.add(key);
+    else if (kind === "diagram") diagrams.add(key);
+  };
+  reports.forEach((r, ri) => {
+    r.report.blocks.forEach((b, bi) => {
+      const kind = blockKind(b);
+      const key = b.type === "file" ? normPath(b.file) : `diagram:${ri}:${bi}`;
+      take(kind, key);
+      if (b.type === "file" && kind !== "video") placed.push(normPath(b.file));
+    });
+  });
+  for (const file of facts.verificationFiles ?? []) {
+    const path = normPath(file);
+    const kind = verificationKind(path);
+    take(kind, path);
+    if (kind !== "video") placed.push(path);
+  }
+  const body = facts.pullBody ?? "";
+  if (diagrams.size === 0 && /```mermaid\b/.test(body)) diagrams.add("diagram:body");
+  if (screenshots.size === 0 && /!\[[^\]]*\]\([^)\s]+\.(?:png|jpe?g|webp|gif|svg)(?:[?#][^)]*)?\)/i.test(body)) {
+    screenshots.add("screenshot:body");
+  }
+
+  const gaps: string[] = [];
+  if (facts.pipeline === "product_work") {
+    if (screenshots.size === 0) gaps.push("a product pull request needs a screenshot");
+    if (sides.size === 0) gaps.push("a product pull request needs a side-effect proof (a log, a response, or a trace)");
+    if (diagrams.size === 0) {
+      gaps.push("a product pull request needs a diagram (a mermaid block, or a diagram file under .factory/verification/)");
+    }
+  }
+  if (facts.pipeline === "gardening") {
+    const proofs = screenshots.size + sides.size + diagrams.size;
+    const before = placed.filter((p) => pathSegment(p, "before") && !pathSegment(p, "after"));
+    const after = placed.filter((p) => pathSegment(p, "after") && !pathSegment(p, "before"));
+    if (proofs < 2 && (before.length === 0 || after.length === 0)) {
+      gaps.push("a gardening pull request needs before and after: two proofs, or a before path and an after path");
+    }
+  }
+  if (facts.addedMarkdown !== undefined) {
+    const named = new Set((facts.namedPaths ?? []).map(normPath));
+    const stray = [...facts.addedMarkdown]
+      .map(normPath)
+      .filter((p) => p.toLowerCase().endsWith(".md") && !named.has(p))
+      .sort();
+    for (const p of stray) gaps.push(`added markdown the request did not name: ${p}`);
+  }
+  return gaps;
+}
+
+/** A role-report block's place in the proof checklist. A video fills none of the required places. */
+function blockKind(b: Block): "screenshot" | "side" | "diagram" | "video" | null {
+  if (b.type === "diagram") return "diagram";
+  const ext = extname(b.file).toLowerCase();
+  if (VIDEO_EXT.has(ext)) return "video";
+  if (IMAGE_EXT.has(ext)) return "screenshot";
+  if (ext === ".mmd" || ext === ".mermaid") return "diagram";
+  if (ext === ".md") return null;
+  return "side";
+}
+
+/**
+ * What a file under `.factory/verification/` counts as.
+ *
+ * An image or `screenshot.*` is a screenshot. `diagram.*`, `*.mmd`, and
+ * `*.mermaid` are diagrams. A named side-effect file, a log, or another text
+ * file is a side-effect proof. A video and a markdown file count as neither.
+ *
+ * @param path - the file's path, already using forward slashes
+ */
+function verificationKind(path: string): "screenshot" | "side" | "diagram" | "video" | null {
+  const ext = extname(path).toLowerCase();
+  const base = path.split("/").pop() ?? path;
+  if (VIDEO_EXT.has(ext)) return "video";
+  if (IMAGE_EXT.has(ext) || /^screenshot\./i.test(base)) return "screenshot";
+  if (/^diagram\./i.test(base) || ext === ".mmd" || ext === ".mermaid") return "diagram";
+  if (/^(?:side-effect|effect|response|trace)\./i.test(base) || ext === ".log") return "side";
+  if (TEXT_EXT.has(ext) && ext !== ".md") return "side";
+  return null;
+}
+
+/** `word` as its own path segment, so "before" does not match "beforehand". */
+function pathSegment(path: string, word: "before" | "after"): boolean {
+  return new RegExp(`(?:^|[\\\\/._-])${word}(?:[\\\\/._-]|$)`, "i").test(path);
+}
+
+function normPath(path: string): string {
+  return path.replace(/\\/g, "/").replace(/^\.\//, "");
+}
+
 /* ------------------------------------------------------------------- render */
 
 export interface RenderInput {
@@ -295,8 +474,14 @@ export interface RenderInput {
   readonly footer?: string;
   /** For an escalation: why it stopped, shown first. */
   readonly lead?: readonly string[];
-  /** The change touches what a person can see, so the PR must carry a video of it working. */
+  /** The change touches what a person can see. A missing video is noted, and does not fail the check. */
   readonly needsVideo?: boolean;
+  /**
+   * Proof the check requires before a product or gardening pull request is cleared.
+   * Omitted by escalation and by tests of the older report shape, which keep
+   * the generic "there is no proof" line.
+   */
+  readonly proof?: ProofFacts;
   /** What to show when the builder wrote no summary: the spec's opening lines, then the changed files. */
   readonly fallbackSummary?: readonly string[];
 }
@@ -383,10 +568,17 @@ export function renderReport(input: RenderInput): Rendered {
     proof.push(`#### ${ROLE_HEADING[r.role] ?? r.role}`, "");
     for (const b of r.report.blocks) proof.push(renderBlock(input.repo, r, b), "");
   }
-  if (proof.length === 0) problems.push("there is no proof: no screenshot, recording, log or diagram");
+  const gaps = input.proof === undefined ? [] : proofGaps(input.reports, input.proof);
+  const checklist = input.proof?.pipeline === "product_work" || input.proof?.pipeline === "gardening";
+  if (proof.length === 0 && !checklist) problems.push("there is no proof: no screenshot, recording, log or diagram");
+  problems.push(...gaps);
   if (input.needsVideo === true) {
     const hasVideo = input.reports.some((r) => r.report.blocks.some((b) => b.type === "file" && VIDEO_EXT.has(extname(b.file).toLowerCase())));
-    if (!hasVideo) problems.push("this change touches the UI, and no role recorded a video of it working");
+    if (!hasVideo) {
+      degraded.push(
+        "this change touches the UI, and no role recorded a video of it working. A video may be attached; its absence does not fail this check.",
+      );
+    }
   }
   problems.push(...uselessProof(input.reports));
 
@@ -461,7 +653,8 @@ export const REPORT_CHECK = "factory/pr-report";
 
 interface SpecDoc {
   readonly title?: string;
-  readonly spec?: Record<string, unknown> | null;
+  readonly body?: string | null;
+  readonly spec?: { readonly files?: readonly string[]; readonly [k: string]: unknown } | null;
   readonly id: string;
   readonly pipeline?: string;
 }
@@ -516,14 +709,30 @@ export async function publishReport(opts: {
     const commit = await media.data.commit([{ path, content: specMarkdown(item) }], `spec for ${opts.workItem}`);
     links.push({ label: "Full spec", url: `https://github.com/${opts.gh.repo}/blob/${commit}/${path}` });
   }
-  const changedPaths = (await opts.gh.pullFiles(opts.pr).catch(() => [])).map((f) => f.filename);
-  const uiPaths = await uiPathsOf(opts.gh);
+  const pullFiles = await opts.gh.pullFiles(opts.pr).catch(() => []);
+  const changedPaths = pullFiles.map((f) => f.filename);
+  const pull = await opts.gh.pull(opts.pr).catch(() => null);
+  const fromDiff = pullFiles
+    .filter((f) => f.status !== "removed" && f.filename.replace(/\\/g, "/").startsWith(`${VERIFICATION_DIR}/`))
+    .map((f) => f.filename);
+  const named = [
+    ...(item?.spec?.files ?? []),
+    ...filesNamedIn(typeof item?.body === "string" ? item.body : ""),
+  ];
+  const uiPaths = uiPathsFromCheckout();
   const rendered = renderReport({
     repo: opts.gh.repo,
     kind: "change",
     reports,
     links,
     needsVideo: needsVideo(item, changedPaths, uiPaths),
+    proof: {
+      ...(item?.pipeline === undefined ? {} : { pipeline: item.pipeline }),
+      pullBody: pull?.body ?? null,
+      verificationFiles: [...new Set([...fromDiff, ...listVerification(process.cwd())])],
+      addedMarkdown: pullFiles.filter((f) => f.status === "added" && f.filename.toLowerCase().endsWith(".md")).map((f) => f.filename),
+      namedPaths: named,
+    },
     fallbackSummary: fallbackSummaryFor(item, changedPaths),
     footer: opts.footer ?? `Work item ${opts.workItem}`,
   });
@@ -694,15 +903,17 @@ export async function reportCheck(
 }
 
 
-/** `ui_paths` from the default branch's sandbox manifest; none when setup has not recorded any. */
-async function uiPathsOf(gh: GitHub): Promise<string[]> {
-  try {
-    const f = await gh.get<{ content?: string }>(`repos/${gh.repo}/contents/.factory/sandbox/manifest.json`);
-    const m = JSON.parse(Buffer.from(f.content ?? "", "base64").toString("utf8")) as { ui_paths?: string[] };
-    return m.ui_paths ?? [];
-  } catch {
-    return [];
-  }
+/**
+ * `ui_paths` from the sandbox manifest in this checkout (the pull request head).
+ *
+ * The default branch's copy is not fetched. A pull request that fixes which
+ * paths count as UI is the one this publish judges. None when setup has not
+ * recorded any.
+ */
+function uiPathsFromCheckout(): string[] {
+  const loaded = loadManifest(process.cwd());
+  if (loaded.kind !== "ok") return [];
+  return [...(loaded.manifest.ui_paths ?? [])];
 }
 
 /** The first 12 lines of the spec, then the changed files: what stands in for a missing summary. */

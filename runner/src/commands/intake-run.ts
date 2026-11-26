@@ -53,6 +53,41 @@ export interface IntakeRunOptions {
   readonly recordOnly?: boolean;
   /** The chief of staff. Without one, the fixed table's route stands. */
   readonly router?: Router;
+  /**
+   * Which failed workflow, on which branch, becomes a request. Without this,
+   * a workflow_run is not a request: the default branch could not be read.
+   */
+  readonly ci?: CiWatch;
+}
+
+/**
+ * The CI failure intake will turn into a request.
+ *
+ * The workflow name comes from `existing_ci.test_check` when that is a
+ * non-empty string, and otherwise from the name the intake workflow already
+ * listens for, `ci`. There is no separate workflow-name field on the factory
+ * config. The head branch must be the repository's default branch.
+ */
+export interface CiWatch {
+  /** The workflow name, from `ciWorkflowName`. */
+  readonly workflow: string;
+  /** The repository's default branch. */
+  readonly defaultBranch: string;
+}
+
+/**
+ * The workflow name a CI failure must carry.
+ *
+ * `existing_ci.test_check` is the only config field that names this repo's
+ * CI. When it is empty the name is `ci`, which is what the intake workflow
+ * listens for today. A check name that is not a workflow name needs a
+ * template change; see the runner report.
+ *
+ * @param testCheck - `factory.yaml`'s `existing_ci.test_check`
+ */
+export function ciWorkflowName(testCheck: string | null | undefined): string {
+  const name = testCheck?.trim() ?? "";
+  return name === "" ? "ci" : name;
 }
 
 /** What a record-only run returns: the event is on the data ref, nothing was decided. */
@@ -110,6 +145,7 @@ export function normalizeEvent(
   eventName: string,
   payload: Payload,
   now: string,
+  ci?: CiWatch,
 ): IncomingEvent | null {
   const assoc = (s: string | undefined): Association =>
     (s ?? "NONE").toUpperCase() as Association;
@@ -241,13 +277,19 @@ export function normalizeEvent(
 
   if (eventName === "workflow_run" && payload.workflow_run !== undefined) {
     const wr = payload.workflow_run;
+    // No watch means the default branch could not be read. A failed workflow
+    // on some other branch, or a workflow this repo does not call CI, is not
+    // a request. The intake workflow still has to list the same name.
+    if (ci === undefined) return null;
     if (wr.conclusion !== "failure") return null;
+    if (wr.head_branch !== ci.defaultBranch) return null;
+    if ((wr.name ?? "") !== ci.workflow) return null;
     return {
       id, kind: "ci_failure_on_main", at: now,
       actor: "github-actions",
       actor_association: "NONE",
       actor_is_bot: true,
-      title: `CI failed on ${wr.head_branch ?? "main"}: ${wr.name ?? "workflow"}`,
+      title: `CI failed on ${wr.head_branch}: ${wr.name ?? ci.workflow}`,
       ...(wr.id === undefined ? {} : { body: `Failing run: ${wr.id}` }),
     };
   }
@@ -386,7 +428,7 @@ async function intakeImpl(opts: IntakeRunOptions): Promise<IntakeRunReport | Int
       }
     }
   }
-  const normalized = picked !== null ? fromCandidate : control !== null || focused ? null : normalizeEvent(opts.eventName, payload, opts.now);
+  const normalized = picked !== null ? fromCandidate : control !== null || focused ? null : normalizeEvent(opts.eventName, payload, opts.now, opts.ci);
   const raw = normalized?.kind === "human_push" ? await enrichPush(opts.gh, normalized, payload) : normalized;
   const incoming =
     raw === null

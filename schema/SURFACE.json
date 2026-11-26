@@ -663,6 +663,8 @@
       "/properties/pipelines": {
         "type": "object",
         "properties": [
+          "conflict_fix",
+          "definition_change",
           "gardening",
           "hardening",
           "product_work"
@@ -711,6 +713,26 @@
         "additionalProperties": false
       },
       "/properties/pipelines/properties/hardening/properties/auto_merge": {
+        "type": "boolean"
+      },
+      "/properties/pipelines/properties/definition_change": {
+        "type": "object",
+        "properties": [
+          "auto_merge"
+        ],
+        "additionalProperties": false
+      },
+      "/properties/pipelines/properties/definition_change/properties/auto_merge": {
+        "type": "boolean"
+      },
+      "/properties/pipelines/properties/conflict_fix": {
+        "type": "object",
+        "properties": [
+          "auto_merge"
+        ],
+        "additionalProperties": false
+      },
+      "/properties/pipelines/properties/conflict_fix/properties/auto_merge": {
         "type": "boolean"
       },
       "/properties/review": {

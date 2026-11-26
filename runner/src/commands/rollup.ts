@@ -184,6 +184,35 @@ export function runRollup(input: RollupInput): RollupResult {
 }
 
 function round2(n: number): number { return Math.round(n * 100) / 100; }
+
+/**
+ * The spend the index should show.
+ *
+ * Finished run files stay the source when any run file exists. A rollup with
+ * no run files used to write 0 even when budget.json had this month's charges.
+ *
+ * @param runFileSpend - spend summed from run files in the window
+ * @param runFileCount - how many run files were on the data ref
+ * @param budgetSpend - this month's total in budget.json
+ */
+export function indexSpend(runFileSpend: number, runFileCount: number, budgetSpend: number): number {
+  if (runFileCount === 0 && budgetSpend > 0) return round2(budgetSpend);
+  return round2(runFileSpend);
+}
+
+/**
+ * This month's charges in a budget file. Another month, or a missing file, is 0.
+ *
+ * @param doc - budget.json, or null when it has not been written
+ * @param now - the rollup's clock, ISO-8601
+ */
+export function budgetMonthSpend(
+  doc: { readonly month?: string; readonly spent_usd?: Readonly<Record<string, number>> } | null,
+  now: string,
+): number {
+  if (doc === null || doc.month !== now.slice(0, 7) || doc.spent_usd === undefined) return 0;
+  return round2(Object.values(doc.spent_usd).reduce((a, b) => a + (typeof b === "number" ? b : 0), 0));
+}
 function round3(n: number): number { return Math.round(n * 1000) / 1000; }
 
 /* ------------------------------------------------------------------- budget */

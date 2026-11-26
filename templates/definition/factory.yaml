@@ -18,6 +18,8 @@ models:
   hardener: claude-sonnet-5-5
   scorer: claude-haiku-5-5
 
+# Product work, gardening, hardening, definition changes, and conflict
+# rebuilds start with auto-merge off. Setup pull requests are not these pipelines.
 pipelines:
   product_work:
     auto_merge: false
@@ -27,6 +29,12 @@ pipelines:
     # One cleanup PR a night: steady, reviewable, and cheap.
     max_prs_per_run: 1
   hardening:
+    auto_merge: false
+  # A change to the factory's own definition. Off: a person merges it.
+  definition_change:
+    auto_merge: false
+  # A rebuild after main moved under an open pull request. Off: a person merges it.
+  conflict_fix:
     auto_merge: false
 
 # The review grades recent runs and files what it finds as hardening work. The

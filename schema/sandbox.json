@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://build-software-factory.dev/schema/sandbox.json",
   "title": "Frozen sandbox manifest",
-  "description": "What the sandbox episode found it takes to run this app, written once at the end of setup's phase 2 and changed only by an amendment episode. Gates and roles read it from the default branch. The episode is an agent's work; this file is what makes its result reviewable and reproducible.",
+  "description": "What the sandbox episode found it takes to run this app, written once at the end of setup's phase 2 and changed only by an amendment episode. Gates and roles read the copy in the checkout they are judging (the pull request head), not a separate fetch of the default branch. The episode is an agent's work; this file is what makes its result reviewable and reproducible.",
   "type": "object",
   "required": [
     "schema",

@@ -14,14 +14,15 @@ deleted on merge so it is not unrequested markdown), and the first
   the network.** A hand-written site with its libraries on a CDN and no
   `package.json` is a common thing to find, and it changes two expectations
   that are better set now than discovered later:
-    - **Every one of those hosts needs a stub**, because the sandbox has no
-      egress by design. Run `bsf scan-asset-hosts --why` and list what it
-      finds: each is a dependency the sandbox stands in for locally, not a host
-      to allow through. A page whose library never loads renders blank, and a
-      blank page makes every screenshot the factory ever attaches worthless.
-      Say in the assessment what the tier will be — a repo with nothing to
-      build or test scores `static` whatever its pages do — so the expectation
-      is set before the first PR arrives with logs instead of pictures.
+    - **Pages that load libraries from the network.** A blank page makes every
+      screenshot worthless. Run `bsf scan-asset-hosts --why` and list what it
+      finds. Those library hosts need a local copy, because the private copy
+      does not browse the public web for them. A real integration is different:
+      Stripe, Clerk, mail, and a job runner keep a standing test surface. A
+      stub that forgets the request does not count, and a fake key that only
+      lets the process boot does not count. Ask once for a test-mode secret.
+      They paste it on GitHub, not in the chat. The finish line is the journeys
+      in the feature map, not a page that merely renders.
     - **It has nothing for guardrails to extend**, so phase 3 §0 applies and
       the setup PR will add a minimum toolchain. Say that in the assessment
       too: it is a change the owner did not ask for, and they should meet it
@@ -93,13 +94,21 @@ change → static rule → verification → context), rank by occurrences and
 recency, and show the user **one list**: problem class, occurrences, proposed
 fix, one example. Accept-all is the default. One pass, not fifteen questions.
 
+Every do-not, must, never, and always, and every mined correction, is
+installed as a check later. A bad example fails and a good example passes.
+A candidate left pending means setup is not finished. An add-the-rule card
+is not the install path. Do not leave the list for them to click through.
+
 ## What to watch for
 
 - **A convention in the docs that the code does not follow** is not the
   dominant pattern. Say so in the assessment; it is often a candidate.
-- **A repo with no tests** is a normal case, not a failure. Record it: coverage
-  floor 0%, and gardening seeded to add tests per feature folder. Note the
-  consequence for the user — diff coverage still applies from the first PR, so
-  their first product PR has to arrive with tests.
+- **A repo with no tests** is a normal case, not a failure. Record coverage
+  floor 0%, because that is what was measured, and gardening seeded to add
+  tests per feature folder. Note the consequence for the user — diff coverage
+  still applies from the first pull request, so their first product pull
+  request has to arrive with tests. If tests exist, the floor is the coverage
+  the suite measured. A floor of 0 while tests exist means setup is not
+  finished. Do not deselect or ignore tests to go green.
 - **Do not guess at intent.** If you cannot tell which of two patterns is
   dominant, count them and say the count.

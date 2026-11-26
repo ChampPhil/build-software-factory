@@ -187,7 +187,7 @@
             },
             "ui_change": {
               "type": "boolean",
-              "description": "True when the change alters anything a person sees or does in a browser. The PR must then carry a video of it working, and fails its check without one."
+              "description": "True when the change alters anything a person sees or does in a browser. A video of it working may be attached. Its absence does not fail the pull request check. Product work still needs a screenshot, a side-effect proof, and a diagram."
             },
             "tests_added": {
               "type": "array",

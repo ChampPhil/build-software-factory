@@ -1,6 +1,6 @@
 "use client";
 
-import type { StepRecord } from "./spend";
+import type { BudgetFile, StepRecord } from "./spend";
 import { isFactoryHealthIssue } from "./view";
 import { routingCandidates } from "./routing";
 import { FACTORY_YAML } from "./settings";
@@ -104,6 +104,20 @@ export function usePolled<T>(
 
 export function useIndex(client: GitHubClient | null): Loaded<IndexFile | null> {
   const load = client === null ? null : () => client.fileFromRef<IndexFile>("index.json");
+  return usePolled(load, 60_000, [client?.repo]);
+}
+
+/**
+ * The runner's monthly spend ledger, `budget.json` on the factory data ref.
+ *
+ * Same read as index.json and ledger.json. Null when the file is not there
+ * yet. The Spend page uses it so an empty `recent_runs` list cannot hide
+ * charges that were written here, including setup.
+ *
+ * client: the signed-in GitHub client, or null before sign-in.
+ */
+export function useBudget(client: GitHubClient | null): Loaded<BudgetFile | null> {
+  const load = client === null ? null : () => client.fileFromRef<BudgetFile>("budget.json");
   return usePolled(load, 60_000, [client?.repo]);
 }
 

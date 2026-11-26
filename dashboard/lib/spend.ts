@@ -1,6 +1,20 @@
 import { SHARE_OF, type ShareUse } from "./metrics";
 import type { Pipeline, RunFile } from "./types";
 
+/**
+ * `budget.json` on the factory data ref (schema `budget/2`).
+ *
+ * This is the runner's own ledger of the month, including setup. It is not
+ * the index, and it is not the per-step files.
+ *
+ * spent_usd: dollars charged this month, keyed by pipeline name, plus setup.
+ */
+export interface BudgetFile {
+  readonly schema?: string;
+  readonly month?: string;
+  readonly spent_usd?: Readonly<Record<string, unknown>>;
+}
+
 /** One step record the runner writes at `steps/<run>/<role>-<attempt>.json`. */
 export interface StepRecord {
   readonly role: string;
@@ -70,4 +84,95 @@ export function spentByShare(
   }
   for (const k of Object.keys(out) as ShareUse["share"][]) out[k] = Math.round(out[k] * 100) / 100;
   return out;
+}
+
+const SHARE_KEYS = ["product_work", "gardening", "review_and_benchmarks"] as const;
+
+const cents = (n: number): number => Math.round(n * 100) / 100;
+
+/**
+ * The month's spend from `budget.json`, in dollars rounded to cents.
+ *
+ * Every finite amount in `spent_usd` counts, including setup, which is not
+ * one of the three share bars. A missing file or a file with no finite
+ * amounts returns null, so the page can fall back instead of painting a
+ * made-up zero.
+ *
+ * spent: the `spent_usd` object from budget.json, or null when the file has none.
+ */
+export function spendFromBudget(spent: Readonly<Record<string, unknown>> | null | undefined): number | null {
+  if (spent == null) return null;
+  let total = 0;
+  let any = false;
+  // Skip NaN, Infinity, and non-numbers. They are not charges.
+  for (const value of Object.values(spent)) {
+    if (typeof value !== "number" || !Number.isFinite(value)) continue;
+    total += value;
+    any = true;
+  }
+  return any ? cents(total) : null;
+}
+
+/**
+ * The three share bars, taken from `budget.json` when those keys exist.
+ *
+ * `product_work`, `gardening`, and `review_and_benchmarks` are copied when
+ * at least one of them is a finite amount. A key that is missing stays at
+ * zero. Setup and other pipeline names are not share bars. Undefined when
+ * none of the three keys has a finite amount, so step records may fill in.
+ *
+ * spent: the `spent_usd` object from budget.json, or null when the file has none.
+ */
+export function sharesFromBudget(
+  spent: Readonly<Record<string, unknown>> | null | undefined,
+): Record<ShareUse["share"], number> | undefined {
+  if (spent == null) return undefined;
+  const out: Record<ShareUse["share"], number> = { product_work: 0, gardening: 0, review_and_benchmarks: 0 };
+  let any = false;
+  for (const key of SHARE_KEYS) {
+    const value = spent[key];
+    if (typeof value !== "number" || !Number.isFinite(value)) continue;
+    out[key] = cents(value);
+    any = true;
+  }
+  return any ? out : undefined;
+}
+
+/** Where the Spend page's big number came from. */
+export type SpendSource = "budget" | "steps" | "index";
+
+export interface SpendChoice {
+  readonly amount: number;
+  readonly source: SpendSource;
+}
+
+/**
+ * The number the Spend page shows for this month.
+ *
+ * `budget.json` wins whenever it has a finite total, because that file
+ * includes setup and does not depend on `recent_runs`. Step records are
+ * shown only when the budget file has no amounts and the index named some
+ * runs. An empty recent-runs list never contributes a zero.
+ *
+ * budgetSpent: the cent-rounded total from budget.json, or null when that file has no amounts.
+ * stepSpent: the cent-rounded total of this month's step records, or null when there are none.
+ * recentRunIds: run ids from the index. Empty means step files were not a real sample.
+ * indexSpent: the spend figure on index.json, used when neither record above is available.
+ */
+export function headlineSpend(input: {
+  readonly budgetSpent: number | null;
+  readonly stepSpent: number | null;
+  readonly recentRunIds: readonly string[];
+  readonly indexSpent: number;
+}): SpendChoice {
+  if (input.budgetSpent !== null && Number.isFinite(input.budgetSpent)) {
+    return { amount: input.budgetSpent, source: "budget" };
+  }
+  // Step files are fetched only for recent_runs. An empty list must not
+  // report zero while budget.json, or the index, has the real figure.
+  if (input.recentRunIds.length > 0 && input.stepSpent !== null && Number.isFinite(input.stepSpent)) {
+    return { amount: input.stepSpent, source: "steps" };
+  }
+  const index = Number.isFinite(input.indexSpent) ? input.indexSpent : 0;
+  return { amount: index, source: "index" };
 }

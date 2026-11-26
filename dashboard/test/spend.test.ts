@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { medianRequestToPr, minutesFromSteps, outcomeLabel, shareFraction, spendFromSteps } from "../lib/spend";
+import { headlineSpend, medianRequestToPr, minutesFromSteps, outcomeLabel, shareFraction, sharesFromBudget, spendFromBudget, spendFromSteps } from "../lib/spend";
 
 const step = (at: string, cost: number, minutes?: number) => ({ role: "x", run_id: "r", at, cost_usd: cost, billed_minutes: minutes });
 
@@ -40,6 +40,36 @@ describe("spend by share", () => {
     ];
     const out = spentByShare(steps, { r1: "product_work", r2: "gardening", r3: "hardening" }, "2026-11");
     expect(out).toEqual({ product_work: 2, gardening: 2, review_and_benchmarks: 0 });
+  });
+});
+
+describe("budget.json", () => {
+  it("sums every finite amount, including setup, and rounds to cents", () => {
+    expect(spendFromBudget({ setup: 0.126, product_work: 1.2, gardening: 0.3, review_and_benchmarks: 0.4, lost: Number.POSITIVE_INFINITY, bad: "nope" })).toBe(2.03);
+  });
+
+  it("is null when the file has no finite charges, so the page can fall back", () => {
+    expect(spendFromBudget(null)).toBeNull();
+    expect(spendFromBudget({})).toBeNull();
+    expect(spendFromBudget({ setup: Number.NaN })).toBeNull();
+  });
+
+  it("fills the three share bars from those keys and leaves setup out of them", () => {
+    expect(sharesFromBudget({ setup: 0.5, product_work: 1.234, gardening: 0.2 })).toEqual({
+      product_work: 1.23,
+      gardening: 0.2,
+      review_and_benchmarks: 0,
+    });
+    expect(sharesFromBudget({ setup: 1 })).toBeUndefined();
+  });
+
+  it("does not turn real budget charges into zero when recent runs are empty", () => {
+    expect(headlineSpend({ budgetSpent: 4.5, stepSpent: 0, recentRunIds: [], indexSpent: 0 })).toEqual({ amount: 4.5, source: "budget" });
+  });
+
+  it("uses step records only when budget.json has no amounts and the index named runs", () => {
+    expect(headlineSpend({ budgetSpent: null, stepSpent: 2.5, recentRunIds: ["run-1"], indexSpent: 0 })).toEqual({ amount: 2.5, source: "steps" });
+    expect(headlineSpend({ budgetSpent: null, stepSpent: 0, recentRunIds: [], indexSpent: 1.25 })).toEqual({ amount: 1.25, source: "index" });
   });
 });
 

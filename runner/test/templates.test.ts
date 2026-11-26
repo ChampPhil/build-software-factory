@@ -57,6 +57,8 @@ describe("default factory.yaml", () => {
     expect(p["product_work"]?.auto_merge).toBe(false);
     expect(p["gardening"]?.auto_merge).toBe(false);
     expect(p["hardening"]?.auto_merge).toBe(false);
+    expect(p["definition_change"]?.auto_merge).toBe(false);
+    expect(p["conflict_fix"]?.auto_merge).toBe(false);
   });
 
   it("budget shares add up to 100", () => {

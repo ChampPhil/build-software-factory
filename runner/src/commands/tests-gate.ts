@@ -48,7 +48,109 @@ interface CheckRun {
   readonly conclusion: string | null;
 }
 
+/**
+ * Whether a sandbox test command throws tests away and can still exit 0.
+ *
+ * A product verification that ran `pytest -k`, `--deselect`, a
+ * `PYTEST_ADDOPTS` that deselects, or `--ignore` on a test directory did not
+ * run the suite. That is a failed sandbox, not a pass.
+ *
+ * @param command - the manifest test or coverage command
+ * @param env - the closed environment, where PYTEST_ADDOPTS may hide a deselect
+ */
+export function testCommandDropsTests(
+  command: string,
+  env?: Readonly<Record<string, string>>,
+): string | null {
+  const addopts = env?.["PYTEST_ADDOPTS"] ?? "";
+  const blob = `${command}\n${addopts}`;
+  if (/--deselect(?:\s|=|$)/.test(blob)) {
+    return "the sandbox test command deselects tests (`--deselect`), so a green run would not be the suite";
+  }
+  if (/\bpytest\b/.test(blob) && /(?:^|\s)-k(?:\s|=|$)/m.test(blob)) {
+    return "the sandbox test command selects a pytest subset (`-k`), so a green run would not be the suite";
+  }
+  if (addopts !== "" && /(?:^|\s)-k(?:\s|=|$)/.test(addopts)) {
+    return "PYTEST_ADDOPTS selects a pytest subset (`-k`), so a green run would not be the suite";
+  }
+  if (/\bPYTEST_ADDOPTS\b=.*(?:--deselect|(?:^|\s)-k(?:\s|=))/.test(command)) {
+    return "PYTEST_ADDOPTS in the test command deselects tests, so a green run would not be the suite";
+  }
+  const ignored = ignoredTestDirs(blob);
+  if (ignored.length > 0) {
+    return `the sandbox test command ignores test paths (${ignored.join(", ")}), so a green run would not be the suite`;
+  }
+  return null;
+}
+
+/**
+ * `--ignore` and `--ignore-glob` arguments that point at a test directory or a test file.
+ *
+ * Ignoring `node_modules` is how a runner stays out of dependencies. Ignoring
+ * `tests` is how a command exits 0 without running the suite.
+ *
+ * @param command - the test command plus any PYTEST_ADDOPTS text
+ */
+function ignoredTestDirs(command: string): string[] {
+  const out: string[] = [];
+  const re = /--ignore(?:-glob)?(?:=|\s+)(['"]?)(\S+)\1/g;
+  for (const m of command.matchAll(re)) {
+    const path = (m[2] ?? "").replace(/\\/g, "/").replace(/^['"]|['"]$/g, "");
+    if (path !== "" && isTestPath(path)) out.push(path);
+  }
+  return out;
+}
+
+/**
+ * Whether a path a command was told to skip is a test directory or a test file.
+ *
+ * Matches `test`, `tests`, `__tests__`, `spec`, `test_*`, `*_test.*`, and
+ * `*.test.*` / `*.spec.*`. A dependency directory does not match.
+ *
+ * @param path - one `--ignore` or `--ignore-glob` argument
+ */
+function isTestPath(path: string): boolean {
+  return (
+    /(?:^|\/)(?:tests?|__tests__|specs?)(?:\/|$)/i.test(path) ||
+    /(?:^|\/)test_[^/]*$/.test(path) ||
+    /(?:^|\/)[^/]*_test\.[^/]+$/.test(path) ||
+    /(?:^|\/)[^/]*\.(?:test|spec)\.[^/]+$/.test(path)
+  );
+}
+
+/**
+ * Whether the manifest's test command or its coverage command drops tests.
+ *
+ * The coverage command replaces the test command when it is set, so a
+ * deselect hiding on either one is a failed sandbox before either runs.
+ *
+ * @param commands - the manifest's test and coverage commands
+ * @param env - the closed environment, where PYTEST_ADDOPTS may hide a deselect
+ */
+export function manifestDropsTests(
+  commands: { readonly test?: string | null; readonly coverage?: string | null },
+  env?: Readonly<Record<string, string>>,
+): string | null {
+  for (const command of [commands.test, commands.coverage]) {
+    if (command == null || command.trim() === "") continue;
+    const dropped = testCommandDropsTests(command, env);
+    if (dropped !== null) return dropped;
+  }
+  return null;
+}
+
 export async function runTestsGate(opts: TestsGateOptions): Promise<TestsGateResult> {
+  if (opts.command !== null && opts.command.trim() !== "") {
+    const dropped = testCommandDropsTests(opts.command, opts.env);
+    if (dropped !== null) {
+      return {
+        conclusion: "failure",
+        source: "ran_tests",
+        summary: dropped,
+        detail: "The manifest's test command was not run. A command that deselects tests is a failed sandbox for product verification.",
+      };
+    }
+  }
   if (opts.existingCheck !== null && opts.existingCheck !== "") {
     const read = await readExistingCheck(opts);
     if (read !== null) return read;

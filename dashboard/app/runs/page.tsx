@@ -4,6 +4,7 @@ import Link from "next/link";
 import { Suspense, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useActions, useRun, useRunFiles, useVerifierReport, useWorkItems } from "@/lib/data";
+import { visibleRuns } from "@/lib/run-list";
 import { costBreakdown, costMismatch } from "@/lib/metrics";
 import { ago, clock, dur, outcomeName, pipeName, since, titleOf, usd } from "@/lib/view";
 import type { RunFile } from "@/lib/types";
@@ -36,32 +37,21 @@ const FILTERS: readonly { id: string; label: string; fits: (o: string) => boolea
   { id: "other", label: "Other", fits: (o) => ["duplicate", "rejected", "no_action"].includes(o) },
 ];
 
-interface Row {
-  readonly id: string;
-  readonly work_item: string;
-  readonly pipeline: string;
-  readonly outcome: string;
-  readonly started_at: string;
-  readonly duration_sec: number | null;
-  readonly cost: number;
-  readonly pr: number | null;
-}
-
 /** Every time the factory worked on something: what it did, how long it took and what it cost. */
 function AllRuns() {
   const { client, index, live, ledger, installed } = useApp();
   const ids = index.state === "ready" ? (index.data?.recent_runs ?? []) : [];
   const files = useRunFiles(client, ids.slice(0, 50));
   const L = ledger.state === "ready" ? ledger.data : null;
-  const items = [...new Set([...(files.state === "ready" ? files.data.map((r) => r.work_item) : []), ...(live.state === "ready" ? live.data.map((l) => l.work_item) : [])])];
-  const docs = useWorkItems(client, items);
+  // Ledger rows wait until run files have loaded, so a work item is not listed twice.
+  const rows = visibleRuns({
+    live: live.state === "ready" ? live.data : [],
+    files: files.state === "ready" ? files.data : [],
+    open: files.state === "loading" ? [] : (L?.open ?? []),
+  });
+  const docs = useWorkItems(client, [...new Set(rows.map((r) => r.work_item))]);
   const title = (wi: string): string => titleOf(docs.state === "ready" ? docs.data[wi] : undefined, undefined, wi);
   const [filter, setFilter] = useState("all");
-
-  const rows: Row[] = [
-    ...(live.state === "ready" ? live.data : []).map((l) => ({ id: l.run, work_item: l.work_item, pipeline: l.pipeline, outcome: "running", started_at: l.started_at, duration_sec: null, cost: l.cost_usd_so_far ?? 0, pr: null })),
-    ...(files.state === "ready" ? files.data : []).map((r) => ({ id: r.id, work_item: r.work_item, pipeline: r.pipeline, outcome: r.outcome === "failed" && r.pr != null ? "draft_pr" : r.outcome, started_at: r.started_at, duration_sec: r.duration_sec ?? null, cost: r.cost_usd, pr: r.pr ?? null })),
-  ];
   const fits = FILTERS.find((f) => f.id === filter)!.fits;
   const shown = rows.filter((r) => fits(r.outcome));
 
@@ -96,7 +86,7 @@ function AllRuns() {
               <span role="columnheader" className="r">Cost</span>
             </div>
             {shown.map((r) => (
-              <Link className="tr" role="row" key={r.id} href={r.outcome === "running" ? `/request/?id=${encodeURIComponent(r.work_item)}&tab=runs` : `/runs/?id=${encodeURIComponent(r.id)}`}>
+              <Link className="tr" role="row" key={`${r.source}:${r.id}`} href={r.source === "file" ? `/runs/?id=${encodeURIComponent(r.id)}` : `/request/?id=${encodeURIComponent(r.work_item)}&tab=runs`}>
                 <span role="cell" className="t">
                   <b>{title(r.work_item)}</b>
                   <small>

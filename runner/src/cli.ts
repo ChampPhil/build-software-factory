@@ -6,7 +6,7 @@ import {
   DiskLoader, RefLoader, loadPolicy, loadBaselines, loadCoverage, changedFilesSince, changedLinesSince,
   POLICY_PATH, resolveRead,
 } from "./lib/config.js";
-import { runStaticGate, runCoverageGate, checkedFromCheckRuns, summarizeGates, GATES_CHECK, type JobResult } from "./commands/gates-run.js";
+import { runStaticGate, runCoverageGate, repoHasTests, checkedFromCheckRuns, summarizeGates, GATES_CHECK, type JobResult } from "./commands/gates-run.js";
 import { runPolicyCommand } from "./commands/policy-run.js";
 import { planGates } from "./commands/gates.js";
 import { SCHEMA_NAMES, assertValid, type SchemaName, SCHEMA_DIR } from "./lib/schema.js";
@@ -59,7 +59,7 @@ import { reportApiCalls } from "./lib/apicalls.js";
 import { startSandbox, loadManifest, loadManifestAt, trialSandbox, freezeManifest, needsHost, serveOnHost, closedEnv, trialMet } from "./commands/sandbox.js";
 import { fetchWorkItem, writeSpec, fetchArtifact, storeMedia } from "./commands/role-io.js";
 import { gardenScan, gardenFile, hardenContext, reviewCollect, reviewWrite } from "./commands/role-steps.js";
-import { runTestsGate } from "./commands/tests-gate.js";
+import { runTestsGate, manifestDropsTests } from "./commands/tests-gate.js";
 import { mineCorrections, listSessions, clusterCorrections, candidatesFrom } from "./commands/mine.js";
 import { mineRepo } from "./commands/mine-repo.js";
 import { runScorers, loadRubrics } from "./commands/score.js";
@@ -930,6 +930,7 @@ async function gatesCoverage(args: Args): Promise<number> {
       pipeline = undefined;
     }
   }
+  const testCmd = sandboxCommand("test", root);
   const result = await runCoverageGate({
     root,
     ...(pipeline === undefined ? {} : { pipeline }),
@@ -937,6 +938,7 @@ async function gatesCoverage(args: Args): Promise<number> {
     changedFiles: changedFilesSince(base),
     changedLines: changedLinesSince(base),
     ...(report === undefined ? {} : { report }),
+    repoHasTests: repoHasTests(root, testCmd.kind === "command" ? testCmd.command : null),
   });
 
   process.stdout.write(`${result.summary}\n`);
@@ -1070,8 +1072,9 @@ type SandboxCommand =
   | { readonly kind: "command"; readonly command: string };
 
 /**
- * The checkers declared in the default branch's sandbox, with the closed
- * environment the sandbox start wrote, so they run like the tests do.
+ * The checkers declared in this checkout's sandbox manifest (the pull request
+ * head), with the closed environment the sandbox start wrote, so they run
+ * like the tests do. Secret values still come only from FACTORY_SANDBOX_ENV.
  */
 async function declaredChecks(): Promise<{ checks: readonly import("./commands/sandbox.js").StaticCheck[]; env?: Record<string, string> }> {
   const loaded = loadManifest(process.cwd());
@@ -1259,6 +1262,27 @@ async function chiefOfStaff(cfg: FactoryConfig, gh: GitHub): Promise<{ router?: 
   };
 }
 
+/**
+ * Which failed workflow intake will accept, or nothing when the default branch cannot be read.
+ *
+ * The workflow name is `existing_ci.test_check` when that is set, otherwise `ci`.
+ * Failing closed (no watch) means a workflow_run is not turned into a request.
+ *
+ * @param gh - the repository client
+ * @param cfg - the factory config from the trusted definition
+ */
+async function ciWatch(
+  gh: GitHub,
+  cfg: FactoryConfig,
+): Promise<{ ci: { workflow: string; defaultBranch: string } } | Record<string, never>> {
+  try {
+    const { ciWorkflowName } = await import("./commands/intake-run.js");
+    return { ci: { workflow: ciWorkflowName(cfg.existing_ci?.test_check), defaultBranch: await gh.defaultBranch() } };
+  } catch {
+    return {};
+  }
+}
+
 async function intakeCommand(args: Args): Promise<number> {
   const cfg = await factoryConfig();
   const gh = new GitHub({ repo: requireRepo() });
@@ -1293,6 +1317,7 @@ async function intakeCommand(args: Args): Promise<number> {
     setupFinished: await gh.setupFinished(),
     ...(args["plan"] === true ? { plan: true } : {}),
     ...(await chiefOfStaff(cfg, gh)),
+    ...(await ciWatch(gh, cfg)),
   };
 
   if (args["record-only"] === true) {
@@ -1481,8 +1506,9 @@ async function runCommand(second: string | undefined, args: Args, third?: string
   if (second === "status") {
     // `bsf run status WORK_ITEM`: proceed=true while the item is still the run's.
     if (third === undefined) die("usage: bsf run status WORK_ITEM");
-    const { itemStatus } = await import("./commands/run-lifecycle.js");
+    const { itemStatus, advanceLiveForItem } = await import("./commands/run-lifecycle.js");
     const gh = new GitHub({ repo: requireRepo() });
+    await advanceLiveForItem(gh, third).catch(() => undefined);
     const status = await itemStatus(gh, third);
     process.stdout.write(`${third} is ${status}\n`);
     setOutput("status", status);
@@ -1855,6 +1881,8 @@ async function budgetSettleCommand(args: Args): Promise<number> {
       ...(billed === null ? {} : { billed_minutes: billed }),
     };
     await store.put([{ path: `steps/${parsed.run}/${parsed.role}-${parsed.attempt}.json`, content: `${JSON.stringify(record, null, 2)}\n` }], `steps: ${key}`);
+    const { advanceLiveFromSteps } = await import("./commands/run-lifecycle.js");
+    await advanceLiveFromSteps(gh, parsed.run).catch(() => undefined);
   }
   return 0;
 }
@@ -2587,7 +2615,7 @@ async function sandboxCommandCli(second: string | undefined, args: Args): Promis
     // own test check, or a failure saying setup has not finished); starting
     // nothing is not itself an error.
     if (args["if-present"] === true && loadManifest(process.cwd()).kind === "missing") {
-      process.stdout.write("no sandbox yet: setup has not frozen one on the default branch\n");
+      process.stdout.write("no sandbox yet: setup has not frozen one in this checkout\n");
       setOutput("tier", "none");
       return 0;
     }
@@ -3602,26 +3630,13 @@ async function gatesTests(args: Args): Promise<number> {
   // perfectly good `npm test`, and the aggregate gate would have passed a
   // change no test had seen.
   if (test.kind === "invalid") {
-    const summary = `The sandbox manifest on the default branch is invalid, so the tests cannot be run:\n${test.errors.join("\n")}`;
+    const summary = `The sandbox manifest in this checkout is invalid, so the tests cannot be run:\n${test.errors.join("\n")}`;
     process.stdout.write(`${summary}\n`);
     await maybeReportCheck(args, "failure", "Sandbox manifest invalid", summary, "factory/gate-tests");
     setOutput("tests_source", "invalid_manifest");
     return 1;
   }
   if (test.kind === "no_manifest" && existingCheck === null) {
-    // The setup PR is the one that brings the first manifest: the default
-    // branch has none to run its tests with, and setup's own trial already
-    // ran them on the runner with exactly this manifest. Not judged here.
-    const { MANIFEST_PATH } = await import("./commands/sandbox.js");
-    if (existsSync(join(process.env["GITHUB_WORKSPACE"] ?? process.cwd(), MANIFEST_PATH))) {
-      const why =
-        "This change brings the first sandbox manifest, so the default branch has none to run the tests with. " +
-        "Setup's trial ran them on a runner with exactly this manifest; its measured tier is in the PR.";
-      process.stdout.write(`${why}\n`);
-      await maybeReportCheck(args, "neutral", "Not judged: this PR brings the sandbox", why, "factory/gate-tests");
-      setOutput("tests_source", "setup_trial");
-      return 0;
-    }
     const summary =
       "The factory does not know how to run this repo's tests: there is no .factory/sandbox/manifest.json, " +
       "which setup writes once it has run them. Finish setup, or use Ask the factory on the dashboard's Factory page to name the check.";
@@ -3645,6 +3660,22 @@ async function gatesTests(args: Args): Promise<number> {
       return 1;
     }
     if (closed !== null) env = closed;
+  }
+  // A command that deselects tests can still exit 0, and the coverage command
+  // replaces the test command when it is set. Either one is a failed sandbox,
+  // including when an existing CI check would have been read as a pass.
+  const dropped = manifestDropsTests(
+    {
+      test: test.kind === "command" ? test.command : null,
+      coverage: sandboxCommandText("coverage"),
+    },
+    env,
+  );
+  if (dropped !== null) {
+    process.stdout.write(`${dropped}\n`);
+    await maybeReportCheck(args, "failure", "Tests were deselected", dropped, "factory/gate-tests");
+    setOutput("tests_source", "deselected");
+    return 1;
   }
   const result = await runTestsGate({
     gh,

@@ -1,5 +1,13 @@
 # Phase 6 — Instrument
 
+These are your notes. The person does not hear a phase number or a file name.
+
+The Anthropic secret and the GitHub App were done at the start, before the
+long job. Do not ask for them again. If the secret is missing, or the app
+is not installed on this repository only, that is the one chore, with a
+watch. Do not start or follow the long job until both are true. A bootstrap
+pull request merging does not count.
+
 Set up everything the factory needs to record itself and measure its work from
 the first run.
 
@@ -23,12 +31,14 @@ session hooks cannot push.
 
 ## 2. The GitHub App
 
-`node ../scripts/create-app.mjs --repo <owner/name>`
+Already created and installed at the start, on this repository only. Do not
+run `scripts/create-app.mjs` again unless that install is missing. If it is
+missing, that is the one chore: create it, then install it on this
+repository only, and watch until the script confirms the install. The name
+it fills in is Factory plus a short label for the repository. The owner is
+not in that label.
 
-The user clicks **Create**, then **Install**. The script does the rest: posts
-the manifest, catches GitHub's redirect on a local server, exchanges the
-single-use code, and stores the credentials. The whole flow expires after an
-hour.
+The notes below are how that script behaves, for when you do have to run it.
 
 **One App per account that owns repositories.** A GitHub App can only be
 installed on repositories owned by whoever owns the App, so a user with repos
@@ -55,8 +65,11 @@ Offer it; do not insist.
 
 ## 3. The model API key
 
-One repo secret, `ANTHROPIC_API_KEY`: the factory's agents all run on Claude
-Code.
+Already set at the start, as the Actions secret `ANTHROPIC_API_KEY`. Confirm
+it is in `gh secret list`. Do not ask for it again. If it is missing, name
+that one chore and start `node scripts/wait-for.mjs secret ANTHROPIC_API_KEY`
+in the background. It checks every few seconds. A multi-minute gap is a
+failed watch.
 
 **Never ask the user for the key, and never accept it if they offer it.** Not
 in the conversation, not in a file, not as an argument you pass on. Whatever
@@ -67,7 +80,7 @@ pasted it, which is exactly the failure this paragraph exists to stop. If a
 key does end up in the conversation, say so plainly and tell them to revoke it
 in the Anthropic Console and issue a new one.
 
-**They set it; you check it.** Give them one of these and wait:
+They paste it on GitHub, not in the chat. One of these, and you watch:
 
 - In their own terminal, which keeps it out of this conversation:
 
@@ -86,7 +99,8 @@ Then confirm it landed, which tells you it exists and never shows you a value:
 gh secret list --repo <owner/name>
 ```
 
-If `ANTHROPIC_API_KEY` is not in that list, say which of the two routes they
+The watch is what confirms it. Do not wait minutes between checks. If
+`ANTHROPIC_API_KEY` is not in that list, say which of the two routes they
 should try again. Do not offer a third route that involves you holding the key.
 
 Suggest, once, that they make this key in its own Anthropic Console workspace
@@ -124,9 +138,11 @@ Installed with their rubrics. They first run at the first scheduled review.
 
 ## 6. Record the starting point
 
-Current guardrail counts, the coverage floor and the open issue count go into
-`index.json`, so the dashboard shows progress from day one rather than from
-whenever someone first looks.
+Current guardrail counts, the coverage floor, and the open issue count go into
+`index.json`, so the dashboard shows progress from day one. The counts are
+the ones in `baselines.json`. The floor is the coverage the suite measured.
+If tests exist and the floor is 0, setup is not finished. An empty counts
+file while violations remain means setup is not finished.
 
 ## 7. Offer the local correction hook
 

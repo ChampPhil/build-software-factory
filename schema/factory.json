@@ -103,6 +103,26 @@
               "type": "boolean"
             }
           }
+        },
+        "definition_change": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "A person asked the factory to change its own definition. Starts with a person merging.",
+          "properties": {
+            "auto_merge": {
+              "type": "boolean"
+            }
+          }
+        },
+        "conflict_fix": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "The factory rebuilds a pull request that no longer applies. Starts with a person merging.",
+          "properties": {
+            "auto_merge": {
+              "type": "boolean"
+            }
+          }
         }
       }
     },

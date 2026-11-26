@@ -5,7 +5,7 @@ import { FactoryStore, LEDGER, json, livePath, runPath, workItemPath, type Ledge
 import { appendTurn, closeBrainstorm } from "./brainstorm.js";
 import { reportsHolding } from "./sandbox-reports.js";
 import type { GitHub } from "../lib/github.js";
-import { afterGates, type AfterGates } from "./run-plan.js";
+import { afterGates, rolesInOrder, type AfterGates } from "./run-plan.js";
 import { GATE_CHECKS, GATES_CHECK } from "./gates-run.js";
 
 /**
@@ -311,6 +311,9 @@ export async function finishRun(opts: FinishRunOptions): Promise<AfterGatesRepor
         ? { next: "escalate", reason: `the build made no PR (${opts.buildResult}) on attempt ${opts.attempt} of ${opts.maxAttempts}`, pr, attempt: opts.attempt }
         : { next: "retry", reason: `the build made no PR (${opts.buildResult})`, pr, attempt: opts.attempt + 1 };
   } else {
+    // A run file exists once the pull request does, not only when the run
+    // finishes. The finishing record overwrites this one.
+    const opened = await ensureOpenedRun(store, item, opts.runId, pr, live?.started_at ?? opts.now());
     // Link the PR to the item first: the gates' plan reads this link to
     // find the spec the verifier checks the change against.
     if (item.pr !== pr) {
@@ -332,6 +335,7 @@ export async function finishRun(opts: FinishRunOptions): Promise<AfterGatesRepor
               merge_queue: ledger.merge_queue.filter((q) => replaced === null || q.pr !== replaced),
             }),
           },
+          ...(opened === null ? [] : [opened]),
         ],
         `run ${opts.runId}: ${item.id} is PR #${pr}${replaced === null ? "" : ` (replaces #${replaced})`}`,
       );
@@ -345,6 +349,8 @@ export async function finishRun(opts: FinishRunOptions): Promise<AfterGatesRepor
         // The comment above says why; closing goes through the one helper.
         await closePullWithReason(opts.gh, replaced, `Replaced by #${pr} because this branch conflicted with main.`);
       }
+    } else if (opened !== null) {
+      await store.put([opened], `run ${opts.runId}: PR #${pr} opened`);
     }
     // A hardening PR changes the files its correction named, and tests for
     // them. Anything else (rules, dependencies, config nobody asked for) is
@@ -407,11 +413,13 @@ export async function finishRun(opts: FinishRunOptions): Promise<AfterGatesRepor
     const doc: Handoff = { run: opts.runId, work_item: item.id, pr, attempt: opts.attempt, build_result: opts.buildResult, steps };
     const now = opts.now();
     const ledger = await store.ledger(now);
+    const opened = await ensureOpenedRun(store, item, opts.runId, pr, live?.started_at ?? now);
     await store.put(
       [
         { path: workItemPath(item.id), content: json({ ...item, status: "in_review", pr }) },
         { path: LEDGER, content: json(withStatus(ledger, item, "in_review", pr, now)) },
         { path: handoffPath(opts.runId), content: json(doc) },
+        ...(opened === null ? [] : [opened]),
       ],
       `run ${opts.runId}: ${item.id} waits for the gates on PR #${pr}`,
     );
@@ -813,6 +821,162 @@ const STATUS_OUTCOME: Record<string, string> = {
   needs_info: "no_action",
   escalated: "escalated",
 };
+
+/**
+ * The smallest run record the schema accepts, written when a pull request opens.
+ *
+ * The dashboard lists runs from these files. Waiting until the run finished
+ * left an open pull request with nothing to list. The finishing record
+ * overwrites this one; it is not written when a record is already there.
+ *
+ * @param input.runId - the run
+ * @param input.workItem - the work item
+ * @param input.pipeline - the work item's pipeline
+ * @param input.pr - the pull request number
+ * @param input.startedAt - when the run started
+ */
+export function openedRunRecord(input: {
+  readonly runId: string;
+  readonly workItem: string;
+  readonly pipeline: string;
+  readonly pr: number;
+  readonly startedAt: string;
+}): Record<string, unknown> {
+  return {
+    schema: "run/1",
+    id: input.runId,
+    work_item: input.workItem,
+    pipeline: input.pipeline,
+    actor: { kind: "agent", harness: "claude-code" },
+    started_at: input.startedAt,
+    ended_at: input.startedAt,
+    duration_sec: 0,
+    outcome: "draft_pr",
+    pr: input.pr,
+    steps: [],
+    gates: [],
+    cost_usd: 0,
+    escalated: false,
+  };
+}
+
+/**
+ * The opened-run record, or null when a run file is already on the data ref.
+ *
+ * A second call must not replace a finished record with this minimal one.
+ *
+ * @param store - the data ref
+ * @param item - the work item the run belongs to
+ * @param runId - the run
+ * @param pr - the pull request number
+ * @param startedAt - when the run started, from the live file or the clock
+ */
+async function ensureOpenedRun(
+  store: FactoryStore,
+  item: WorkItemDoc,
+  runId: string,
+  pr: number,
+  startedAt: string,
+): Promise<{ path: string; content: string } | null> {
+  const path = runPath(runId);
+  if ((await store.data.read(path)) !== null) return null;
+  return {
+    path,
+    content: json(
+      openedRunRecord({ runId, workItem: item.id, pipeline: item.pipeline, pr, startedAt }),
+    ),
+  };
+}
+
+/**
+ * The live step to show once later step files exist.
+ *
+ * The live file is written at the first step. A later file moves it forward
+ * along this pipeline's order and never backward.
+ *
+ * @param pipeline - the work item's pipeline
+ * @param current - the step the live file shows now
+ * @param seen - role names parsed from step files that have been written
+ */
+export function furthestLiveStep(pipeline: string, current: string, seen: readonly string[]): string {
+  const order = rolesInOrder(pipeline);
+  const rank = (s: string): number => {
+    const i = order.indexOf(s);
+    return i < 0 ? -1 : i;
+  };
+  let best = current;
+  let bestRank = rank(current);
+  for (const s of seen) {
+    const r = rank(s);
+    if (r > bestRank) {
+      best = s;
+      bestRank = r;
+    }
+  }
+  return best;
+}
+
+/**
+ * Role names from step files already written for a run.
+ *
+ * Budget settle writes `steps/<run>/<role>-<attempt>.json`. A role report is
+ * `runs/<run>/steps/<role>.json`. Either is enough to move the live step.
+ *
+ * @param paths - paths returned by listing those two directories
+ */
+export function rolesFromStepPaths(paths: readonly string[]): string[] {
+  const out: string[] = [];
+  for (const p of paths) {
+    const base = p.split("/").pop() ?? "";
+    const m = /^([a-z]+)(?:-\d+)?\.json$/i.exec(base);
+    if (m?.[1] !== undefined) out.push(m[1].toLowerCase());
+  }
+  return out;
+}
+
+/**
+ * Move a run's live step forward when a later step file is already written.
+ *
+ * The dashboard reads `live.step` and does not look at step files itself.
+ * An invalid or missing live file is left alone.
+ *
+ * @param gh - the repository client
+ * @param runId - the run whose live file to advance
+ */
+export async function advanceLiveFromSteps(gh: GitHub, runId: string): Promise<string | null> {
+  const store = new FactoryStore(gh);
+  let live: { pipeline: string; step: string; [k: string]: unknown } | null;
+  try {
+    live = await store.get(livePath(runId), "live");
+  } catch {
+    return null;
+  }
+  if (live === null || typeof live.step !== "string" || typeof live.pipeline !== "string") return null;
+  const budget = await store.data.list(`steps/${runId}/`).catch(() => [] as readonly string[]);
+  const reports = await store.data.list(`runs/${runId}/steps/`).catch(() => [] as readonly string[]);
+  const next = furthestLiveStep(live.pipeline, live.step, rolesFromStepPaths([...budget, ...reports]));
+  if (next === live.step) return live.step;
+  await store.put([{ path: livePath(runId), content: json({ ...live, step: next }) }], `run ${runId}: live step ${next}`);
+  return next;
+}
+
+/**
+ * Advance every live file for a work item's runs.
+ *
+ * `bsf run status` calls this so a step that has already written its file is
+ * what the dashboard shows, even between budget settles.
+ *
+ * @param gh - the repository client
+ * @param workItem - the work item
+ */
+export async function advanceLiveForItem(gh: GitHub, workItem: string): Promise<void> {
+  const store = new FactoryStore(gh);
+  const item = await store.get<WorkItemDoc>(workItemPath(workItem), "work-item");
+  if (item === null) return;
+  for (const runId of item.runs ?? []) {
+    await advanceLiveFromSteps(gh, runId).catch(() => undefined);
+  }
+}
 
 /**
  * The record of one factory-run: what each role cost and did, how the gates

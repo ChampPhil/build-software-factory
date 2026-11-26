@@ -557,6 +557,12 @@ export function proposedFix(text: string): Candidate["proposed_fix"] {
   if (/\b(test|tests|screenshot|click|render|flow|behaviou?r|broke|regression|works)\b/.test(t)) {
     return "verification";
   }
+  // A standing prohibition or obligation is a rule, not a preference. Checked
+  // last so a sentence that already names a type, a lint, or a behaviour
+  // keeps that stronger fix.
+  if (/\b(?:do not|don['’]t|dont|never|must|always|forbidden|prohibit|shall not)\b/.test(t)) {
+    return "static_rule";
+  }
   return "context";
 }
 

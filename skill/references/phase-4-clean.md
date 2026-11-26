@@ -1,19 +1,33 @@
 # Phase 4 — Clean the codebase
 
-Cleanup is part of setup, not something deferred to the factory. The factory
-starts from a repo that passes its own rules.
+These are your notes. The person does not hear a phase number, a file name,
+the word freeze, or the word tier.
 
-- **Mechanical fixes** (the formatter and linter autofixes) are one "format
-  only" commit from phase 3.
-- **Everything else** is fixed now, by you. There is no baseline, so there is
-  nothing for gardening to burn down later.
-- **One PR or a sequence**, your choice and not the person's: one when the whole
-  change stays reviewable, a sequence when it would not (mechanical first, then
-  one rule or one feature folder per PR). Each PR is gated like any other.
-- **The target is pristine:** zero guardrail violations, one pattern per
-  concern, every feature folder covered above the floor.
-- Gardening still runs afterwards, for new drift: it opens up to the configured
-  number of cleanup PRs a night, and each must lower a count and raise none.
+Cleanup is part of setup, not something deferred. Do not ask the person
+whether to finish it. Do not offer to stop after the private copy.
+
+`baselines.json` holds the current count for each installed rule. A cleanup
+pull request lowers at least one count and raises none. Keep going until
+every count is zero. An empty counts file while violations remain means
+setup is not finished.
+
+- **Format is its own commit.** It is not mixed into the lint fixes.
+- **Lint fixes are the next** commit, or the next pull request.
+- **Everything else** is fixed now, by you, until the counts are zero.
+- **If one pull request would be unreviewable, name the sequence first**,
+  then open them in that order. Format, then lint fixes, then one rule or
+  one feature folder at a time. Say the sequence in one line before the
+  first pull request. Each one is checked like any other.
+- **The target is a clean tree:** zero violations, one pattern per concern,
+  every feature folder covered at or above the floor. The floor is the
+  coverage the suite measured. A floor of 0 while tests exist means this
+  part is not done.
+- Gardening still runs afterwards, for new drift. Each gardening pull
+  request must lower at least one count and raise none.
+
+The verification bar stays in the instructions the builder and the verifier
+read on every change. Moving it to a side document so a size check passes
+is a failed check. A new markdown file the request did not name fails.
 
 ## Doing it well
 

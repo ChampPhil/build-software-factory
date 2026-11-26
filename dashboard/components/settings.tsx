@@ -19,7 +19,7 @@ const STAGE_TEXT: Readonly<Record<Stage, string>> = {
   merging: "Merging…",
 };
 
-const ORDER = ["monthly_budget", "share_product_work", "share_gardening", "share_review", "auto_merge_product_work", "auto_merge_gardening", "auto_merge_hardening", "gardening_prs", "gardening_hour"];
+const ORDER = ["monthly_budget", "share_product_work", "share_gardening", "share_review", "auto_merge_product_work", "auto_merge_gardening", "auto_merge_hardening", "auto_merge_definition_change", "auto_merge_conflict_fix", "gardening_prs", "gardening_hour"];
 const SHARE_IDS = ["share_product_work", "share_gardening", "share_review"];
 
 /**
