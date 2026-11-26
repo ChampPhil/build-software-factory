@@ -134,6 +134,27 @@ describe("finishRun", () => {
     files.set(`live/${RUN}.json`, "{}");
   });
 
+  it("a run that ended before the build requeues the item and says so on the issue (fix 3)", async () => {
+    const { gh, sent } = fakeGh([[]]);
+    const r = await finishRun({ ...base, gh, attempt: 1, pr: null, buildResult: "skipped" });
+    expect(r.next).toBe("requeued");
+    const wi = JSON.parse(files.get(`work-items/${WI}.json`)!);
+    expect(wi.status).toBe("queued");
+    expect(wi.requeues).toBe(1);
+    const comment = sent.find((x) => x.path.endsWith("/issues/9/comments"));
+    expect(JSON.stringify(comment?.body)).toMatch(/could not finish the step/);
+    expect(sent.some((x) => x.path.endsWith("/issues/9/labels"))).toBe(true);
+  });
+
+  it("escalates once it has been requeued twice (fix 3)", async () => {
+    files.set(`work-items/${WI}.json`, JSON.stringify({ ...item("running"), requeues: 2 }));
+    const { gh, sent } = fakeGh([[]]);
+    const r = await finishRun({ ...base, gh, attempt: 1, pr: null, buildResult: "skipped" });
+    expect(r.next).toBe("escalate");
+    expect(JSON.parse(files.get(`work-items/${WI}.json`)!).status).toBe("escalated");
+    expect(sent.some((x) => x.path.endsWith("/issues/9/comments"))).toBe(true);
+  });
+
   it("waits for factory/gates, then clears: PR ready, labelled, item in review, live record gone", async () => {
     const { gh, sent } = fakeGh([
       [],
