@@ -158,7 +158,7 @@ describe("gh-aw's own report issues are not requests (fix 24)", () => {
   it("creates no event for an [aw] issue, however it is marked", async () => {
     const { normalizeEvent } = await import("../src/commands/intake-run.js");
     const base = { action: "opened", sender: { login: "github-actions[bot]", type: "Bot" } };
-    const mk = (issue: Record<string, unknown>) => normalizeEvent("issues", { ...base, issue: { number: 18, user: { login: "x", type: "Bot" }, author_association: "NONE", ...issue } } as never, "2026-11-25T00:00:00Z");
+    const mk = (issue: Record<string, unknown>) => normalizeEvent("issues", { ...base, issue: { number: 18, user: { login: "x", type: "Bot" }, author_association: "NONE", ...issue } }, "2026-11-25T00:00:00Z");
     expect(mk({ title: "[aw] Triage: finished without a terminal safe output", labels: [{ name: "agentic-workflows" }] })).toBeNull();
     expect(mk({ title: "[aw] Verifier incomplete", labels: [] })).toBeNull();
     expect(mk({ title: "Something", body: "<!-- gh-aw-agentic-workflow: x -->", labels: [] })).toBeNull();
@@ -181,7 +181,8 @@ describe("PR reports (fix 28)", () => {
     const { detectUiPaths, globToRegExp } = await import("../src/lib/ui-paths.js");
     const { mkdtempSync, mkdirSync, writeFileSync } = await import("node:fs");
     const { tmpdir } = await import("node:os");
-    const { join } = await import("node:path");
+    const path = await import("node:path");
+    const join = (...p: string[]): string => path.join(...p);
     const root = mkdtempSync(join(tmpdir(), "bsf-ui-"));
     mkdirSync(join(root, "client"));
     mkdirSync(join(root, "server"));

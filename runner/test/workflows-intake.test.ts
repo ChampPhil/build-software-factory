@@ -31,12 +31,12 @@ describe("factory-intake (fix 4)", () => {
     const j = intake["jobs"]["process"];
     expect(j["needs"]).toBe("record");
     expect(j["concurrency"]).toEqual({ group: "factory-intake", "cancel-in-progress": false });
-    const run = j["steps"].map((s: any) => s.run ?? "").join("\n");
+    const run = j["steps"].map((s: { run?: string }) => s.run ?? "").join("\n");
     expect(run).toContain("bsf intake --at");
   });
 
   it("records with --record-only", () => {
-    const run = intake["jobs"]["record"]["steps"].map((s: any) => s.run ?? "").join("\n");
+    const run = intake["jobs"]["record"]["steps"].map((s: { run?: string }) => s.run ?? "").join("\n");
     expect(run).toContain("bsf intake --record-only");
   });
 });

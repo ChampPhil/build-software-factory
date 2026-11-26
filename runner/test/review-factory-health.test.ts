@@ -43,8 +43,8 @@ describe("findings about missing proof (fix 8)", () => {
     const r = await runReviewRoute({
       gh: gh(dispatched), now: "2026-11-26T00:00:00Z",
       failures: [finding("missing_evidence"), finding("overclaimed")],
-    } as never);
-    const items = written.filter((w) => w.path.startsWith("work-items/")).map((w) => JSON.parse(w.content!));
+    });
+    const items = written.filter((w) => w.path.startsWith("work-items/")).map((w) => JSON.parse(w.content!) as unknown);
     expect(items.filter((i) => i.pipeline === "hardening")).toHaveLength(0);
     expect(items.filter((i) => i.pipeline === "factory_health")).toHaveLength(1);
     expect(dispatched).toEqual([]);
@@ -57,7 +57,7 @@ describe("findings about missing proof (fix 8)", () => {
     const r = await runReviewRoute({
       gh: gh([]), now: "2026-11-26T00:00:00Z",
       failures: [finding("missing_evidence"), { ...finding("missing_evidence"), run: RUN }],
-    } as never);
+    });
     expect(written.some((w) => w.path.startsWith("work-items/") && JSON.parse(w.content!).pipeline === "factory_health")).toBe(false);
     expect(r.problems.length + r.unrouted.length).toBeGreaterThan(0);
   });

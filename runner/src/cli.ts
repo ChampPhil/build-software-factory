@@ -1331,7 +1331,7 @@ async function runCommand(second: string | undefined, args: Args, third?: string
         const spec = item.spec;
         skipTriage =
           typeof item.triage_reason === "string" &&
-          spec !== null && typeof spec === "object" && Object.keys(spec as object).length > 0;
+          spec !== null && typeof spec === "object" && Object.keys(spec).length > 0;
         // A conversation is still open on this item: the reply goes to it.
         const { brainstormPath } = await import("./commands/brainstorm.js");
         const b = await store.data.readJson<{ closed_at?: string }>(brainstormPath(workItemId)).catch(() => null);

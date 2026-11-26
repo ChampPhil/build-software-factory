@@ -168,7 +168,7 @@ export default function Factory() {
                   {healthIssues.data.map((i) => (
                     <li key={i.number}>
                       <Cross /> <Out href={i.html_url}>#{i.number} {i.title}</Out>{" "}
-                      <button className="btn small" type="button" onClick={() => void act(() => client!.setIssueState(i.number, "closed"), "Closed. It comes back only if the problem does.")}>
+                      <button className="btn small" type="button" onClick={() => void act(() => client.setIssueState(i.number, "closed"), "Closed. It comes back only if the problem does.")}>
                         Close
                       </button>
                     </li>

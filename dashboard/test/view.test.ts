@@ -184,9 +184,9 @@ import { needsFrom as needsFor } from "../lib/view";
 describe("needs you includes unanswered asks", () => {
   it("lists a factory:ask issue with no comments and the count matches", () => {
     const issue = { number: 5, title: "[Settings] x", html_url: "u", created_at: "2026-11-01T00:00:00Z", user: { login: "me" }, labels: [{ name: "factory:ask" }], author_association: "OWNER", comments: 0 };
-    const list = needsFor({ ledger: null, pulls: [], issues: [issue as never], candidates: [] });
+    const list = needsFor({ ledger: null, pulls: [], issues: [issue], candidates: [] });
     expect(list.map((n) => n.kind)).toEqual(["ask"]);
-    const answered = needsFor({ ledger: null, pulls: [], issues: [{ ...issue, comments: 2 } as never], candidates: [] });
+    const answered = needsFor({ ledger: null, pulls: [], issues: [{ ...issue, comments: 2 }], candidates: [] });
     expect(answered).toHaveLength(0);
   });
 });

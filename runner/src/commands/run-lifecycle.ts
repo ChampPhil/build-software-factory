@@ -348,7 +348,7 @@ export async function finishRun(opts: FinishRunOptions): Promise<AfterGatesRepor
     // A hardening PR changes the files its correction named, and tests for
     // them. Anything else (rules, dependencies, config nobody asked for) is
     // a person's to decide, so the run stops here.
-    const stray = item.pipeline === "hardening" ? await strayHardeningFiles(opts.gh, pr, item as { body?: string }) : [];
+    const stray = item.pipeline === "hardening" ? await strayHardeningFiles(opts.gh, pr, item) : [];
     const strayReport: typeof report = {
       next: "escalate",
       reason: `this hardening PR changes files its correction did not name: ${stray.slice(0, 5).join(", ")}${stray.length > 5 ? ` and ${stray.length - 5} more` : ""}`,
