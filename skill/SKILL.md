@@ -17,16 +17,28 @@ happening, not which job is doing it.
 
 ## Your first message
 
-Your first message is only the pitch. Nothing else. No checklist. No phase
-names. No dashboard link. No secrets. No "what I need from you".
+Your first message is only the pitch. Nothing else. No checklist of chores.
+No phase names. No dashboard link. No secrets. No "what I need from you".
 
-Say these three things, in everyday words, a few short sentences:
+The pitch is the three pipelines. Each one is its own bullet. Do not collapse
+them into one sentence about a garden. Use these:
 
-- This codebase becomes a garden. The code already there gets cleaned, and
-  later changes are only allowed in if they keep it clean.
-- Agents try the work in a private copy of the app, check it there, and
-  hand back a pull request.
-- The person watches that from one page.
+- **Product work.** You tell a chief of staff what you want. It brainstorms
+  with you until the request is specific, then kicks off the cloud agents.
+  When they are done, you review the high-level verification artifacts.
+- **Scheduled gardening.** Every couple of days the factory reviews the
+  codebase for tech debt, antipatterns, and design choices that should not
+  take root. If they have, it refactors them out. Bad code is like weeds:
+  left alone it grows quickly, and later agents copy it.
+- **Factory hardening.** A problem class gets removed for good: a static
+  check such as a linter rule, an update to the prose agents read (agent
+  skills, AGENTS.md, CLAUDE.md), a refactor, or a wider net for what formal
+  and runtime verification look for. You can start that by telling the chief
+  of staff what you want prevented, such as excess comments. Every couple of
+  days the factory also hardens itself, from your local conversations with
+  coding agents (Claude Code, Cursor, and the rest) and from corrections you
+  left on pull requests. A hook on your machine starts hardening when you
+  say something you want hardened.
 
 The last line of that message is exactly:
 
@@ -58,13 +70,22 @@ The chores, in this order:
    in the background. It checks every few seconds. Do not pass an interval
    of a minute or more. A multi-minute gap is a failed watch: start it
    again. When it exits 0, name the next chore.
-2. **Create the GitHub App.**
+2. **Create the GitHub App.** Run
    `node scripts/create-app.mjs --repo <owner>/<repo>`
-   opens GitHub with the name filled in. They press **Create**.
-3. **Install it on this repository only.** The page opens already on this
-   one repository. They press **Install**. The script checks that the
-   install covers only this repository and stops with the exact fix if it
-   covers all of them.
+   in the background. It prints a link. Put that link in the message so
+   they can open it. They press **Create**. You do not.
+3. **Install it on this repository only.** The same script then prints the
+   install link. That page is already on **Only select repositories**, with
+   this repository selected. Put that link in the message. They press
+   **Install**. The script is the background loop: when the install is in
+   place it exits and you continue. Do not ask them to come back and say
+   they installed it. If the install covers every repository, the script
+   stops with the exact fix.
+
+**Do not control their browser.** Do not click, type, or fill the GitHub
+page. Do not use browser tools, computer use, or any automation on their
+desktop for this chore. Opening the link is the whole of the help. They
+click. The background loop resumes when the app is installed.
 4. **One question.** Do the pull requests setup itself opens merge on their
    own? Ask it in everyday words, after the app is installed. If they only
    said yes to setup, the answer is yes: those pull requests merge on their
@@ -366,3 +387,5 @@ switches are on.
 - **Do not say setup is done early.** The closing message waits until the
   private copy, the checkers, the zero counts, the green audit, and the
   green smoke-test pull request are all true.
+- **Do not drive their browser to create or install the GitHub App.** Give
+  them the link. They click. A background watch resumes when it is done.
