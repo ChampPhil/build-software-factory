@@ -10,7 +10,7 @@ import { runStaticGate, runCoverageGate, checkedFromCheckRuns, summarizeGates, G
 import { runPolicyCommand } from "./commands/policy-run.js";
 import { planGates } from "./commands/gates.js";
 import { SCHEMA_NAMES, assertValid, type SchemaName, SCHEMA_DIR } from "./lib/schema.js";
-import { runIntakeCommand } from "./commands/intake-run.js";
+import { runIntakeCommand, recordIntakeCommand } from "./commands/intake-run.js";
 import { runRollupCommand, squashMedia } from "./commands/rollup-run.js";
 import { runMergeCommand } from "./commands/merge-run.js";
 import { runGardenCommand } from "./commands/garden.js";
@@ -106,7 +106,7 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
       Record a gate's result against the head commit, so the same commit is
       never checked twice.
 
-  bsf intake [--event-name NAME] [--event PATH] [--plan]
+  bsf intake [--record-only] [--at TIME] [--event-name NAME] [--event PATH] [--plan]
       Normalize every unprocessed event into work items and dispatch runs.
       Appends the incoming event to the data ref before deciding anything, so
       a dropped run costs a delay rather than a request.
@@ -1214,11 +1214,15 @@ async function intakeCommand(args: Args): Promise<number> {
   }
 
   const triggers = cfg.triggers ?? {};
-  const report = await runIntakeCommand({
+  // The record job fixes the event's time and hands it to the process job
+  // with --at, so both name the event the same id and it is one event, not
+  // two (fix 4).
+  const at = typeof args["at"] === "string" && !Number.isNaN(Date.parse(args["at"])) ? args["at"] : nowIso();
+  const intakeOpts = {
     gh,
     eventName,
     eventPath,
-    now: nowIso(),
+    now: at,
     policy: await loadPolicy(new DiskLoader(process.cwd())),
     triggers: {
       issues: triggers["issues"] !== false,
@@ -1232,8 +1236,16 @@ async function intakeCommand(args: Args): Promise<number> {
     setupFinished: await gh.setupFinished(),
     ...(args["plan"] === true ? { plan: true } : {}),
     ...(await chiefOfStaff(cfg, gh)),
-  });
+  };
 
+  if (args["record-only"] === true) {
+    const recorded = await recordIntakeCommand(intakeOpts);
+    setOutput("at", at);
+    process.stdout.write(`recorded event ${recorded.event ?? "(none: not a request)"}\n`);
+    await reportApiCalls(gh, nowIso(), (t) => process.stdout.write(t));
+    return 0;
+  }
+  const report = await runIntakeCommand(intakeOpts);
   for (const d of report.result.decisions) {
     process.stdout.write(`${d.event.kind}: ${d.outcome} — ${d.reason}\n`);
   }

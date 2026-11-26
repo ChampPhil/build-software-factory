@@ -1,9 +1,15 @@
 # factory-intake — every trigger becomes one standard work item.
 #
-# One concurrency group with queue behaviour, and each run processes every
-# event not yet handled rather than only the one that started it. That is what
-# makes "ten issues in a minute, none lost" true even if a queued run is
-# dropped: the next run picks up its events too, by cursor.
+# Two jobs, because GitHub keeps one pending run per concurrency group and
+# cancels the older ones: three issues opened together once started three
+# runs and two were dropped before they wrote anything down.
+#
+#   record   a group of its own per run, so no run is ever cancelled for
+#            another's sake. It writes the event to the data ref and marks the
+#            issue queued. Nothing is decided here.
+#   process  one at a time, queueing. Takes in every event not yet handled
+#            (by cursor), so an event is picked up even if the run that
+#            started it was itself dropped while waiting.
 name: factory-intake
 
 on:
@@ -44,17 +50,79 @@ permissions:
   issues: read
   pull-requests: read
 
-concurrency:
-  # Never cancel: a cancelled intake would be the one way to lose a request.
-  group: factory-intake
-  cancel-in-progress: false
-
 jobs:
-  intake:
+  record:
     # A fork's PR gets no secrets, so the run would only fail; intake ignores
     # fork events anyway.
     if: ${{ github.event.pull_request == null || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest
+    concurrency:
+      group: factory-intake-record-${{ github.run_id }}
+      cancel-in-progress: false
+    outputs:
+      at: ${{ steps.record.outputs.at }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      # The runner that judges a change must not come from the change. A pull
+      # request, a merge-group commit or an agent's workspace can all modify
+      # .factory/bin, so it is taken from the default branch and parked outside the
+      # workspace, which is the only directory the agent sandbox can write to.
+      - name: Fetch the factory runner from the default branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: .factory-trusted
+          sparse-checkout: |
+            .factory/bin
+            .factory/definition
+            .factory/sandbox
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Put the trusted runner on PATH
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/bsf"
+          cp -R .factory-trusted/.factory/bin/. "$RUNNER_TEMP/bsf/"
+          # The definition and the sandbox decide how a change is judged, so
+          # bsf reads them from this copy, never from the checkout.
+          mkdir -p "$RUNNER_TEMP/bsf-trusted/.factory"
+          for d in definition sandbox; do
+            if [ -d ".factory-trusted/.factory/$d" ]; then cp -R ".factory-trusted/.factory/$d" "$RUNNER_TEMP/bsf-trusted/.factory/"; fi
+          done
+          echo "BSF_TRUSTED_ROOT=$RUNNER_TEMP/bsf-trusted" >> "$GITHUB_ENV"
+          rm -rf .factory-trusted
+          echo "$RUNNER_TEMP/bsf" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/bsf/bsf" --version
+      - name: Mint a repo-scoped token for intake
+        id: token
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1
+        with:
+          app-id: ${{ vars.FACTORY_APP_CLIENT_ID }}
+          private-key: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-issues: write
+          permission-pull-requests: read
+          permission-actions: write
+          # Scoped to this repository: an App token otherwise reaches every repo
+          # the installation covers.
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+      - name: Write the event down
+        id: record
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: bsf intake --record-only
+
+  process:
+    needs: record
+    # Runs even if recording failed: processing records the event itself.
+    if: ${{ always() && (github.event.pull_request == null || github.event.pull_request.head.repo.full_name == github.repository) }}
+    runs-on: ubuntu-latest
+    concurrency:
+      # Never cancel: a cancelled intake would be the one way to lose a request.
+      group: factory-intake
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       # The runner that judges a change must not come from the change. A pull
@@ -112,4 +180,4 @@ jobs:
           # The chief of staff: one small model call, no tools, per new request.
           # Without the key every request keeps the fixed table's route.
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: bsf intake
+        run: bsf intake --at "${{ needs.record.outputs.at }}"

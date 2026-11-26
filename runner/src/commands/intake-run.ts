@@ -45,8 +45,20 @@ export interface IntakeRunOptions {
   readonly ref?: string;
   /** Set to skip dispatching, for a dry run. */
   readonly plan?: boolean;
+  /**
+   * Only write the event down (and mark the issue queued), then stop. The
+   * intake workflow's first job does this in a group of its own, so no event
+   * is lost to GitHub keeping one pending run per group (fix 4).
+   */
+  readonly recordOnly?: boolean;
   /** The chief of staff. Without one, the fixed table's route stands. */
   readonly router?: Router;
+}
+
+/** What a record-only run returns: the event is on the data ref, nothing was decided. */
+export interface IntakeRecordedReport {
+  readonly recorded: true;
+  readonly event: number | null;
 }
 
 export interface IntakeRunReport {
@@ -316,6 +328,19 @@ function isFork(pr: NonNullable<Payload["pull_request"]>): boolean {
 }
 
 export async function runIntakeCommand(opts: IntakeRunOptions): Promise<IntakeRunReport> {
+  const r = await intakeImpl({ ...opts, recordOnly: false });
+  if ("recorded" in r) throw new Error("unreachable: record-only was off");
+  return r;
+}
+
+/** The first intake job: write the event down and mark the issue queued (fix 4). */
+export async function recordIntakeCommand(opts: IntakeRunOptions): Promise<IntakeRecordedReport> {
+  const r = await intakeImpl({ ...opts, recordOnly: true });
+  if (!("recorded" in r)) throw new Error("unreachable: record-only was on");
+  return r;
+}
+
+async function intakeImpl(opts: IntakeRunOptions): Promise<IntakeRunReport | IntakeRecordedReport> {
   const store = new FactoryStore(opts.gh);
   await store.data.pin();
   const payload = JSON.parse(readFileSync(opts.eventPath, "utf8")) as Payload;
@@ -386,6 +411,15 @@ export async function runIntakeCommand(opts: IntakeRunOptions): Promise<IntakeRu
       },
       `intake: record ${incoming.kind}`,
     );
+  }
+
+  if (opts.recordOnly === true) {
+    // The issue says "queued" from here until a run starts (fix 3).
+    const num = incoming?.kind === "issue_opened" ? /^#(\d+)$/.exec(incoming.ref ?? "")?.[1] : undefined;
+    if (num !== undefined) {
+      await opts.gh.send("POST", `repos/${opts.gh.repo}/issues/${num}/labels`, { labels: ["factory:queued"] }).catch(() => undefined);
+    }
+    return { recorded: true, event: incoming?.id ?? null };
   }
 
   const cursorDoc = await store.data.readJson<{ cursor?: number }>(CURSOR);
