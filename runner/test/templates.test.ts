@@ -700,4 +700,28 @@ describe("the budget in the workflows", () => {
       expect(copy, `${f} copies stubs without clearing the old folder first`).toMatch(/rm -rf \.factory\/sandbox\/stubs/);
     }
   });
+  it("a factory upgrade does not design setup again once a sandbox is frozen, but a manual run still can", () => {
+    const wf = parseYaml(readFileSync(join(TEMPLATES, "workflows/factory-setup.yml"), "utf8")) as {
+      jobs: { ready: { steps: { name?: string; id?: string; if?: string; run?: string }[] } };
+    };
+    const steps = wf.jobs.ready.steps;
+    const guard = steps.find((st) => st.id === "finished");
+    expect(guard, "no finished-check step").toBeDefined();
+    expect(guard?.if).toBe("github.event_name == 'push'");
+    for (const id of ["doctor"]) {
+      expect(steps.find((st) => st.id === id)?.if).toBe("steps.finished.outputs.done != 'true'");
+    }
+    const run = (withManifest: boolean): string => {
+      const dir = mkdtempSync(join(tmpdir(), "bsf-fin-"));
+      mkdirSync(join(dir, ".factory-trusted/.factory/sandbox"), { recursive: true });
+      if (withManifest) writeFileSync(join(dir, ".factory-trusted/.factory/sandbox/manifest.json"), "{}");
+      const out = join(dir, "out");
+      writeFileSync(out, "");
+      writeFileSync(join(dir, "summary"), "");
+      spawnSync("bash", ["-c", guard?.run ?? ""], { cwd: dir, env: { ...process.env, GITHUB_OUTPUT: out, GITHUB_STEP_SUMMARY: join(dir, "summary") } });
+      return readFileSync(out, "utf8");
+    };
+    expect(run(true)).toContain("done=true");
+    expect(run(false)).not.toContain("done=true");
+  });
 });
