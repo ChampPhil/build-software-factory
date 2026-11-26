@@ -59,9 +59,32 @@ jobs:
           sparse-checkout: |
             .factory/bin
             .factory/definition
+            .factory/sandbox/manifest.json
           sparse-checkout-cone-mode: false
           persist-credentials: false
+      # A push gets here when the runner or the definition changes, which
+      # includes every factory upgrade. Once a sandbox is frozen, setup has
+      # already happened: designing it again costs model credits for nothing
+      # and can replace a sandbox that works. Redoing it is a deliberate act
+      # (run factory-setup by hand), and a sandbox that needs to change goes
+      # through an amendment.
+      - name: Has setup already finished?
+        id: finished
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          if [ -f .factory-trusted/.factory/sandbox/manifest.json ]; then
+            echo "done=true" >> "$GITHUB_OUTPUT"
+            {
+              echo "### Setup already finished"
+              echo
+              echo "This repository has a frozen sandbox, so a change to the factory's runner or"
+              echo "definition does not design it again. To redo setup on purpose, run"
+              echo "**factory-setup** from the Actions tab."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
       - name: Put the trusted runner on PATH
+        if: steps.finished.outputs.done != 'true'
         shell: bash
         run: |
           mkdir -p "$RUNNER_TEMP/bsf"
@@ -69,6 +92,7 @@ jobs:
           echo "$RUNNER_TEMP/bsf" >> "$GITHUB_PATH"
       - name: Is the App installed and the model key set?
         id: doctor
+        if: steps.finished.outputs.done != 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
