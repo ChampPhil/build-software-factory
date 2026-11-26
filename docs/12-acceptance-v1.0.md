@@ -191,9 +191,14 @@ are covered by `skill.test.ts` and `doctor.test.ts`.
 
 ### 8. A schema-major upgrade arrives as a Dependabot PR
 
-**Deferred.** Dependabot cannot watch a private repository's releases for this;
-the alerts are to be set up when the repository is made public. The machinery
-is built and frozen (`schema/SURFACE.json`, `bsf migrate`).
+**Built, to be proven once the repository is public and a release is tagged.**
+Dependabot cannot see a private repository's releases. The upgrade path is now
+installed by `install-factory.mjs` (a pinned `uses:` of `runner/action.yml` in
+`factory-runner-pin.yml`, a Dependabot entry, and a `sync` job that opens the PR
+that brings `.factory/bin` up to the pin), with tests. The migration machinery
+is built and frozen (`schema/SURFACE.json`, `bsf migrate`). What remains is to
+tag a release, run `scripts/pin-release.mjs`, install into a repository, publish
+a second release and watch the two pull requests open.
 
 ### 9. On Philip's repo, three pipelines have each merged a PR
 

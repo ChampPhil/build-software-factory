@@ -131,6 +131,73 @@ for (const [src, dest] of PLAN) {
     cpSync(file, target);
   }
 }
+// The runner upgrade path (docs/07, "Upgrades open themselves"). The pin
+// workflow and the Dependabot entry exist only for a published release: a pin
+// has to name a commit that is on GitHub, and one that is not would fail every
+// run. skill/RUNNER_PIN holds "<owner/repo> <40-hex sha> <version>" once a
+// release has been cut (scripts/pin-release.mjs), and "unreleased" before.
+const pinFile = arg("pin-file") ?? join(skill, "RUNNER_PIN");
+const pinWorkflow = join(into, ".github/workflows/factory-runner-pin.yml");
+const pinText = existsSync(pinFile) ? readFileSync(pinFile, "utf8").trim() : "unreleased";
+const pin = /^([\w.-]+\/[\w.-]+) ([0-9a-f]{40}) (v\d+\.\d+\.\d+\S*)$/.exec(pinText);
+if (pin === null) {
+  if (!dryRun && existsSync(pinWorkflow)) rmSync(pinWorkflow);
+  console.log(
+    "no runner release is pinned yet (skill/RUNNER_PIN says \"unreleased\"), so the runner upgrade path " +
+      "(factory-runner-pin.yml and a Dependabot entry) was not installed",
+  );
+} else if (!dryRun) {
+  const [, repo, sha, version] = pin;
+  const tmpl = readFileSync(join(repoRoot, "templates/runner-pin/factory-runner-pin.yml"), "utf8");
+  mkdirSync(dirname(pinWorkflow), { recursive: true });
+  writeFileSync(pinWorkflow, tmpl.replaceAll("__RUNNER_REPO__", repo).replaceAll("__RUNNER_SHA__", sha).replaceAll("__RUNNER_VERSION__", version));
+  console.log(`pinned the runner at ${repo}@${sha.slice(0, 12)} (${version}) in ${relative(into, pinWorkflow)}`);
+  console.log(addDependabotEntry(join(into, ".github/dependabot.yml"), repo));
+}
+
+/**
+ * Dependabot's half: a github-actions entry limited to the runner, with a
+ * cooldown so a bad or compromised release has time to be caught and pulled.
+ * An existing file is added to and never rewritten: the entry is appended to
+ * the end of `updates:`, and if `updates:` is not the last top-level key the
+ * file is left alone and the person is told, because guessing where to put it
+ * in someone else's configuration is worse than asking.
+ */
+function addDependabotEntry(path, repo) {
+  const entry = [
+    "  # Added by the factory: opens a pull request when a new runner release is",
+    "  # published. Only the runner; your other dependencies are not touched.",
+    "  - package-ecosystem: github-actions",
+    "    directory: /",
+    "    allow:",
+    `      - dependency-name: "${repo}*"`,
+    "    schedule:",
+    "      interval: daily",
+    "    cooldown:",
+    "      default-days: 3",
+    "    labels:",
+    "      - factory-runner-upgrade",
+    "    commit-message:",
+    '      prefix: "Upgrade the factory runner"',
+    "",
+  ].join("\n");
+  if (!existsSync(path)) {
+    writeFileSync(path, `version: 2\nupdates:\n${entry}`);
+    return "wrote .github/dependabot.yml";
+  }
+  const text = readFileSync(path, "utf8");
+  if (text.includes(`"${repo}*"`)) return ".github/dependabot.yml already has the runner entry";
+  const tops = text.split("\n").filter((l) => /^[A-Za-z_][\w-]*:/.test(l));
+  if (tops.length === 0 || !tops[tops.length - 1].startsWith("updates:")) {
+    return (
+      "left .github/dependabot.yml alone: `updates:` is not its last section, so the entry has to be added by hand. " +
+      "Copy the entry from templates/runner-pin/dependabot-entry.md in the factory's repository."
+    );
+  }
+  writeFileSync(path, `${text.endsWith("\n") ? text : `${text}\n`}${entry}`);
+  return "added the runner entry to the existing .github/dependabot.yml (the other entries are untouched)";
+}
+
 // The launcher has to be executable on GitHub's Linux runners, where every
 // pipeline step calls it. `chmod` alone is not enough: on Windows the
 // filesystem carries no execute bit for git to read, so git stages the file
