@@ -317,6 +317,7 @@ function isFork(pr: NonNullable<Payload["pull_request"]>): boolean {
 
 export async function runIntakeCommand(opts: IntakeRunOptions): Promise<IntakeRunReport> {
   const store = new FactoryStore(opts.gh);
+  await store.data.pin();
   const payload = JSON.parse(readFileSync(opts.eventPath, "utf8")) as Payload;
   // A person accepting or rejecting a candidate on the dashboard. Rejecting is
   // only a record; accepting is also a request to harden against it now, which
@@ -391,23 +392,9 @@ export async function runIntakeCommand(opts: IntakeRunOptions): Promise<IntakeRu
   const cursor = cursorDoc?.cursor ?? 0;
   const ledger = await store.ledger(opts.now);
 
-  // An issue whose own intake run never got to record it — GitHub keeps one
-  // pending run per concurrency group and cancels the rest, so three issues
-  // opened together started three runs and two were dropped — is picked up
-  // here from the issue list, so no request is lost however the runs fall.
-  if (opts.triggers.issues) {
-    const missed = await missedIssues(opts.gh, store, queued, ledger, opts.now, opts.policy.trust.associations).catch(() => []);
-    if (missed.length > 0) {
-      queued.push(...missed);
-      await store.data.commitWithRetry(
-        async () => {
-          const text = (await store.data.read(INCOMING)) ?? "";
-          return [{ path: INCOMING, content: `${text}${missed.map((e) => JSON.stringify(e)).join("\n")}\n` }];
-        },
-        `intake: recover ${missed.length} issue(s) whose events were dropped`,
-      );
-    }
-  }
+  // The sweep that used to re-list every issue here is gone (fix 2): the
+  // record job gives every event its own run, so none is dropped, and the
+  // sweep cost one API call per open issue on every run.
 
   const openItems: LedgerOpenItem[] = ledger.open.map((o) => ({
     work_item: o.work_item,

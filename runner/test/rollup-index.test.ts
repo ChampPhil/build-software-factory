@@ -7,7 +7,8 @@ vi.mock("../src/lib/store.js", async (orig) => {
   const real = await orig<typeof import("../src/lib/store.js")>();
   const { assertValid } = await import("../src/lib/schema.js");
   class FactoryStore {
-    data = { list: async () => [...files.keys()], readJson: async <T,>(p: string) => (files.has(p) ? (JSON.parse(files.get(p)!) as T) : null) };
+    data = {
+      pin: async () => null, list: async () => [...files.keys()], readJson: async <T,>(p: string) => (files.has(p) ? (JSON.parse(files.get(p)!) as T) : null) };
     async get<T>(p: string): Promise<T | null> { return files.has(p) ? (JSON.parse(files.get(p)!) as T) : null; }
     async ledger(now: string) { return (await this.get(real.LEDGER)) ?? real.emptyLedger(now); }
     async put(changes: { path: string; content: string | null }[]) {

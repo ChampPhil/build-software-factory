@@ -55,6 +55,7 @@ import {
   measuredUsd, detectionUsd, canStart, type BudgetDoc, type BudgetLimits, type BudgetMeasure,
 } from "./commands/budget.js";
 import { loadFactory, trustedRoot } from "./lib/config.js";
+import { reportApiCalls } from "./lib/apicalls.js";
 import { startSandbox, loadManifest, loadManifestAt, trialSandbox, freezeManifest, needsHost, serveOnHost, closedEnv, trialMet } from "./commands/sandbox.js";
 import { fetchWorkItem, writeSpec, fetchArtifact, storeMedia } from "./commands/role-io.js";
 import { gardenScan, gardenFile, hardenContext, reviewCollect, reviewWrite } from "./commands/role-steps.js";
@@ -1240,6 +1241,7 @@ async function intakeCommand(args: Args): Promise<number> {
     `${report.result.processed} event(s) processed; dispatched ${report.dispatched.length}: ${report.decision.reason}\n`,
   );
   setOutput("dispatched", report.dispatched.join(","));
+  await reportApiCalls(gh, nowIso(), (t) => process.stdout.write(t));
   return 0;
 }
 
@@ -1544,6 +1546,7 @@ async function rollupCommand(args: Args): Promise<number> {
   if (report.paused.length > 0) {
     process.stdout.write(`paused: ${report.paused.join(", ")}\n`);
   }
+  await reportApiCalls(gh, now, (t) => process.stdout.write(t));
 
   if (args["squash-media"] === true) {
     const months = cfg.data?.media_retention_months ?? 12;
