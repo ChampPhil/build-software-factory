@@ -14,10 +14,12 @@ import { SUPERVISOR_SOURCE } from "./supervisor-source.js";
 /**
  * `bsf sandbox start` — bring up the frozen sandbox for a role.
  *
- * Replaces `.factory/sandbox/start.sh`, which the role workflows ran from the
- * workspace: on a retry that is the PR branch, so a free-form script from the
- * change under judgement ran before the agent did. This reads the manifest
- * from the default branch and does only what it declares.
+ * Replaces `.factory/sandbox/start.sh`, which the role workflows ran as a
+ * free-form script. This reads the manifest in the checkout — the pull
+ * request head when a change is being judged — and does only what it
+ * declares. It does not read the default branch's copy, so a fix to the
+ * manifest is what this run starts. Secret values still come only from
+ * FACTORY_SANDBOX_ENV, not from workflow YAML.
  */
 
 export interface SandboxManifest {
@@ -96,7 +98,7 @@ export type LoadedManifest =
   | { readonly kind: "invalid"; readonly errors: readonly string[] }
   | { readonly kind: "ok"; readonly manifest: SandboxManifest };
 
-/** The manifest from the trusted root, validated. Invalid is never treated as absent. */
+/** The manifest in this checkout, validated. Invalid is never treated as absent. */
 export function loadManifest(root: string): LoadedManifest {
   return loadManifestAt(resolveRead(root, MANIFEST_PATH));
 }
@@ -219,7 +221,7 @@ export async function startSandbox(opts: {
   const log = opts.log ?? ((l: string) => process.stdout.write(`${l}\n`));
   const loaded = loadManifest(opts.root);
   if (loaded.kind === "missing") {
-    throw new Error(`no ${MANIFEST_PATH} on the default branch: setup has not finished, so there is no sandbox to start`);
+    throw new Error(`no ${MANIFEST_PATH} in this checkout: setup has not finished, so there is no sandbox to start`);
   }
   if (loaded.kind === "invalid") throw new Error(`${MANIFEST_PATH} is invalid:\n  ${loaded.errors.join("\n  ")}`);
   const m = loaded.manifest;

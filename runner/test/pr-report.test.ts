@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { renderReport, renderBlock, readReportFile, attachRecordings, needsVideo, MARKER, CONTINUED_MARKER, type StoredReport } from "../src/commands/pr-report.js";
+import { renderReport, renderBlock, readReportFile, attachRecordings, needsVideo, proofGaps, MARKER, CONTINUED_MARKER, type StoredReport } from "../src/commands/pr-report.js";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -67,6 +67,97 @@ describe("the factory/pr-report check's findings", () => {
       "there is no conceptual breakdown",
     ]);
     expect(renderReport({ repo: "o/r", kind: "change", reports: [] }).problems).toContain("no role wrote a report");
+  });
+});
+
+describe("the proof a product or gardening pull request must show", () => {
+  const facts = (over: Record<string, unknown> = {}) => ({
+    pipeline: "product_work" as const,
+    pullBody: "",
+    verificationFiles: [] as string[],
+    addedMarkdown: [] as string[],
+    namedPaths: [] as string[],
+    ...over,
+  });
+
+  it("clears product work that has a screenshot, a side-effect proof, and a diagram", () => {
+    const gaps = proofGaps([builder, verifier], facts());
+    expect(gaps).toEqual([]);
+    const rendered = renderReport({ repo: "o/r", kind: "change", reports: [builder, verifier], proof: facts() });
+    expect(rendered.problems.filter((p) => p.startsWith("a product pull request"))).toEqual([]);
+  });
+
+  it("does not clear product work that only has a video", () => {
+    const video = stored("builder", {
+      schema: "pr-report/1",
+      summary: ["Shown."],
+      blocks: [{ type: "file", file: "walk.mp4", caption: "The walk" }],
+      focus: [{ title: "The walk", detail: "It plays." }],
+      technical: "t.md",
+      conceptual: "c.md",
+    });
+    const rendered = renderReport({ repo: "o/r", kind: "change", reports: [video], proof: facts() });
+    expect(rendered.problems).toContain("a product pull request needs a screenshot");
+    expect(rendered.problems).toContain("a product pull request needs a side-effect proof (a log, a response, or a trace)");
+    expect(rendered.problems).toContain("a product pull request needs a diagram (a mermaid block, or a diagram file under .factory/verification/)");
+    expect(rendered.problems.join(" ")).not.toContain("there is no proof");
+  });
+
+  it("accepts a mermaid fence, a markdown image, and a verification file", () => {
+    const thin = stored("builder", {
+      schema: "pr-report/1",
+      summary: ["Shown."],
+      blocks: [],
+      focus: [{ title: "The table", detail: "It filters." }],
+      technical: "t.md",
+      conceptual: "c.md",
+    });
+    const gaps = proofGaps([thin], facts({
+      pullBody: "![the table](https://example.com/shot.png)\n\n```mermaid\nflowchart LR\n  A-->B\n```\n",
+      verificationFiles: [".factory/verification/response.json"],
+    }));
+    expect(gaps).toEqual([]);
+  });
+
+  it("accepts a diagram file under the verification directory", () => {
+    const gaps = proofGaps([], facts({
+      verificationFiles: [
+        ".factory/verification/screenshot.png",
+        ".factory/verification/trace.log",
+        ".factory/verification/diagram.mmd",
+      ],
+    }));
+    expect(gaps).toEqual([]);
+  });
+
+  it("requires before and after for gardening, and a video does not count", () => {
+    const one = stored("builder", {
+      schema: "pr-report/1",
+      summary: ["Tidied."],
+      blocks: [{ type: "file", file: "after.png", caption: "After" }],
+    });
+    expect(proofGaps([one], facts({ pipeline: "gardening" }))).toEqual([
+      "a gardening pull request needs before and after: two proofs, or a before path and an after path",
+    ]);
+    const video = stored("verifier", {
+      schema: "pr-report/1",
+      summary: ["Tidied."],
+      blocks: [{ type: "file", file: "before.mp4", caption: "Before" }],
+    });
+    expect(proofGaps([one, video], facts({ pipeline: "gardening" }))).toEqual([
+      "a gardening pull request needs before and after: two proofs, or a before path and an after path",
+    ]);
+    expect(proofGaps([one], facts({
+      pipeline: "gardening",
+      verificationFiles: [".factory/verification/before/notes.md", ".factory/verification/after/notes.md"],
+    }))).toEqual([]);
+  });
+
+  it("fails a new markdown file the request did not name", () => {
+    expect(proofGaps([builder, verifier], facts({ addedMarkdown: ["NOTES.md", "docs/guide.md"], namedPaths: ["docs/guide.md"] }))).toEqual([
+      "added markdown the request did not name: NOTES.md",
+    ]);
+    expect(proofGaps([builder, verifier], facts({ addedMarkdown: ["docs/guide.md"], namedPaths: ["docs/guide.md"] }))).toEqual([]);
   });
 });
 
@@ -155,15 +246,17 @@ describe("recordings on a PR", () => {
     expect(out).toContain("2.5 MB");
   });
 
-  it("asks for a video when the change touches the UI and none was recorded", () => {
+  it("notes a missing video and does not fail the check for it", () => {
     const withoutVideo = renderReport({ repo: "o/r", kind: "change", reports: [verifier], needsVideo: true });
-    expect(withoutVideo.problems.join(" ")).toContain("no role recorded a video");
+    expect(withoutVideo.degraded.join(" ")).toContain("no role recorded a video");
+    expect(withoutVideo.problems.join(" ")).not.toContain("no role recorded a video");
     const withVideo = renderReport({
       repo: "o/r",
       kind: "change",
       reports: [stored("verifier", { schema: "pr-report/1", summary: ["ok"], blocks: [{ type: "file", file: "r/v.pr.mp4", caption: "Walk" }] })],
       needsVideo: true,
     });
+    expect(withVideo.degraded.join(" ")).not.toContain("no role recorded a video");
     expect(withVideo.problems.join(" ")).not.toContain("no role recorded a video");
   });
 

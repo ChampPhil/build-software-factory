@@ -27,6 +27,11 @@ on:
     types: [submitted]
   pull_request_target:
     types: [synchronize]
+  # GitHub Actions requires a literal workflow name or file name here.
+  # It cannot read factory.yaml, and an expression is not valid, so this
+  # trigger cannot take the repo's CI workflow name from existing_ci.
+  # A failure whose head branch is not the default branch is not a
+  # mainline failure; the jobs below skip those runs.
   workflow_run:
     workflows: ["ci"]
     types: [completed]
@@ -56,7 +61,7 @@ jobs:
     # fork events anyway.
     # The factory's own comments and labels fire this workflow too; a bot's
     # event is never a request, so it ends here without costing a run (fix 5).
-    if: ${{ (github.event_name == 'workflow_run' || github.event_name == 'workflow_dispatch' || github.event.sender.type != 'Bot') && (github.event.pull_request == null || github.event.pull_request.head.repo.full_name == github.repository) }}
+    if: ${{ (github.event_name == 'workflow_run' || github.event_name == 'workflow_dispatch' || github.event.sender.type != 'Bot') && (github.event.pull_request == null || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'workflow_run' || github.event.workflow_run.head_branch == github.event.repository.default_branch) }}
     runs-on: ubuntu-latest
     concurrency:
       group: factory-intake-record-${{ github.run_id }}
@@ -120,7 +125,7 @@ jobs:
   process:
     needs: record
     # Runs even if recording failed: processing records the event itself.
-    if: ${{ always() && (github.event_name == 'workflow_run' || github.event_name == 'workflow_dispatch' || github.event.sender.type != 'Bot') && (github.event.pull_request == null || github.event.pull_request.head.repo.full_name == github.repository) }}
+    if: ${{ always() && (github.event_name == 'workflow_run' || github.event_name == 'workflow_dispatch' || github.event.sender.type != 'Bot') && (github.event.pull_request == null || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'workflow_run' || github.event.workflow_run.head_branch == github.event.repository.default_branch) }}
     runs-on: ubuntu-latest
     concurrency:
       # Never cancel: a cancelled intake would be the one way to lose a request.

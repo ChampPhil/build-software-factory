@@ -98,9 +98,9 @@ export function SignIn({
               : (access.reason ?? null),
           );
         }
-        writeSession(session);
+        const saved = writeSession(session);
         setWaiting(null);
-        onSignedIn(session);
+        onSignedIn(saved);
       } catch (err) {
         setProblem((err as Error).message ?? "Could not reach GitHub.");
       } finally {

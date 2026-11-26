@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { Baselines, Coverage, Policy } from "../lib/types.js";
 import { scanProse, budgetVerdict, budgetBytes, type BudgetVerdict } from "./repo-prose.js";
 import {
-  checkRatchet, checkWeakening, checkCoverage, countsFromBaselines,
+  checkRatchet, checkWeakening, checkCoverage, countsFromBaselines, zeroFloorWithTests,
   type RuleCounts, type RatchetResult, type WeakeningFinding,
 } from "./gates.js";
 import {
@@ -41,7 +41,7 @@ export interface StaticGateInput {
   readonly coverageBefore: Coverage;
   readonly coverageAfter: Coverage;
   readonly changedFiles: readonly string[];
-  /** Checkers setup declared in the default branch's sandbox, and the env to run them in. */
+  /** Checkers declared in this checkout's sandbox manifest (the PR head), and the env to run them in. */
   readonly declared?: { readonly checks: readonly StaticCheck[]; readonly env?: Record<string, string> };
   /** Rules whose config got less strict, where a rule pack can tell. */
   readonly loosenedRules?: readonly string[];
@@ -339,15 +339,29 @@ export async function runCoverageGate(args: {
   readonly root: string;
   readonly current: Coverage;
   readonly changedFiles: readonly string[];
-  /** Where setup declared the report, from the default branch's sandbox. */
+  /** Where setup declared the report, from this checkout's sandbox manifest. */
   readonly report?: SandboxManifest["coverage_report"];
   /** The lines the change adds, per file, for line-level diff coverage. */
   readonly changedLines?: Readonly<Record<string, ReadonlySet<number>>>;
   /** The PR's pipeline, from the ledger. Gardening and hardening change no behaviour on purpose. */
   readonly pipeline?: string;
+  /** True when the manifest has a test command or the checkout has a test directory. */
+  readonly repoHasTests?: boolean;
 }): Promise<CoverageGateResult> {
   const coverage = readCoverage(args.root, args.report);
   const skips = await countSkips(args.root);
+  const floorHole = zeroFloorWithTests(args.current.floor_pct, args.repoHasTests === true);
+  if (floorHole !== null) {
+    return {
+      conclusion: "failure",
+      diff_pct: null,
+      total_pct: coverage?.total_pct ?? null,
+      skips,
+      failures: [floorHole],
+      next: null,
+      summary: floorHole,
+    };
+  }
 
   if (coverage === null && args.report !== undefined) {
     // Setup declared where the report goes and the trial saw it written. Its
@@ -430,6 +444,21 @@ export async function runCoverageGate(args: {
     next: verdict.next,
     summary: lines.join("\n"),
   };
+}
+
+/**
+ * Whether this checkout has tests a coverage floor of 0 would silently excuse.
+ *
+ * The manifest's test command counts, and so does a top-level `tests`, `test`,
+ * `__tests__`, or `spec` directory. Suites that live only under `src` are the
+ * manifest's job to name; this does not walk the tree.
+ *
+ * @param root - the checkout the gate is judging
+ * @param testCommand - the sandbox manifest's test command, or null when it has none
+ */
+export function repoHasTests(root: string, testCommand: string | null): boolean {
+  if (testCommand !== null && testCommand.trim() !== "") return true;
+  return ["tests", "test", "__tests__", "spec"].some((d) => existsSync(join(root, d)));
 }
 
 /* --------------------------------------------------- commit-keyed results */

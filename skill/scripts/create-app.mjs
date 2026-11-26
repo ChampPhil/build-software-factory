@@ -16,6 +16,12 @@
  * Step 2 needs something listening, so this starts a local server and opens
  * the browser at it. All three steps must finish within an hour.
  *
+ * The App's name is chosen before that page opens. It is "Factory" plus a
+ * short label for the repository only. Hyphens and underscores become
+ * initials (vibecoding-for-marketing becomes VFM). A single word keeps its
+ * first five letters. The GitHub owner is not mixed into the label, and the
+ * name is not sliced through the middle of a word.
+ *
  * Usage:
  *   node create-app.mjs --repo owner/name [--recompiler] [--port 8787]
  *                       [--org ORG] [--dry-run]
@@ -122,20 +128,18 @@ function openBrowser(url) {
 export const APP_NAME_MAX = 34;
 
 /**
- * Build an App name that fits GitHub's 34-character limit.
- *
- * Truncating the finished string is what produced names like
- * `Build Software Factory (bsf-fixtur` — cut mid-word, closing paren gone.
- * The repo suffix is the part that makes the name unique across GitHub, so it
- * is the part to protect: shorten the prefix until the whole suffix fits, and
- * only cut into the repo as a last resort, keeping the paren either way.
- */
-/**
  * GitHub accepts letters, numbers, spaces, hyphens and the parentheses we add;
  * an underscore is rejected outright. A repository name may hold anything, so
  * the slug is cleaned before it goes anywhere near the name — otherwise the
  * default name is refused on the Create page with nothing explaining why, and
  * the user is left editing a field they were not told they could edit.
+ *
+ * The installed name does not use this slug as its label. `repoShortLabel`
+ * shortens the repository on purpose. This helper remains for a caller that
+ * still needs a GitHub-safe slug.
+ *
+ * @param {string} slug raw repository text that may hold underscores or other marks
+ * @returns {string} a slug of letters, numbers, spaces, and single hyphens
  */
 export function slugForAppName(slug) {
   return slug
@@ -144,23 +148,53 @@ export function slugForAppName(slug) {
     .replace(/^-+|-+$/g, "");
 }
 
+/**
+ * Short label for a repository, used inside the GitHub App's name.
+ *
+ * The owner is not included. Hyphens and underscores are the separators.
+ * Two or more words become their initials, in capitals, so
+ * vibecoding-for-marketing and vibecoding_for_marketing both become VFM.
+ * One word keeps its first five letters, and a shorter word keeps all of
+ * them. Initials are one letter each, so a long name is never cut through
+ * the middle of a word.
+ *
+ * @param {string} repoName repository name, or owner/name. Only the name is used.
+ * @returns {string} the short label. Empty input becomes "repo".
+ */
+export function repoShortLabel(repoName) {
+  const raw = String(repoName ?? "");
+  // owner/name would put the account in the label. Keep the repository only.
+  const nameOnly = raw.includes("/") ? (raw.split("/").filter(Boolean).pop() ?? "") : raw;
+  const parts = nameOnly
+    .split(/[-_]+/)
+    .map((part) => part.replace(/[^A-Za-z0-9]+/g, ""))
+    .filter((part) => part.length > 0);
+  if (parts.length === 0) return "repo";
+  if (parts.length === 1) return parts[0].slice(0, 5);
+  return parts.map((part) => part[0].toUpperCase()).join("");
+}
+
+/**
+ * The GitHub App's name: Factory, plus the repository's short label.
+ *
+ * The label is computed before the name is sent to GitHub, so the Create
+ * page never shows a name sliced through a word. The owner is not mixed in.
+ * A recompiler App uses Recomp so the two Apps can both exist. If the
+ * initials are so long that the name would pass 34 characters, whole
+ * initials are dropped from the end. A word is never cut in half to fit.
+ *
+ * @param {string} base the manifest's name. A recompiler base is detected from this string.
+ * @param {string} rawSlug repository name, or owner/name. The owner is ignored.
+ * @returns {string} a name GitHub will accept, at most APP_NAME_MAX characters
+ */
 export function appName(base, rawSlug) {
-  const slug = slugForAppName(rawSlug);
-  const prefixes = /recompiler/i.test(base)
-    ? ["Factory Recompiler", "Recompiler", "Recomp"]
-    : ["Build Software Factory", "Software Factory", "Factory"];
-
-  for (const prefix of prefixes) {
-    const full = `${prefix} (${slug})`;
-    if (full.length <= APP_NAME_MAX) return full;
+  const prefix = /recompiler/i.test(base) ? "Recomp" : "Factory";
+  let label = repoShortLabel(rawSlug);
+  // "Factory (" + label + ")" . Drop whole initials, never a slice through a word.
+  while (prefix.length + 3 + label.length > APP_NAME_MAX && label.length > 1) {
+    label = label.slice(0, -1);
   }
-
-  // Still too long: keep the shortest prefix, which leaves the most room, and
-  // cut the repo rather than the structure.
-  const shortest = prefixes[prefixes.length - 1];
-  const room = APP_NAME_MAX - shortest.length - " ()".length;
-  const cut = slug.slice(0, Math.max(1, room)).replace(/-+$/, "");
-  return `${shortest} (${cut === "" ? slug.slice(0, 1) : cut})`;
+  return `${prefix} (${label})`;
 }
 
 function escapeHtml(s) {
@@ -193,9 +227,11 @@ function buildManifest({ recompiler, repo, redirectUrl }) {
     }
   }
 
-  // The name has to be unique across GitHub, so suffix it with the repo.
-  const slug = repo.replace("/", "-");
-  manifest.name = appName(manifest.name, slug);
+  // Shorten the repository on purpose, before GitHub shows the Create page.
+  // The owner is left out. Initials stand in for a hyphenated name so the
+  // label is never sliced through the middle of a word.
+  const repoName = repo.includes("/") ? repo.split("/")[1] : repo;
+  manifest.name = appName(manifest.name, repoName);
 
   if (!recompiler && "workflows" in (manifest.default_permissions ?? {})) {
     fail(
@@ -221,6 +257,8 @@ code{background:#f4f4f5;padding:.1rem .3rem;border-radius:3px}button{font:inheri
 <h1>Creating the factory's GitHub App</h1>
 <p>Sending you to GitHub. You will see a page with the name already filled in — press
 <strong>Create GitHub App</strong>, and you will land back here.</p>
+<p>The name is already short: <strong>Factory</strong>, then a short label for this repository.
+The account name is not part of it. A name with hyphens or underscores uses initials.</p>
 <p><strong>The name is yours to change.</strong> It only has to be unique across GitHub.
 If you edit it, GitHub allows letters, numbers, spaces and hyphens, up to
 <strong>34 characters</strong> — no underscores. Those two rules are the only reason a

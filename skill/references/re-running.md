@@ -29,7 +29,8 @@ So:
   change, or a new runner version needs a field they do not have — in which
   case add the field with its default and say which you added.
 - **Guardrails** are extended, never reset. A rule that is already enforced
-  stays enforced: never loosen one, and never baseline a new one.
+  stays enforced. Never loosen one. Record a new rule's count, then clean
+  until that count is zero. Do not leave the new violation standing.
 - **Data refs** are left alone entirely.
 - **Candidates** are re-mined, but only new corrections are shown. One the user
   already rejected is not offered again:
@@ -79,10 +80,9 @@ so when the user asks, rather than investigating them as bugs.
   actually landed on the default branch and only fails on a commit that really
   did bypass the gates. A revert PR follows only where
   `enforcement.audit_revert_pr` is on.
-- **`factory-audit` failing right after the setup merge.** The setup PR
-  touches protected paths, which is exactly what the audit watches, and the
-  commit may land before GitHub has linked it to its pull request. Re-run the
-  audit; if it passes, there was nothing wrong.
+- **`factory-audit` failing right after the setup merge.** Re-run the audit.
+  If it goes green, continue. If it stays red, setup is not done. Repair
+  the cause. Do not send the closing message while it is red.
 - **`assessment.md` still on the default branch.** It is meant to be deleted
   when the setup PR merges. If it is still there, the delete did not make it
   into that PR — remove it on a `factory/fix-*` branch rather than by pushing
@@ -149,12 +149,17 @@ For each one:
 
 ## Failure handling, in any mode
 
-- **Stop at the phase that failed.** Say which step, what you tried, and what
-  you would need. Do not continue with a half-installed factory; a factory
-  missing its gates is worse than no factory, because it looks like one.
-- **Never leave the repo half-changed on a branch the user might merge.** If
-  you stop, say plainly whether the branch is safe to merge, and if it is not,
-  say so first.
-- **A phase 2 failure is terminal for setup.** Without a sandbox that runs the
-  app there is no runtime verification, and the factory's core claim does not
-  hold.
+- **Repair and continue.** A failed lock-in of the private copy is repaired
+  and rerun. Do not ship a private-copy-only pull request and postpone the
+  checkers. Do not cancel a second factory-setup run that still has to
+  commit the checkers. Do not ask if a partial result is enough.
+- **Do not say setup is done** while a factory pull request is red on its
+  own checks, the coverage floor is 0 while tests exist, or an audit is
+  red. File the smoke-test request yourself and repair until that pull
+  request is green.
+- **Never leave the repo half-changed on a branch the person might merge.**
+  If a branch is not safe to merge, say so, and keep working until the
+  pull request is green. Do not hand them a red one.
+- **A partial private copy is not a place to stop.** Without the journeys
+  running, the checkers installed, and the counts at zero, setup is still
+  open.

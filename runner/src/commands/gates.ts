@@ -306,6 +306,19 @@ function round1(n: number): number {
   return Math.round(n * 10) / 10;
 }
 
+/**
+ * A floor of 0 lets every total pass. That is the setup state for a repo
+ * with no tests. A repo that has tests and still records 0 is not holding a
+ * floor, so the coverage gate fails.
+ *
+ * @param floorPct - `coverage.json`'s `floor_pct`
+ * @param repoHasTests - true when the manifest has a test command or the checkout has a test directory
+ */
+export function zeroFloorWithTests(floorPct: number, repoHasTests: boolean): string | null {
+  if (!repoHasTests || floorPct > 0) return null;
+  return `coverage floor is ${floorPct}% and this repo has tests, so the floor does not hold a change to any coverage`;
+}
+
 /* -------------------------------------------------- which gates to run, and once */
 
 export interface GateRunRequest {

@@ -13,16 +13,58 @@
  *   node wait-for.mjs workflow-success <file.yml> [--repo owner/name]
  *       [--interval 5] [--timeout 600]        (seconds)
  *
- * Exit 0 when it happened, 1 when the timeout passed first.
+ * The secret is polled every few seconds. The default interval is 5 seconds.
+ * A gap of two minutes or more is a failed watch: the process exits 1 and
+ * does not sit there. Exit 0 when the thing happened, 1 when the timeout
+ * passed first or the gap between checks is too long.
+ *
+ * Key terms:
+ *   - Watch: this process, left running in the background. The agent wakes
+ *     when it exits. The person is not asked to type that they finished.
+ *   - Gap: how long the watch sleeps between checks. A few seconds is a
+ *     watch. A multi-minute gap is a failed watch.
  */
 
 import { execFileSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+/** Two minutes between checks is a failed watch. The secret is looked at every few seconds. */
+export const MULTI_MINUTE_MS = 2 * 60 * 1000;
+
+/**
+ * Say whether the gap between checks is too long to be a real watch.
+ *
+ * The Anthropic secret is checked every few seconds. A gap of two minutes
+ * or more is the failure where the secret was already saved and the watch
+ * did not notice. The same rule covers a pull request watch.
+ *
+ * @param {number} intervalMs milliseconds between checks
+ * @returns {string|null} a short error, or null when the gap is fine
+ */
+export function pollGapError(intervalMs) {
+  if (typeof intervalMs !== "number" || !Number.isFinite(intervalMs) || intervalMs <= 0 || intervalMs >= MULTI_MINUTE_MS) {
+    return "a multi-minute gap between checks is a failed watch; look every few seconds";
+  }
+  return null;
+}
+
 /**
  * Poll `check` until it returns true or the timeout passes.
- * `now` and `sleep` are injectable so a test does not wait in real time.
+ *
+ * Looks every few seconds. A multi-minute gap returns false immediately
+ * and does not call `check`. `now` and `sleep` are injectable so a test
+ * does not wait in real time.
+ *
+ * @param {() => Promise<boolean> | boolean} check returns true when the thing has happened
+ * @param {object} [options]
+ * @param {number} [options.intervalMs] milliseconds between checks. Default 5000.
+ * @param {number} [options.timeoutMs] when to give up. Default 10 minutes.
+ * @param {(line: string) => void} [options.say] where the once-a-minute line goes
+ * @param {string} [options.label] what the minute line says it is waiting for
+ * @param {() => number} [options.now] clock, so a test can move time
+ * @param {(ms: number) => Promise<void>} [options.sleep] wait, so a test does not really sleep
+ * @returns {Promise<boolean>} true when `check` succeeds, false on timeout or a failed watch
  */
 export async function waitFor(
   check,
@@ -35,6 +77,11 @@ export async function waitFor(
     sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
   } = {},
 ) {
+  const gap = pollGapError(intervalMs);
+  if (gap !== null) {
+    say(gap);
+    return false;
+  }
   const start = now();
   let lastSaid = start;
   for (;;) {
@@ -118,6 +165,11 @@ if (runningAsEntryPoint(import.meta.url)) {
     process.exit(0);
   }
   const a = parse(process.argv.slice(2));
+  const gap = pollGapError(a.intervalMs);
+  if (gap !== null) {
+    console.error(gap);
+    process.exit(1);
+  }
   const [kind, target] = a.positional;
   const spec = kind === undefined || target === undefined ? null : checkFor(kind, target, a.repo);
   if (spec === null) {

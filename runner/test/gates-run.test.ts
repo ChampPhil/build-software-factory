@@ -1,11 +1,11 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  runStaticGate, runCoverageGate, measuredCounts, withZeroBaselines,
+  runStaticGate, runCoverageGate, repoHasTests, measuredCounts, withZeroBaselines,
   checkedFromCheckRuns, summarizeGates,
 } from "../src/commands/gates-run.js";
 import { runEslint } from "../src/lib/tools.js";
@@ -260,6 +260,26 @@ describe("the coverage gate with no report", () => {
       });
       expect(res.conclusion).toBe("neutral");
       expect(res.summary).toContain("Gardening adds tests");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("fails a floor of 0 when the repo has tests", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "bsf-nocov-"));
+    try {
+      const res = await runCoverageGate({
+        root: dir,
+        current: { ...coverage, floor_pct: 0, high_pct: 0 },
+        changedFiles: ["a.ts"],
+        repoHasTests: true,
+      });
+      expect(res.conclusion).toBe("failure");
+      expect(res.summary).toContain("floor is 0%");
+      expect(repoHasTests(dir, null)).toBe(false);
+      expect(repoHasTests(dir, "npm test")).toBe(true);
+      mkdirSync(join(dir, "tests"));
+      expect(repoHasTests(dir, null)).toBe(true);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

@@ -63,6 +63,20 @@
       "help": "Off: a person approves each hardening PR."
     },
     {
+      "id": "auto_merge_definition_change",
+      "path": "pipelines.definition_change.auto_merge",
+      "kind": "boolean",
+      "label": "Merge a factory-definition change by itself",
+      "help": "Off: a person approves a change to the factory's own definition."
+    },
+    {
+      "id": "auto_merge_conflict_fix",
+      "path": "pipelines.conflict_fix.auto_merge",
+      "kind": "boolean",
+      "label": "Merge a conflict fix by itself",
+      "help": "Off: a person approves a pull request rebuilt after main moved."
+    },
+    {
       "id": "gardening_prs",
       "path": "pipelines.gardening.max_prs_per_run",
       "kind": "integer",

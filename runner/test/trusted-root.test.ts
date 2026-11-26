@@ -18,23 +18,23 @@ afterEach(() => {
 });
 
 describe("a change cannot choose how it is judged", () => {
-  it("reads the definition and the sandbox from the default branch's copy", async () => {
-    // A gate checks out the change. Reading the manifest from there let a PR
-    // set its own test command to `true`.
+  it("reads the definition from the default branch and the sandbox from the checkout", async () => {
+    // factory.yaml still comes from the default branch, so a pull request
+    // cannot point existing_ci.test_check at a check that always passes.
+    // The sandbox manifest is the checkout's: a fix to how tests run is the
+    // one the gate reads. The trusted root's copy is not used for it.
     const pr = tree({
-      ".factory/sandbox/manifest.json": '{"commands":{"test":"true"}}',
+      ".factory/sandbox/manifest.json": '{"schema":"sandbox/1","commands":{"test":"npm test"}}',
       ".factory/definition/factory.yaml": "existing_ci: { test_check: always-green }",
       "src/app.ts": "the change",
     });
     const main = tree({
-      ".factory/sandbox/manifest.json": '{"commands":{"test":"npm test"}}',
       ".factory/definition/factory.yaml": "existing_ci: { test_check: null }",
     });
     process.env["BSF_TRUSTED_ROOT"] = main;
     const disk = new DiskLoader(pr);
     expect(await disk.read(".factory/sandbox/manifest.json")).toContain("npm test");
     expect(await disk.read(".factory/definition/factory.yaml")).toContain("null");
-    // The code being judged still comes from the change.
     expect(await disk.read("src/app.ts")).toBe("the change");
   });
 

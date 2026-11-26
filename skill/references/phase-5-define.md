@@ -1,13 +1,27 @@
 # Phase 5 — Define the factory
 
+These are your notes. The person does not hear a phase number or a file name.
+
 Write the factory definition and install the workflows.
 
 1. **`factory.yaml`**: `harness: claude-code` (the only harness the factory
    runs on: it is the one whose spend the budget can stop), a model per step
-   from the template, each one Anthropic has a list price for, **all auto-merge
-   toggles off**, nightly gardening, review every 3 days, retry cap 3,
-   concurrency 5, the budget and shares from phase 6, the sandbox posture from
-   phase 2, and the repo's own test check if it has one.
+   from the template, each one Anthropic has a list price for, nightly
+   gardening, review every 3 days, retry cap 3, concurrency 5, the budget and
+   shares from the records step, the sandbox posture from the private-copy
+   step, and the repo's own test check if it has one.
+
+   **Pipeline switches stay off.** Set `pipelines.product_work.auto_merge`,
+   `pipelines.hardening.auto_merge`, `pipelines.definition_change.auto_merge`,
+   and `pipelines.conflict_fix.auto_merge` to false. Product work, gardening, hardening, a change to the factory's own
+   definition, and fixing a merge conflict each start with a person merging.
+   Each has a switch. Do not turn any of them on. Do not add a true flag for
+   a pipeline because setup pull requests merge themselves. Never write that
+   the person chose automatic merge for those pipelines.
+
+   **Setup pull requests are the exception.** They merge on their own once
+   their checks are green, unless the person said they will merge setup pull
+   requests by hand. That answer does not apply to the pipelines above.
 2. **`policy.yaml`**: trust settings, guardrail paths **including the existing
    tool configs found in phase 1**, and per-pipeline path rules.
 3. **Seven role files** from templates, with the repo name, languages and
@@ -62,9 +76,12 @@ name and fails later. Check the engine against the adapter list yourself.
 
 ## What to watch for
 
-- **Every auto-merge toggle starts off.** The user turns them on from the
-  dashboard when they are ready, per pipeline. Do not default any of them on
-  because the repo looks well-tested.
+- **Pipeline switches stay off.** Product work, gardening, hardening, a
+  change to the factory's own definition, and fixing a merge conflict each
+  wait for a person. The person turns a switch on from the dashboard when
+  they are ready. Do not turn one on because the repository looks
+  well-tested, and do not turn one on because setup pull requests merge
+  themselves. Do not tell the person those switches are on.
 - **Do not overwrite an existing `dependabot.yml`.** Add to it.
 - **Do not turn on session capture for anyone but the setup user**, who answers
   for themselves during setup.

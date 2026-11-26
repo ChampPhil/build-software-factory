@@ -5,8 +5,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
-  readSession, clearSession, writeSession, repoFromAddress, demoFromAddress, startDemo, validRepo, type Session,
+  readSession, clearSession, writeSession, connectRepo, selectRepo, repoFromAddress, demoFromAddress, startDemo, validRepo, type Session,
 } from "@/lib/session";
+import { repoBarLabel } from "@/lib/repo-label";
 import { isDemo } from "@/lib/demo";
 import { completeGithubLogin, needsRefresh, refreshSession, REFRESH_MARGIN_MS } from "@/lib/github-login";
 import { GitHubClient } from "@/lib/github";
@@ -136,18 +137,31 @@ export function Shell({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshToken, expiresAt]);
 
-  /** Move to the repository a link names, with the token already held, if that token can see it. */
+  /**
+   * Show a connected repository, or connect one and then show it.
+   *
+   * The first sign-in already started the list. This appends a new name
+   * and selects it, after the token is checked against that repository.
+   */
   async function switchTo(repoName: string): Promise<void> {
-    if (session === null || !validRepo(repoName)) return;
+    if (session === null) return;
+    if (!validRepo(repoName)) {
+      setSwitching("Give the repository as owner/name.");
+      return;
+    }
+    const name = repoName.trim();
+    if (name === session.repo) return;
     setSwitching(null);
     try {
-      const access = await new GitHubClient({ token: session.token, repo: repoName }).checkAccess();
+      const access = await new GitHubClient({ token: session.token, repo: name }).checkAccess();
       if (!access.ok) {
         setSwitching(access.reason);
         return;
       }
-      const next: Session = { ...session, repo: repoName };
-      writeSession(next);
+      // Connect first, then choose. selectRepo only accepts a name on the list.
+      const repos = connectRepo(session.repos ?? [session.repo], name);
+      const active = selectRepo(repos, session.repo, name);
+      const next = writeSession({ ...session, repo: active, repos });
       setSession(next);
       setLinkRepo(null);
       window.history.replaceState({}, "", window.location.pathname);
@@ -366,7 +380,7 @@ function SignedIn({
       <a className="skip" href="#content">
         Skip to the page
       </a>
-      <TopBar repo={session.repo} needs={needs} demo={demo} onPalette={() => setPalette(true)} onCompose={() => setComposing(null)} onSignOut={onSignOut} />
+      <TopBar repo={session.repo} repos={session.repos ?? [session.repo]} needs={needs} demo={demo} repoNote={switching} onPalette={() => setPalette(true)} onCompose={() => setComposing(null)} onSignOut={onSignOut} onUseRepo={onSwitch} />
       {(demo || linkRepo !== null) && (
         <div className="notes">
           {demo && (
@@ -410,21 +424,27 @@ function SignedIn({
 }
 
 function TopBar({
-  repo, needs, demo, onPalette, onCompose, onSignOut,
+  repo, repos, needs, demo, repoNote, onPalette, onCompose, onSignOut, onUseRepo,
 }: {
   repo: string;
+  repos: readonly string[];
   needs: number;
   demo: boolean;
+  repoNote: string | null;
   onPalette: () => void;
   onCompose: () => void;
   onSignOut: () => void;
+  onUseRepo: (repo: string) => void;
 }) {
   const path = usePathname();
   const here = sectionOf(path);
   const [owner, name] = repo.split("/");
   const [menu, setMenu] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [draft, setDraft] = useState("");
   const [theme, setTheme] = useState<Theme>("system");
   useEffect(() => setTheme(readTheme()), []);
+  const shownName = repoBarLabel(name ?? "");
 
   return (
     <header className="top">
@@ -432,7 +452,8 @@ function TopBar({
         <Link className="repo" href="/" aria-label={`${repo}, the briefing`}>
           <Mark />
           <span>
-            {name} <small>{owner}</small>
+            <span className="repo-name" title={name}>{shownName}</span>
+            <small>{owner}</small>
           </span>
         </Link>
         <nav className="nav" aria-label="Main">
@@ -467,6 +488,39 @@ function TopBar({
               <div className="scrim clear" onClick={() => setMenu(false)} aria-hidden="true" />
               <div className="pop" role="menu">
                 <p className="muted small">Connected to <b>{repo}</b></p>
+                {!demo && (
+                  <div className="repo-switch" role="group" aria-label="Connected repositories">
+                    {repos.map((r) => (
+                      <button key={r} type="button" role="menuitem" onClick={() => onUseRepo(r)} aria-current={r === repo ? "true" : undefined}>
+                        {r}
+                        {r === repo && <span>Showing</span>}
+                      </button>
+                    ))}
+                    {adding ? (
+                      <form
+                        className="connect"
+                        onSubmit={(e) => {
+                          e.preventDefault();
+                          onUseRepo(draft);
+                        }}
+                      >
+                        <input
+                          className="field"
+                          aria-label="Repository to connect, as owner/name"
+                          placeholder="owner/name"
+                          value={draft}
+                          onChange={(e) => setDraft(e.target.value)}
+                        />
+                        <button className="btn small" type="submit">Connect</button>
+                      </form>
+                    ) : (
+                      <button type="button" role="menuitem" onClick={() => setAdding(true)}>
+                        Connect another repository
+                      </button>
+                    )}
+                    {repoNote !== null && <p className="warn">{repoNote}</p>}
+                  </div>
+                )}
                 <div className="theme-pick" role="radiogroup" aria-label="Appearance">
                   {(["system", "light", "dark"] as const).map((t) => (
                     <label key={t}>

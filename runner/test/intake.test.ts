@@ -501,3 +501,30 @@ describe("the harden label", () => {
     expect(res.decisions[0]!.workItem?.pipeline).toBe("hardening");
   });
 });
+
+describe("a failed CI run", () => {
+  it("becomes a request only for the configured workflow on the default branch", async () => {
+    const { normalizeEvent, ciWorkflowName } = await import("../src/commands/intake-run.js");
+    const now = "2026-11-21T15:32:15Z";
+    const watch = { workflow: "ci", defaultBranch: "main" };
+    const failed = (over: Record<string, unknown> = {}) =>
+      normalizeEvent("workflow_run", {
+        workflow_run: { conclusion: "failure", head_branch: "main", name: "ci", id: 9, ...over },
+      }, now, watch);
+    expect(failed()?.kind).toBe("ci_failure_on_main");
+    expect(failed({ head_branch: "feature" })).toBeNull();
+    expect(failed({ name: "lint" })).toBeNull();
+    expect(failed({ conclusion: "success" })).toBeNull();
+    expect(normalizeEvent("workflow_run", { workflow_run: { conclusion: "failure", head_branch: "main", name: "ci" } }, now)).toBeNull();
+    const named = { workflow: ciWorkflowName("build-and-test"), defaultBranch: "trunk" };
+    expect(ciWorkflowName(null)).toBe("ci");
+    expect(ciWorkflowName("  ")).toBe("ci");
+    expect(named.workflow).toBe("build-and-test");
+    expect(normalizeEvent("workflow_run", {
+      workflow_run: { conclusion: "failure", head_branch: "trunk", name: "build-and-test", id: 3 },
+    }, now, named)?.kind).toBe("ci_failure_on_main");
+    expect(normalizeEvent("workflow_run", {
+      workflow_run: { conclusion: "failure", head_branch: "trunk", name: "ci", id: 4 },
+    }, now, named)).toBeNull();
+  });
+});

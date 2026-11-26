@@ -2,8 +2,8 @@
 
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { useRunFiles, useStepRecords, useWorkItems } from "@/lib/data";
-import { medianRequestToPr, minutesFromSteps, spendFromSteps, spentByShare } from "@/lib/spend";
+import { useBudget, useRunFiles, useStepRecords, useWorkItems } from "@/lib/data";
+import { headlineSpend, medianRequestToPr, minutesFromSteps, sharesFromBudget, spendFromBudget, spendFromSteps, spentByShare } from "@/lib/spend";
 import { projectToMonthEnd, shareUse } from "@/lib/metrics";
 import { readSettings } from "@/lib/settings";
 import { day, dur, outcomeName, pct, pipeName, plural, titleOf, usd } from "@/lib/view";
@@ -18,6 +18,7 @@ const SHARE_NAME: Readonly<Record<string, string>> = { product_work: "Product wo
 export default function Spend() {
   const { client, index, settings, installed } = useApp();
   const ids = index.state === "ready" ? (index.data?.recent_runs ?? []) : [];
+  const budgetFile = useBudget(client);
   const runs = useRunFiles(client, ids.slice(0, 60));
   const top = runs.state === "ready" ? [...runs.data].sort((a, b) => b.cost_usd - a.cost_usd).slice(0, 6) : [];
   const steps = useStepRecords(client, ids.slice(0, 60));
@@ -37,21 +38,35 @@ export default function Spend() {
   const m = data.metrics;
   const budget = m.budget_usd ?? 0;
   const month = new Date().toISOString().slice(0, 7);
-  // What was actually spent is the sum of the step records; the index total is only the fallback while they load.
-  const spent = steps.state === "ready" && steps.data.length > 0 ? spendFromSteps(steps.data, month) : (m.spend_usd ?? 0);
+  // budget.json is the factory's own total, including setup. Step files are
+  // only read for index.recent_runs, and that list is often empty.
+  const budgetDoc = budgetFile.state === "ready" ? budgetFile.data : null;
+  const budgetSpent = budgetFile.state === "ready" ? spendFromBudget(budgetDoc?.spent_usd) : null;
+  const stepsReady = ids.length > 0 && steps.state === "ready" && steps.data.length > 0;
+  const pendingBudget = ids.length === 0 && budgetFile.state === "loading";
+  const choice = pendingBudget
+    ? null
+    : headlineSpend({
+        budgetSpent,
+        stepSpent: stepsReady ? spendFromSteps(steps.data, month) : null,
+        recentRunIds: ids,
+        indexSpent: m.spend_usd ?? 0,
+      });
+  const spent = choice?.amount ?? 0;
   const billedMinutes = steps.state === "ready" ? minutesFromSteps(steps.data, month) : 0;
   const cycle = runs.state === "ready" ? medianRequestToPr(runs.data) : (m.cycle_time_p50_sec ?? null);
   const now = new Date();
   const dayOfMonth = now.getUTCDate();
   const daysInMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0)).getUTCDate();
-  const projected = projectToMonthEnd(spent, now);
+  const projected = choice === null ? null : projectToMonthEnd(spent, now);
   const read = settings.state === "ready" && settings.data !== null ? readSettings(settings.data) : null;
   const num = (k: string): number => (typeof read?.[k] === "number" ? read[k] : 0);
   const monthly = typeof read?.["monthly_budget"] === "number" ? read["monthly_budget"] : budget;
   const pipelineOfRun: Record<string, Pipeline> = {};
   if (runs.state === "ready") for (const r of runs.data) pipelineOfRun[r.id] = r.pipeline;
-  const stepSpend = steps.state === "ready" && steps.data.length > 0 ? spentByShare(steps.data, pipelineOfRun, month) : undefined;
-  const shares = read === null ? [] : shareUse({ ...data, metrics: { ...data.metrics, budget_usd: monthly } }, { product_work: num("share_product_work"), gardening: num("share_gardening"), review_and_benchmarks: num("share_review") }, stepSpend);
+  const budgetShares = budgetFile.state === "ready" ? sharesFromBudget(budgetDoc?.spent_usd) : undefined;
+  const stepShares = stepsReady ? spentByShare(steps.data, pipelineOfRun, month) : undefined;
+  const shares = read === null ? [] : shareUse({ ...data, metrics: { ...data.metrics, budget_usd: monthly } }, { product_work: num("share_product_work"), gardening: num("share_gardening"), review_and_benchmarks: num("share_review") }, budgetShares ?? stepShares);
   const merged = m.merged ?? 0;
   const clean = m.automation_rate === undefined ? null : Math.round(merged * m.automation_rate);
 
@@ -60,14 +75,15 @@ export default function Spend() {
       <section className="money-hero">
         <div>
           <div className="big">
-            {usd(spent)}
+            {choice === null ? <Loading what="what was spent" /> : usd(spent)}
             <small>{budget > 0 ? `of your ${usd(budget)} monthly budget` : "spent this month"}</small>
           </div>
           <p>
             Spent on models this month.
-            {projected.known && <> At this pace the month ends near <b>{usd(projected.value)}</b>.</>} The budget is a hard stop: runs end before they would pass it.
+            {choice?.source === "budget" && <> The total is from budget.json.</>}
+            {projected !== null && projected.known && <> At this pace the month ends near <b>{usd(projected.value)}</b>.</>} The budget is a hard stop: runs end before they would pass it.
           </p>
-          {budget > 0 && (
+          {choice !== null && budget > 0 && (
             <div className="budget">
               <Bar size="big" fraction={spent / budget} mark={dayOfMonth / daysInMonth} label={`${pct(spent / budget)} of the budget used, ${pct(dayOfMonth / daysInMonth)} of the month gone`} />
               <div className="legend">
@@ -138,6 +154,7 @@ export default function Spend() {
           {shares.length > 0 && (
             <section>
               <h2 className="part">Against each share</h2>
+              {budgetShares !== undefined && <p className="muted small">From budget.json.</p>}
               {shares.map((s) => (
                 <div className="lane-r" key={s.share}>
                   <span>{SHARE_NAME[s.share] ?? s.share}</span>

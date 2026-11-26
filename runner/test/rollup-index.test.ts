@@ -48,4 +48,23 @@ describe("the rollup on a factory that has runs", () => {
     expect(index.metrics.runs).toBe(1);
     expect(index.metrics.merged).toBe(1);
   });
+
+  it("writes the budget total when no run file exists and the month has charges", async () => {
+    files.clear();
+    files.set("budget.json", JSON.stringify({
+      schema: "budget/2",
+      month: "2026-11",
+      spent_usd: { product_work: 12.5, gardening: 1.25 },
+    }));
+    const gh = { repo: "o/r", dispatchWorkflow: vi.fn(async () => undefined), get: vi.fn(async () => ({ total_count: 0 })) } as never;
+    await runRollupCommand({
+      gh, now: "2026-11-21T01:00:00Z", windowDays: 30, maxRuns: 3, runnerPin: "x", harness: "claude-code",
+      budget: { limitUsd: 100, limitMinutes: null, shares: { product_work: 0.7, gardening: 0.2, review_and_benchmarks: 0.1 }, spentUsd: {}, spentMinutes: {}, productHardStopPct: 100 },
+      guardrails: { rules: 0, baselined: 0, coverage_floor_pct: 0, candidates_pending: 0 },
+      health: {},
+    });
+    const index = JSON.parse(files.get("index.json")!);
+    expect(index.metrics.spend_usd).toBe(13.75);
+    expect(index.recent_runs).toEqual([]);
+  });
 });

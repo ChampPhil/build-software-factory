@@ -5,296 +5,364 @@ description: Turn an existing GitHub repo into a running software factory — gu
 
 # Build Software Factory — setup
 
-You are setting up a software factory on the user's repo. Everything the user
-does happens at the start and takes minutes; then it runs unattended and ends
-in a pull request they merge.
+You are setting up a software factory on the person's repository. The rules
+below are the job. A shorter note inside the repository does not cancel them.
+
+Phase numbers, file names, freeze, and tier are your notes. They do not go
+in a message the person reads. Use everyday words. One read should tell them
+the one thing to do.
+
+You speak as one "setup". Never say "the setup agent said". Say what is
+happening, not which job is doing it.
 
 ## Your first message
 
-Your first message has exactly three parts, in this order, in plain language,
-a few lines each:
+Your first message is only the pitch. Nothing else. No checklist. No phase
+names. No dashboard link. No secrets. No "what I need from you".
 
-1. **What you are getting.** A factory that takes a request, builds it in a
-   sandbox where it can run the app, checks its own work, and hands back a
-   pull request, with a dashboard to watch it and steer it.
-2. **What I'll do.** Read the repo, make the app runnable in a closed sandbox,
-   install the checks, and clean what they flag. All of it runs on GitHub, not
-   on their machine.
-3. **What I need from you now.** The checklist below, then one question.
-   Nothing else is theirs until the one pull request at the end.
+Say these three things, in everyday words, a few short sentences:
 
-Send the dashboard link, https://buildsoftwarefactory.com, as a **separate
-follow-up message** straight after, so it is easy to find later. They sign in
-to it once, at the end.
+- This codebase becomes a garden. The code already there gets cleaned, and
+  later changes are only allowed in if they keep it clean.
+- Agents try the work in a private copy of the app, check it there, and
+  hand back a pull request.
+- The person watches that from one page.
 
-## Front-load the human steps
+The last line of that message is exactly:
 
-Every human step happens before the long work, so nothing stops it halfway.
-Give them this checklist in your first message and walk them through it in
-this order:
+Would you like to set up your autonomous software factory?
 
-- **A. The Anthropic key.** They open
-  `https://github.com/<owner>/<repo>/settings/secrets/actions/new`, name it
-  `ANTHROPIC_API_KEY`, and paste a key from
-  https://console.anthropic.com/settings/keys. You check it is there yourself
-  with `node scripts/wait-for.mjs secret ANTHROPIC_API_KEY`.
-- **B. Create the App.** `node scripts/create-app.mjs --repo <owner>/<repo>`
-  opens GitHub with the name filled in; they press **Create**.
-- **C. Install it.** GitHub's page opens already on this one repository; they
-  press **Install**. The script checks that the install covers only this repo
-  and stops with the exact fix if it covers all of them.
-- **D. One question:** should the factory merge changes by itself once every
-  gate passes, or ask them to review each one? Review is the safe default.
+Do not add a word to that line. Do not add another paragraph after it.
 
-After D, the only thing left for them is merging the setup pull request, and
-only if they chose review.
+## After they say yes
 
-**Never end a turn on "tell me when you're done".** Anything you can see
-yourself, you wait for yourself: run
-`node scripts/wait-for.mjs pr-merged <number>` (or `secret NAME`, or
-`workflow-success FILE.yml`) in the background and carry on when it exits. It
-prints one line a minute so the wait does not look like a hang.
+A few plain sentences about what you will do. Then machine work. Do not
+repeat the pitch as a checklist. Do not send the dashboard link yet. That
+link belongs in the closing message, after setup is actually finished.
 
-**You speak as one "setup".** Never say "the setup agent said" or name any
-other part of the machinery. Say "setup", and say what it is doing, not which
-job is doing it.
+Human steps are one at a time, almost all at the start. Name the one chore.
+Start a background watch for that chore alone. Wake when the watch exits.
+Then name the next chore. The person never has to type that they finished.
+Do not list the later chores in the same message. Do not end a turn on
+"tell me when you're done".
 
-**Do with `gh` and `git` anything that can be done with them.** Do not ask the
-person to look at a page, run a command or tell you whether something happened
-when you can find out yourself. To check a file is on the default branch:
-`git fetch origin`, then `git cat-file -e origin/main:assessment.md` (exit 0
-means it is there). To see whether a PR merged: `gh pr view N --json state`.
+The chores, in this order:
 
-**Reuse a setup run that is already going.** Before dispatching
-`factory-setup`, run `gh run list --workflow factory-setup.yml --limit 5`; if
-one is queued or in progress, follow it instead of starting another. If two
-setup PRs exist anyway, keep the older and close the newer with
-`gh pr close <n> --comment "Duplicate of #<older>"`.
+1. **The Anthropic key.** They paste it on GitHub, into the Actions secret
+   named `ANTHROPIC_API_KEY`. They do not paste it in the chat. Give them
+   the page
+   `https://github.com/<owner>/<repo>/settings/secrets/actions/new`
+   and the name. A key from https://console.anthropic.com/settings/keys.
+   As you name this chore, start
+   `node scripts/wait-for.mjs secret ANTHROPIC_API_KEY`
+   in the background. It checks every few seconds. Do not pass an interval
+   of a minute or more. A multi-minute gap is a failed watch: start it
+   again. When it exits 0, name the next chore.
+2. **Create the GitHub App.**
+   `node scripts/create-app.mjs --repo <owner>/<repo>`
+   opens GitHub with the name filled in. They press **Create**.
+3. **Install it on this repository only.** The page opens already on this
+   one repository. They press **Install**. The script checks that the
+   install covers only this repository and stops with the exact fix if it
+   covers all of them.
+4. **One question.** Do the pull requests setup itself opens merge on their
+   own? Ask it in everyday words, after the app is installed. If they only
+   said yes to setup, the answer is yes: those pull requests merge on their
+   own. Say that in one sentence so it is not a silent assumption. If they
+   say they will merge setup pull requests by hand, they will. Do not ask
+   again.
 
-**This setup runs from any coding agent** — Claude Code, Cursor, Codex, or
-another. Nothing below depends on which one you are. The factory's own agents,
-the ones that run in GitHub Actions afterwards, are Claude Code regardless of
-what you are: that is the only harness whose spend the budget cap can hold, and
-`install-factory.mjs` sets it back to Claude Code if it finds anything else.
+That default is only for pull requests setup itself opens. Product work,
+gardening, hardening, a change to the factory's own definition, and fixing
+a merge conflict all start with a person merging. Each has a switch. Leave
+those switches off. Never invent that they chose automatic merge for those.
+Never write "you chose automatic merge" for them.
 
-Work through the phases in order. Each has a reference file with the detail —
-read it when you start that phase, not before.
+## The long job waits
 
-**Tell the user what you found, what you are doing, and what you need, in
-plain language, at every phase.** They are watching a long process; silence
-reads as a hang.
+The long GitHub setup job starts only after the secret exists and the app
+is installed on this repository. A bootstrap pull request merging must not
+start that job. If a run appears because that pull request merged, and the
+secret or the app was not in place yet, that run has not started the job.
+Do not follow it. Do not treat its failure as the end. If that early run is
+still going and it is blocking the real one, cancel the early run only.
+Start the job yourself only after both are true:
+
+```
+gh workflow run factory-setup.yml
+```
+
+Do not cancel a second factory-setup run that still has to commit the
+checkers. Cancel a second run only when it is a duplicate of a run that
+already produced the private copy, the checkers, and the switch-on. If two
+pull requests exist and one of them is only the private copy, keep the one
+that still has to gain the checkers. Do not close that one as a duplicate.
+
+## Watches
+
+Anything you can see yourself, you wait for yourself.
+
+- Secret: `node scripts/wait-for.mjs secret ANTHROPIC_API_KEY` every few
+  seconds, started when you name that chore.
+- A setup pull request the person must merge:
+  `node scripts/wait-for.mjs pr-merged <number>`
+  started when you ask them to merge it. Every such pull request gets that
+  watch. Do not tell them to come back and say they merged. If setup pull
+  requests merge on their own, you merge when the checks are green, and you
+  still watch until the merge has happened so you can continue.
+- The long run: `node scripts/progress.mjs` in the background once that run
+  is the live one. Relay each line as one plain sentence. It prints a line
+  a minute for as long as the run is going, not only when the stage
+  changes. If the watch exits at once, or a minute passes with no line, it
+  is stuck on an old run. Start it again so it follows the live one.
+
+Do with `gh` and `git` anything that can be done with them. To see whether
+a pull request merged: `gh pr view N --json state`.
+
+## Setup does not stop halfway
+
+A yes runs through to a finished factory. A break is repaired and the job
+continues. A milestone is a status line. Do not ask if a partial result is
+enough. Do not offer a menu of "finish the checkers" or "one pull request
+max".
+
+A failed lock-in of the private copy is repaired and rerun until the pull
+request contains the private copy, the checkers, and the switch-on. Do not
+ship a private-copy-only pull request and postpone the checkers. Do not
+build that thinner pull request by hand and move on.
+
+Do not skip the format commit, the lint install, proving each rule on a bad
+example and a good example, or the cleanup of violations. A note that says
+to add no tools does not cancel that. When the repository has no linter,
+install the smallest real one.
+
+Do not say "setup is done" while any of these is true:
+
+- A factory pull request is red on its own checks.
+- The coverage floor is 0 while tests exist.
+- An audit is red.
+- A factory-setup run that still has to commit the checkers was cancelled.
+- A rule candidate is still pending.
+- The counts of violations are not recorded, or a recorded count is still
+  above zero.
+
+You file the smoke-test request yourself. You repair it until that pull
+request is green. Do not leave a red factory pull request for the person.
+
+Do not claim a mathematical proof of the whole program is installed. The
+formal bar is a property check for money, permissions, and concurrency.
+The folder shape you enforce is the shape the repository already has.
+
+The gate that judges the private copy reads the recipe in the pull request,
+not only the copy on the default branch. Do not merge to the default branch
+just so a check can see the recipe.
 
 ## What you do and what they do
 
 | They do | You do |
 | --- | --- |
-| Set `ANTHROPIC_API_KEY` as a repo secret, themselves | Give them the exact link, then wait for the secret with `scripts/wait-for.mjs` |
-| Click **Create**, then **Install** on GitHub's App pages | Everything around it, via `scripts/create-app.mjs` |
-| Answer one question: merge by itself, or review each change | Turn the answers into its intent and its first practices |
-| Merge the setup PR, if they chose review | Everything else, including the bootstrap PR and the wait for it |
-| Sign in to the dashboard, once, from the link you give them | Hand them that link before you say setup is done |
+| Paste `ANTHROPIC_API_KEY` on GitHub, not in the chat | Give them that one page, then watch for the secret |
+| Press **Create**, then **Install**, on this repository only | Everything around it, via `scripts/create-app.mjs` |
+| Say if they want to merge setup's own pull requests by hand | Otherwise those merge on their own. The other pipelines wait for a person |
+| Merge a setup pull request, only if they said they would | Watch that pull request and wake when it merges |
+| Sign in to the dashboard, once, from the link in the closing message | Give that link only when setup is actually finished |
 
-Nothing else is theirs. If you find yourself about to ask for something not on
-that list, you are about to do their job for them — work it out instead, say
-what you decided, and move on.
+Nothing else is theirs. If you are about to ask for something not on that
+list, work it out, say what you decided, and move on.
 
-Nothing runs on their machine. The sandbox is designed and proved in their
-GitHub Actions, so they need no Docker and no toolchain.
+Nothing runs on their machine. They need no Docker and no toolchain.
 
-**The user never opens, edits or is told to edit a configuration file.** Not
-`factory.yaml`, not `policy.yaml`, not a workflow. Settings they may change
-(budget, shares, merge by itself, cleanup PRs and time) have controls on the
-dashboard's Factory page; anything else they ask for, they ask for in words, on
-the dashboard's **Ask the factory** box or in this conversation. You make the
-change: for a setting, with `bsf settings --set id=value` (it checks the value,
-keeps the file's comments and moves the cleanup schedule with it), opened as a
-pull request labelled `factory:settings`; for anything else, as a pull request
-they approve. Say what the change does in plain words, never which file it
-touches. When you report a problem, say what the factory cannot do and how it
-gets fixed, not which file is wrong.
+**The person never opens, edits, or is told to edit a configuration file.**
+Settings they may change later (budget, shares, merge by itself, cleanup)
+have controls on the dashboard's Factory page. Anything else, they ask in
+words. You make the change: for a setting, with `bsf settings --set id=value`,
+opened as a pull request labelled `factory:settings`; for anything else, as
+a pull request they approve. Say what the change does in plain words. When
+you report a problem, say what the factory cannot do and how it gets fixed.
 
 **Later, what they can say whenever they like:** `/practice <anything>` as a
-comment on any issue or PR adds a standing instruction every agent follows,
-through a PR they approve. When the factory stops on something and says so,
-`/retry` on that issue or PR hands it back once they have done what it needed.
+comment on any issue or pull request adds a standing instruction.
+`/retry` on that issue or pull request hands it back once they have done
+what it needed.
 
 ## Never handle their secrets
 
-The user sets every secret themselves, and you verify it exists. You never ask
-for a key, a token or a password, you never accept one if it is offered, and
-you never pass one on — not in the conversation, not through a file, not as a
-command argument. A key pasted into a chat stays in that chat.
+The person sets every secret themselves, and you verify it exists. You never
+ask for a key, a token, or a password, you never accept one if it is
+offered, and you never pass one on. A key pasted into a chat stays in that
+chat.
 
-If one does reach you, stop and say so: tell them to revoke it and issue a new
-one. That is cheap. A leaked key that nobody mentioned is not.
+If one does reach you, stop and say so: tell them to revoke it and issue a
+new one.
 
 ## If they want it removed
 
 "Uninstall the software factory", "remove this", "get rid of it" — read
-`references/uninstalling.md` and do it. Do not try to talk them out of it and
-do not ask why first. The factory stops running; everything it built stays.
+`references/uninstalling.md` and do it. Do not try to talk them out of it
+and do not ask why first. Ask the three questions in that file before you
+delete anything beyond the factory machinery. Each defaults to no.
 
 ## Running commands on their machine
 
-**Find out which platform you are on before you run anything.** Setup runs on
-the user's own machine, and roughly half of them are on Windows. Everything
-below is the difference, and getting it wrong wastes their time on errors that
-look like the factory is broken.
+**Find out which platform you are on before you run anything.** Setup runs
+on the person's own machine, and roughly half of them are on Windows.
 
-- **One command per call.** Never join commands with `&&`: PowerShell rejects
-  it outright. If you need two things in sequence, run two commands. (`;` works
-  in both shells, but two calls tell you which one failed.)
-- **The runner has two launchers.** `.factory/bin/bsf` is for macOS and Linux;
-  `.factory/bin/bsf.cmd` is for Windows. Where this skill writes `bsf X`, run
-  `./.factory/bin/bsf X` on macOS and Linux and `.\.factory\bin\bsf.cmd X` on
-  Windows. **Spell out the `.cmd`** rather than relying on PowerShell to find
-  it. Calling the extensionless `bsf` on Windows does nothing at all and exits
-  **0**, so a missing `.cmd` reads as a command that worked and printed nothing.
-- **A command that prints nothing has not necessarily worked.** If you expected
-  output — a URL, a list, a count — and got none, you have a failure, not an
-  empty result. Say so rather than carrying on.
-- **Never push to the default branch.** Agent environments block it, and you
-  will lose the time twice. Post-bootstrap fixes go on a `factory/fix-*` branch
-  and through a pull request, like everything else.
-- **Retry a failed `git add` once** on Windows before reporting it. An
-  antivirus scanner or the search indexer can hold a file under `.git/objects`
-  for a moment; the second attempt succeeds.
+- **One command per call.** Never join commands with `&&`. PowerShell
+  rejects it. If you need two things in sequence, run two commands.
+- **The runner has two launchers.** `.factory/bin/bsf` is for macOS and
+  Linux. `.factory/bin/bsf.cmd` is for Windows. Where this skill writes
+  `bsf X`, run `./.factory/bin/bsf X` on macOS and Linux and
+  `.\.factory\bin\bsf.cmd X` on Windows. Spell out the `.cmd`. Calling the
+  extensionless `bsf` on Windows does nothing and exits 0.
+- **A command that prints nothing has not necessarily worked.** If you
+  expected a URL, a list, or a count and got none, you have a failure.
+- **Never push to the default branch.** Fixes go on a `factory/fix-*`
+  branch and through a pull request.
+- **Retry a failed `git add` once** on Windows before reporting it.
 
 ## Before you start
 
+This is machine work, after they say yes. It is not part of the first
+message.
+
 Run `node scripts/preflight.mjs` and stop on anything it reports. It checks:
-a git repo on GitHub, `gh` signed in with admin rights, a clean tree on the
-default branch, and the repo's plan and visibility. Not Docker, and not any
-language toolchain: nothing of phase 2 runs here.
+a git repository on GitHub, `gh` signed in with admin rights, a clean tree
+on the default branch, and the repository's plan and visibility.
 
-Plan and visibility decide enforcement, so say which applies up front:
+Plan and visibility decide enforcement. Say which applies, in everyday
+words, when it matters to them. Not in the first message.
 
-- **Public repo, or any paid plan** → branch protection, hard enforcement.
-- **Private repo on Free** → the audit fallback. Mention that GitHub Pro
-  unlocks hard enforcement; do not push it.
-- **Public repo** → say now that local session transcripts will only be
-  captured if they choose the private data repo in phase 6, because a public
-  repo cannot hold them.
+- **Public repository, or any paid plan.** Branch protection can require
+  the checks.
+- **Private repository on Free.** GitHub will not require the checks. The
+  audit is the backstop. Mention that GitHub Pro unlocks required checks.
+  Do not push it.
+- **Public repository.** Local session transcripts are captured only if
+  they choose the private data repository later, because a public
+  repository cannot hold them.
 
 If an existing factory is detected, switch to update mode: see
 `references/re-running.md`.
 
-## Phase 1 — Assess
+Work through the notes below in order. Each has a reference file. Read it
+when you start that part, not before. Tell the person what you found, what
+you are doing, and the one thing you need, in plain language. Silence reads
+as a hang. A long run gets the one-line-a-minute watch, not a ten-minute
+gap.
+
+## 1 — Read the repository
 
 `references/phase-1-assess.md`
 
-Build a picture of the codebase and its tooling. Keep what is good; list what
-is missing. Then mine past corrections — **ask consent before reading any
-agent session**, list what you found, and let them exclude any.
+Build a picture of the codebase and its tooling. Keep what is good. List
+what is missing. Then mine past corrections. Ask consent before reading any
+agent session. List what you found. Let them exclude any.
 
-Output: `assessment.md` on the setup branch, and the first `candidates.json`.
+Every do-not, must, never, and always, and every mined correction, becomes
+a check later. A candidate left pending means setup is not finished.
 
-## Phase 2 — Make it runnable
+## 2 — Private copy of the app
 
 `references/phase-2-sandbox.md`
 
 Install the factory's own files with `scripts/install-factory.mjs` on a
-branch, write the person's answers into `practices.md` and, in their own
-words, into the protected **Product intent (from you)** block of
-`fundamentals.md` (the setup workflow merges around that block and never
-rewrites it), and open the **bootstrap PR**. When it is
-merged, dispatch `factory-setup`. From there it runs on its own:
+branch. Write their answers into the product intent in their own words.
+Open the bootstrap pull request. Merging it does not start the long job.
 
-- the setup agent reads the repo and writes a complete candidate — every
-  context file, and a sandbox manifest whose values it chose by reading what
-  the code does with each one;
-- the runner brings up exactly that candidate and measures the tier it
-  reaches: the app renders and is screenshotted, or it builds and its tests
-  pass, or neither;
-- up to three rounds while the measured tier falls short of the claim, then
-  the best round is frozen into the **setup PR**.
+After the secret exists and the app is installed, start the long job. It
+builds the private copy and proves the journeys. A failed lock-in is
+repaired and rerun. Do not freeze a partial trial. Do not tell the person
+a tier. Tell them, in everyday words, whether the app's real journeys ran.
 
-While it runs, start `node scripts/progress.mjs` in the background and relay
-each line it prints as one plain sentence. It prints only when the stage
-changes or after three quiet minutes, and says when their app has started in
-the sandbox.
+You do not design a thinner copy yourself. Never let it inherit real
+credentials — not the person's, not production's.
 
-Tell the user the tier it reached and, below `renders`, what stopped it — the
-manifest records why. A repo that can only reach `build_and_test` still gets a
-factory; its gates claim no more than that tier allows. If the trial reaches
-no tier at all — the app does not even build — stop and show the failing step.
-A factory that cannot verify anything produces confident, unverified PRs.
-
-You do not design the sandbox yourself.
-Never let the sandbox inherit real credentials — not the user's, not production's. The agent decides the values; the closed environment and the
-trial make that safe.
-
-## Phase 3 — Install guardrails
+## 3 — Checkers
 
 `references/phase-3-guardrails.md`
 
-Extend the tools the repo already runs; do not add a second linter beside an
-existing one. Rules come from `rules/<language>.yaml`. Install the linter
-(every rule in `AGENTS.md` as a lint rule), the formatter, every de-duplicated
-rule candidate, and the local correction hook, which is on by default.
+Extend the tools the repository already runs. Do not add a second linter
+beside an existing one. If it has none, install the smallest real one. A
+note that says to add no tools does not cancel that.
 
-**Every rule must fail on its bad example and pass on its good one before you
-install it.** The pack carries both. A rule that fires on both blocks correct
-code; one that fires on neither is decoration. Neither is visible from reading
-the config, so run it.
+Record `baselines.json` with the current count for each installed rule.
+Clean until every count is zero. A cleanup pull request lowers at least
+one count and raises none.
 
-Nothing is baselined. The formatter runs once, as its own "format only"
-commit; everything else the rules flag is fixed in phase 4.
+Every rule fails on its bad example and passes on its good one before you
+call it installed. Format is its own commit. Lint fixes are the next. If
+one pull request would be unreviewable, name the sequence first and open
+them in that order.
 
-## Phase 4 — Clean the codebase
+The verification bar stays in the instructions the builder and the verifier
+read. Moving it to a side document so a size check passes is a failed
+check. A new markdown file the request did not name fails.
+
+## 4 — Clean what the checkers flag
 
 `references/phase-4-clean.md`
 
-Setup removes every existing violation, so the factory starts on a repo that
-passes its own rules. You decide, without asking, whether that is one PR or a
-sequence of PRs, and say which in one line.
+Cleanup is part of setup. Do not postpone it. Do not ask the person whether
+to finish it.
 
-## Phase 5 — Define the factory
+## 5 — Define the factory
 
 `references/phase-5-define.md`
 
-Write `factory.yaml`, `policy.yaml`, the seven role files, the context files
-and the rubrics, then install the workflows and compile them with
-`gh aw compile`. Install the Dependabot entry for runner upgrades and the
-local session hooks.
+Write the factory definition, the role files, and the workflows, and
+compile them with `gh aw compile`.
 
-All auto-merge toggles start **off**.
+The pipeline switches stay off: product work, gardening, hardening, a
+change to the factory's own definition, and fixing a merge conflict. Setup
+pull requests are the exception. They merge on their own unless the person
+said they will merge those by hand.
 
-## Phase 6 — Instrument
+## 6 — Records and budget
 
 `references/phase-6-instrument.md`
 
-Create the data refs, create the GitHub App, store the model key, estimate the
-budget, install the scorers, and record the starting point so the dashboard
-shows progress from day one.
+The key and the app were done at the start. Do not ask for them again.
+Create the data refs, estimate the budget, install the scorers, and record
+the starting counts so the dashboard shows progress from day one.
 
 - Data refs: `node scripts/init-data-refs.mjs`
-- The App: `node scripts/create-app.mjs --repo <owner/name>`
 - Budget: `node scripts/estimate-spend.mjs --repo <owner/name>`
 
-## Phase 7 — Switch it on
+## 7 — Switch it on
 
 `references/phase-7-switch-on.md`
 
-Open the setup PR with the user's own credentials — the App cannot push
-workflow files, by design. Run the gates on the setup PR itself so they see
-every gate pass before merging. Wait for the merge with
-`scripts/wait-for.mjs pr-merged`, smoke-test with one small issue, and finish
-with the closing message in `references/phase-7-switch-on.md`.
+Open the remaining setup pull request with the person's own credentials.
+The app cannot push workflow files, by design. Run the checks on that pull
+request. Repair it until it is green. Do not hand them a red one.
+
+If they are merging setup pull requests by hand, name that one pull request
+and start `node scripts/wait-for.mjs pr-merged <number>`. If setup pull
+requests merge on their own, merge it when it is green and watch until it
+has merged.
+
+File the smoke-test request yourself. Repair until its pull request is
+green. Only then send the closing message in
+`references/phase-7-switch-on.md`. That message does not claim the pipeline
+switches are on.
 
 ## Things that will tempt you, and shouldn't
 
-- **Do not replace the repo's tools.** A repo with eslint gets its eslint
-  config extended, not a second linter.
-- **Do not baseline.** A suppression file is a promise to clean up later.
-  Fix the violations; if one cannot be fixed without changing behaviour, file
-  it as product work and leave the rule enforced.
-- **Do not write markdown nobody asked for.** `assessment.md` is deleted after
-  merge for exactly this reason. No summaries, no plans, no notes files.
-- **Do not skip phase 2's proof.** A screenshot of the running app is the
-  evidence that the factory can verify its own work. Without it you are
-  installing a factory that cannot tell whether anything works.
-- **Do not weaken a guardrail to make setup pass.** If a rule's violation
-  count is enormous, that is the finding: report it and work through it.
-- **Do not continue past a phase that failed.** Stop, say which step, and say
-  what you tried.
+- **Do not replace the repository's tools.** A repository with eslint gets
+  its eslint config extended, not a second linter. A repository with no
+  linter gets the smallest real one.
+- **Do not leave violations uncounted.** Write the counts. Clean until they
+  are zero. A cleanup pull request lowers at least one and raises none.
+- **Do not write markdown nobody asked for.** The assessment file is deleted
+  after merge for this reason. A new markdown file the request did not name
+  fails. The verification bar stays in the instructions the builder and the
+  verifier already read.
+- **Do not skip the proof.** A screenshot of a public page is not the
+  finish line. The journeys run, on a fresh boot for the verifier, with a
+  screenshot, a side effect, and at least one diagram.
+- **Do not weaken a checker to make setup pass.** If a count is enormous,
+  that is the finding. Record it and work through it.
+- **Do not continue past a red pull request by handing it over.** Repair it.
+- **Do not say setup is done early.** The closing message waits until the
+  private copy, the checkers, the zero counts, the green audit, and the
+  green smoke-test pull request are all true.

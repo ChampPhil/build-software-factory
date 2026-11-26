@@ -433,31 +433,32 @@ do not start the app or source `.runtime.env` yourself.
 ## How to work
 
 1. Read the spec. Change only the files it names, in the feature folders it names.
-2. Follow the dominant pattern for each concern. The codebase is the largest
-   input you get: copy the patterns already there, and do not introduce a second
-   way of doing something that already has one.
-3. Work in a loop, the way a developer does:
-   - make a change;
-   - run the repo's fast checks — the manifest's `test` command, plus any lint
-     or type check the runbook names;
-   - **if the change is visible, start the app and look at it.** Run the
-     manifest's `run` command in the background, open `app_url` with the
-     browser tool, and go to the screen the spec is about. Do what a user would
-     do there. Check the console for errors;
-   - when what you see is not what the spec asks for, fix it and look again.
+2. Follow the dominant pattern for each concern. Copy the pattern already in
+   the codebase. Do not add a second way of doing something that already has one.
+3. Check every change on the running sandbox before the next change starts.
+   Sign in as the sandbox test user and click the behavior you just changed.
+   A change you have not clicked is not done. When the change has no screen,
+   exercise it through the running app. The side effect is the proof.
+   - Run the manifest's `test` command, and any lint or type check the runbook names.
+   - Open the running app. Use the manifest's `run` command and `app_url`, or
+     `app.json`'s `url` when that file exists. Load the test-user session first
+     when one is set. Do what a user would do on the screen this change affects,
+     and read the console.
+   - When the screen is not what the spec asks for, fix it and click it again
+     before you start the next change.
+4. You may change the app database, and the dev integrations, to arrange the
+   case. That is Stripe test mode, the Clerk dev instance, the mail catcher,
+   and the other test surfaces the sandbox manifest names. Do not use
+   production credentials.
+5. Add tests for new or changed behavior. You may modify or delete an existing
+   test **only if the spec's `tests_changed` lists it**. An undeclared edit
+   fails the policy check. New test files are always fine.
+6. Keep the change minimal. An unrequested refactor, a new dependency, or a
+   new markdown file the request did not name fails review.
 
-   Stop when your own checks pass and the screen does what the spec says. Do
-   not stop at "the tests pass" for a change someone will look at.
-4. Add tests for new or changed behavior. You may modify or delete an existing
-   test **only if the spec's `tests_changed` lists it** — an undeclared edit
-   fails the policy check, and new test files are always fine.
-5. Keep the change minimal. Unrequested refactors, new dependencies and new
-   markdown files all fail review.
-
-Your own looking is for you. The verifier checks the result separately, in a
-job with no access to anything you did here, and the gates re-run everything.
-That is why you are free to look as much as you like: looking is not
-certifying.
+The verifier checks the result in its own fresh sandbox, with no access to
+this transcript. The factory's gates run again after you finish. Clicking
+the change here does not certify it.
 
 ## Show your work on the PR
 
@@ -478,7 +479,8 @@ Before you finish, write into `/tmp/gh-aw/agent/bsf/report/`:
       "What someone would notice: where, and what they see."
     ],
     "blocks": [
-      { "type": "file", "file": "files/after.png", "caption": "The invoices table with the status chips" },
+      { "type": "file", "file": "files/after.png", "caption": "Clicked Sent, signed in as the test user" },
+      { "type": "file", "file": "files/sent-row.json", "caption": "Side effect: the invoice row saved as sent" },
       { "type": "diagram", "title": "How a status choice reaches the table", "mermaid": "sequenceDiagram\n  User->>Page: chooses Sent\n  Page->>API: ?status=sent\n  API-->>Page: sent invoices" },
       { "type": "file", "file": "files/before.png", "caption": "Before: every invoice, no way to narrow them" }
     ],
@@ -490,11 +492,12 @@ Before you finish, write into `/tmp/gh-aw/agent/bsf/report/`:
   }
   ```
 
-- `blocks`: screenshots, GIFs or short recordings of what you built, taken
-  while you looked at it, and Mermaid diagrams of the flow, the states or the
-  parts the change touches — as many as the change needs, in the order that
-  explains it. Files go under `report/files/`. A video needs a `poster` (a GIF
-  or still of it), because GitHub only plays its own uploads.
+- `blocks` for this change must include a screenshot of the behavior you
+  clicked, a side effect of that click (a saved row, a caught message, a test
+  payment, or the response the action wrote), and at least one diagram of the
+  flow the change touches. Files go under `report/files/`. A short video is
+  useful and not required. If you include one, give it a `poster` (a GIF or
+  still), because GitHub only plays its own uploads.
 - `focus`: the biggest changes a reviewer should be aware of — a new
   dependency on the URL, a changed contract, a migration — not a file list.
 - `technical.md`: how the change works, file by file, for someone about to
@@ -542,14 +545,19 @@ Do not remove anything main added, and add nothing the old change did not
 have, beyond what fitting it onto main takes. An approval on the old PR
 carries to yours only if your change adds the same lines and removes nothing
 new, so any extra line costs the person another review. Then check it as you
-would any change: tests, and the screen if it is visible.
+would any change: on the running sandbox, signed in as the test user, clicking
+the behavior before you finish.
 
-## If this is a retry
+## The factory's own checks
 
-If `/tmp/gh-aw/agent/bsf/gate-failures.json` exists, the gates rejected the last
-attempt and that file says why. Fix exactly those failures. Do not take the
-opportunity to change anything else: each gate allows 3 attempts per work item,
-and the third failure escalates to a human.
+Repair the change until the factory's own gates are green. The factory does
+not hand a person a pull request that is red on those checks. Do not merge to
+the default branch just so a gate can see a file that exists on the pull
+request. The file stays on the pull request.
+
+If `/tmp/gh-aw/agent/bsf/gate-failures.json` exists, it says why the last
+attempt failed. Fix those failures and nothing else. Each gate allows 3
+attempts, and the third failure goes to a person.
 
 ## If the sandbox cannot run what you need
 
@@ -574,7 +582,7 @@ yourself.
 
 ## Do not
 
-- Write any markdown the spec did not ask for.
+- Add a new markdown file the request did not name.
 - Touch `.github/`, or anything under `.factory/` unless this pipeline's
   allowlist includes it.
 - Weaken a guardrail. Removing or loosening a rule, raising a baseline,

@@ -256,22 +256,20 @@ describe("the App's name", () => {
     }
   });
 
-  it("keeps the whole repo suffix, shortening the prefix instead", () => {
-    // The suffix is what makes the name unique across GitHub, so it is the
-    // part worth protecting.
-    expect(appName("Build Software Factory", "bsf-fixtures-ts-webapp")).toBe(
-      "Factory (bsf-fixtures-ts-webapp)",
-    );
+  it("shortens a multi-word repo to initials, and never mixes in the owner", () => {
+    expect(appName("Build Software Factory", "bsf-fixtures-ts-webapp")).toBe("Factory (BFTW)");
+    expect(appName("Build Software Factory", "vibecoding-for-marketing")).toBe("Factory (VFM)");
+    expect(appName("Build Software Factory", "vibecoding_for_marketing")).toBe("Factory (VFM)");
   });
 
-  it("keeps the long prefix when there is room for it", () => {
-    expect(appName("Build Software Factory", "a-b")).toBe("Build Software Factory (a-b)");
+  it("uses Factory plus initials even when the old long prefix would have fit", () => {
+    expect(appName("Build Software Factory", "a-b")).toBe("Factory (AB)");
   });
 
-  it("cuts into the repo only when no prefix fits, and still closes the paren", () => {
-    const name = appName("Build Software Factory", "some-really-long-organisation-name");
+  it("keeps a single word's first five letters and still closes the paren", () => {
+    const name = appName("Build Software Factory", "organisation");
+    expect(name).toBe("Factory (organ)");
     expect(name.length).toBeLessThanOrEqual(APP_NAME_MAX);
-    expect(name.startsWith("Factory (")).toBe(true);
     expect(name.endsWith(")")).toBe(true);
   });
 
@@ -279,6 +277,7 @@ describe("the App's name", () => {
     const name = appName("Factory Recompiler", "bsf-fixtures-ts-webapp");
     expect(name.length).toBeLessThanOrEqual(APP_NAME_MAX);
     expect(name.toLowerCase()).toContain("recomp");
+    expect(name).toBe("Recomp (BFTW)");
   });
 
   it("holds only characters GitHub accepts, whatever the repo is called", () => {
@@ -479,18 +478,20 @@ describe("progress.mjs", () => {
     expect(currentJob([job("ready", "completed"), job("plan", "completed"), job("freeze", "completed"), job("release", "completed")])).toBeNull();
   });
 
-  it("speaks when the job changes and stays quiet otherwise", () => {
+  it("speaks when the job changes and again once a minute", () => {
     const jobs = [job("ready", "completed", "success"), job("plan", "in_progress")];
     const a = nextLine(jobs, { job: "ready", at: 0 }, 60000);
     expect(a.line).toBe(`${JOB_LINES.plan}.`);
-    const b = nextLine(jobs, a.state, 120000);
-    expect(b.line).toBeNull();
+    const quiet = nextLine(jobs, a.state, 90000);
+    expect(quiet.line).toBeNull();
+    const again = nextLine(jobs, a.state, 120000);
+    expect(again.line).toBe(`${JOB_LINES.plan}.`);
   });
 
-  it("repeats after three quiet minutes", () => {
+  it("repeats after one quiet minute", () => {
     const jobs = [job("ready", "completed", "success"), job("plan", "in_progress")];
     const first = nextLine(jobs, { job: null, at: 0 }, 0);
-    expect(nextLine(jobs, first.state, 3 * 60 * 1000).line).toBe(`${JOB_LINES.plan}.`);
+    expect(nextLine(jobs, first.state, 60 * 1000).line).toBe(`${JOB_LINES.plan}.`);
   });
 
   it("celebrates the sandbox starting once freeze succeeds", () => {

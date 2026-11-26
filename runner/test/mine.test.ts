@@ -365,6 +365,19 @@ describe("candidates from corrections", () => {
     expect(proposedFix("we prefer to ship on Thursdays")).toBe("context");
   });
 
+  it("treats a prohibition or an obligation as a rule, after the stronger fixes", () => {
+    expect(proposedFix("do not patch the strip")).toBe("static_rule");
+    expect(proposedFix("the release must include the changelog")).toBe("static_rule");
+    expect(proposedFix("don't leave the door open")).toBe("static_rule");
+    expect(proposedFix("dont ship a half fix")).toBe("static_rule");
+    expect(proposedFix("never write the total twice")).toBe("static_rule");
+    expect(proposedFix("always close the file")).toBe("static_rule");
+    expect(proposedFix("that call is forbidden")).toBe("static_rule");
+    expect(proposedFix("prohibit a second charge")).toBe("static_rule");
+    expect(proposedFix("the handler shall not retry")).toBe("static_rule");
+    expect(proposedFix("we prefer to ship on Thursdays")).toBe("context");
+  });
+
   it("caps how many quotes a candidate carries", () => {
     const c = candidatesFrom([cluster(Array.from({ length: 12 }, (_, i) => `no, don't do ${i}`))], "t")[0]!;
     expect(c.sources.length).toBeLessThanOrEqual(5);

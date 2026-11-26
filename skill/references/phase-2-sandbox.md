@@ -1,165 +1,192 @@
-# Phase 2 — Make it runnable
+# Make the app runnable in a private copy
 
-Produce a sandbox where agents can build the app, run its tests, and see it
-running — for this repo, whatever its language, framework or services — and
-prove it. Nothing here runs on the user's machine.
+These are your notes. The person does not hear a phase number, a file name,
+the word freeze, or the word tier.
 
-**Done when the setup PR is open with a frozen sandbox manifest.** Its `tier`
-says how far verification can go, measured rather than claimed.
+Nothing here runs on the person's machine. You do not invent a thinner finish
+line than the one below. A note inside the sandbox that says to add no tools
+does not cancel later checkers.
 
-## How it works
+## Done
+
+Done when the pull request contains all of this, and the journeys in the
+feature map have been driven on the running app:
+
+- The app's database is rebuilt on every boot from a seed. That seed already
+  holds the records each journey needs: the users, workspaces, and sample
+  records the screen has to already have, or the screen never appears. A
+  missing precondition fails setup. Do not shorten a journey to make the boot
+  pass. Do not drop a journey to make the boot pass.
+- External integrations keep a standing test surface that survives from one
+  boot to the next. Stripe test mode holds the customers, products, and
+  subscriptions the journeys open. A Clerk dev instance holds the test users.
+  A local mail catcher, the Inngest dev server, and a local stand-in for a
+  cloud service keep their own fixture data. The seed reconnects each
+  workspace to those same accounts. A fake key that only lets the process
+  boot does not count. A stub that forgets the request does not count. A
+  journey whose integration has no standing surface is not clickable, so
+  setup is not finished. Ask once for a test-mode secret. They paste it on
+  GitHub, not in the chat.
+- While a run is going, the writer and the verifier may change the app
+  database and those dev integrations to arrange the case under test. They
+  may add a row, decline a Stripe test card, create a Clerk test user, or
+  point the mail catcher at a message. After the run, the app database is
+  rebuilt from the seed and the dev accounts are restored to the fixture
+  set. A leftover object from the previous agent is not the only way into
+  a screen.
+- The writer has one machine for the whole build, checked out to the branch
+  it is editing, with the app running and the browser signed in as the test
+  user. The writer checks every change on that running app before the next
+  change. A change that was not clicked there is not done. The writer can
+  sign in as the test user.
+- The verifier gets a fresh boot from the same saved disk, checked out to
+  the pull request, with the app database rebuilt from the seed. It signs
+  in as a test user and clicks the journeys the change touches, and the
+  other journeys the change could break. The writer's clicks do not replace
+  that pass.
+- Proof on the pull request: a screenshot, the side effect (a row or a sent
+  message), and at least one diagram. An on-screen "saved" is not that
+  proof. A short video is encouraged. Its absence does not fail the gate.
+  The files are attached to the pull request.
+- The test command is the repository's own suite. Deselecting or ignoring
+  tests to go green means this phase is not done. The coverage floor is the
+  coverage that suite measured. A floor of 0 while tests exist means this
+  phase is not done.
+- A public page, or an unclaimed-workspace token, is not the finish line
+  unless the feature map has no further journey. An unclaimed-workspace
+  token is one step inside a journey when that journey is on the map.
+- Do not freeze a partial trial. A trial that only renders a public page is
+  a failed setup. Repair the recipe and rerun until the journeys have been
+  driven. The disk is saved. Running processes are not. Later runs start
+  from that disk and start the app again.
+- The gate reads the sandbox recipe in the pull request, not only the copy
+  on the default branch. Do not merge to the default branch just so a check
+  can see the recipe.
+- The factory does not hand the person a pull request that is red on its
+  own checks. Repair the change, or the check, until those checks are green.
+
+The pull request is not cleared when the start check fails, when a journey
+was skipped, when the diagram is missing, or when the only evidence is a
+screenshot of the public page.
+
+A sandbox-only pull request does not finish this phase. The same pull
+request also has to carry the checkers and the switch-on, or a later pull
+request in the same setup does, before you call setup finished. Do not
+postpone the checkers. If the cloud job dies at the last lock-in step,
+repair the recipe and rerun. Do not build a thinner pull request by hand
+and move on. Do not cancel a second factory-setup run that still has to
+commit the checkers.
+
+## When the long job starts
+
+The long GitHub setup job starts only after the Anthropic secret exists and
+the GitHub App is installed on this repository. A bootstrap pull request
+merging must not start that job. If a run appears because that pull request
+merged, and the secret or the app is not in place yet, that run is not the
+job. Do not follow it. Do not treat it as setup. If that early run is still
+going and it blocks the real one, cancel the early run only. Do not cancel
+a later run that still has to commit the checkers. Start the job yourself,
+with `gh workflow run factory-setup.yml`, only after both are true.
+
+## How you get there
 
 1. **Bootstrap.** `node scripts/install-factory.mjs --into <checkout>` on a
-   branch: the packed runner (`.factory/bin`), the definition templates, the
-   guardrail files, and every workflow, precompiled. Write the user's product
-   answers into `practices.md` and `fundamentals.md`'s product intent.
-
-   **Open the bootstrap PR with the body the installer wrote** — it is at
-   `.factory/bootstrap-pr.md`, and it already carries the attribution:
+   branch. Open the bootstrap pull request with the body the installer
+   wrote, at `.factory/bootstrap-pr.md`. Do not compose that body yourself.
 
    ```
    gh pr create --title "Install the software factory" --body-file .factory/bootstrap-pr.md
    ```
 
-   Do not compose this body yourself. When this was a description of what the
-   body should contain, the first live install produced a broken link to
-   `assessment.md` and an attribution line that had drifted from the one place
-   it is defined. It changes protected paths, so the user's merge is the
-   approval.
-2. **Dispatch `factory-setup`.** It runs unattended:
-   - **Design.** The setup agent reads the repo and writes a complete
-     candidate: the four context files, `manifest.json`, any stub servers, and
-     the documentation hosts of the repo's stack.
-   - **Trial.** `bsf sandbox trial`, on the runner where Docker is, brings up
-     exactly what the candidate declares, runs install, build and test,
-     starts the app, waits for `app_url`, and screenshots it. Then it proves
-     the sandbox matches the app: it runs `sign_in`, if the app has sign-in,
-     to mint a session for a test user, and sends each dependency's probe
-     (sign-in, each database, each outside API) to the running app. It
-     records the tier reached, every probe, and the last lines of every
-     step's output.
-   - **Again, if it fell short.** A round is done when it reached the tier
-     it claimed and every probe passed. Otherwise the next design round reads
-     the failing step or probe and changes the smallest thing that explains
-     it. Three rounds at most.
-   - **Freeze.** `bsf sandbox freeze` takes the best measured round (highest
-     tier, then most proven) and writes its manifest at the tier the trial
-     reached. Every dependency it could not prove is listed as not exercised,
-     with what happened, and a `sign_in` that minted nothing is dropped. The
-     job opens the setup PR.
-3. **The user merges it.** The factory exists from that commit.
+   Merging it does not start the long job. If the person is merging setup
+   pull requests by hand, start `node scripts/wait-for.mjs pr-merged <number>`
+   in the background when you ask them to merge it. Do not tell them to come
+   back and say they merged. If setup pull requests merge on their own, merge
+   this one when its checks are green, and still watch until it has merged.
 
-## Why it is built this way
+2. **The long job, after the secret and the app.** It reads the repository's
+   start command, Compose file, migrations, and seed. It writes a feature
+   map of the main journeys, from the user's side, with the steps and the
+   traps. It writes how to start the app, how to check that this boot is
+   usable, how to drive a journey, how to keep the proof, and how to delete
+   the scratch data while leaving the screenshots. It builds an image that
+   already has the toolchains, Docker, and a browser, and it runs that start
+   command until a person could use the app. Migrations are applied. The
+   seed is loaded.
 
-The first version reused the repo's deployment logic — its Dockerfile, its
-commands, the secrets the app needs — and then warned against inheriting real
-credentials. Deployment logic exists to reach production; reusing it and
-spotting the dangerous parts is a denylist, and it holds only until the
-hazard takes a shape nobody listed: an `ENTRYPOINT` that runs a release
-script, a config file that loads `.env.local` on import, a build that chains
-a migration.
+   The image boots on a virtual machine the GitHub Actions job starts. The
+   factory's own credentials stay outside that machine. The same image can
+   boot on a hypervisor service when someone wants that boundary. The
+   definition of the app is the same in both places.
 
-A rule-based generator was tried next and failed on the first real repo: it
-pointed `SITE_URL` — the app's own origin — at a host that cannot resolve,
-which broke sign-in and with it every page. No rule can tell the app's own
-origin from a third party's URL by its name. Reading the code can.
+   While it runs, start `node scripts/progress.mjs` in the background and
+   relay each line as one plain sentence. It speaks once a minute, not only
+   when the stage changes. If it exits at once, or a minute passes with no
+   line, it is on an old run. Start it again so it follows the live one.
 
-So the agent chooses every value, by reading, and three properties make that
-safe whatever it chooses:
+3. **Repair.** A failed lock-in stays your job. Repair and rerun until the
+   pull request contains the private copy, the checkers, and the switch-on.
+   A hand-built pull request of the sandbox alone does not close the run.
 
-- **The environment is closed.** The sandbox gives the app exactly the
-  manifest's variables and nothing from the runner. A variable the agent
-  missed is absent, so the app fails loudly instead of quietly reaching
-  something real. A test sets a variable on the runner and asserts it never
-  arrives.
-- **No credential of the user's is in it.** A value is the app's own correct
-  configuration, a throwaway service, a local stub, or a named test-mode
-  secret from `FACTORY_SANDBOX_ENV`. Never a production key.
-- **The claim is measured.** The trial, not the agent, decides the tier.
+## The environment is closed
 
-## Variable kinds
+The sandbox gives the app exactly the manifest's variables and nothing from
+the runner. A variable the agent missed is absent, so the app fails loudly
+instead of quietly reaching something real. A test sets a variable on the
+runner and asserts it never arrives.
 
-| Kind | For | Value |
-| --- | --- | --- |
-| `self` | The app's own configuration | Its correct value: `http://localhost:3000`, the real domain allowlist |
-| `service` | Something the sandbox can run | Points at a throwaway service on `127.0.0.1` |
-| `stub` | A third party it cannot run | A local server answering in the real API's shapes, with provenance |
-| `test_mode` | A provider's real test mode | The name of a secret in `FACTORY_SANDBOX_ENV`, never a value |
-| `inert` | Last resort, so the app starts | Listed under `capabilities.not_exercised` |
+## No production credentials
 
-## What the roles get
+A value is the app's own correct configuration, a throwaway service, a
+standing test surface, or the name of a test-mode secret. Never a
+production key. Never the person's own key. Production data and live
+payment keys are never on the machine, and they are never copied into the
+test accounts.
 
-The roles bring the frozen sandbox up with `bsf sandbox start`, which reads
-the manifest from the default branch — never from the change being judged —
-starts its services, writes the closed environment to
-`.factory/sandbox/.runtime.env` (excluded from every commit), and runs its
-install. The builder and verifier source that file, start the app with the
-manifest's `run` command, and use the browser at `app_url`.
+If the repository's database URL points at a hosted database, the app gets
+a throwaway database instead. The closed environment is a positive list. A
+forgotten production value is absent, not inherited.
 
-Where the sandbox needs the runner (services, stubs at a third party's own
-address, or sign-in), the app runs there instead and the roles reach it at
-the address in `app.json`. Their browser reaches the app and nothing else,
-so it never signs in through an identity provider: the runner mints a
-session with `sign_in` and hands it over as `session.json`, which the role
-loads with `playwright-cli state-load`.
+The pull request lists any step that was proved only on this local boot, so
+that boot is described as itself. A step that still needs the remote
+environment stays on that list until a run there covers it.
 
-## When the sandbox is not enough
+## What the writer and the verifier read
+
+The verification bar stays in the instructions the builder and the verifier
+read on every change. Moving it to a side document so a size check passes
+is a failed check. A new markdown file the request did not name fails.
+
+They bring the app up from the recipe in the pull request they are judging,
+not only from the copy on the default branch. The browser is signed in as
+the test user. Where the machine has to mint that session, it hands it over
+as a session file the role loads. The browser reaches the app and nothing
+else.
+
+## After setup, when a change needs more
 
 A builder or verifier that cannot exercise what a change needs writes a
-structured report: what it needed, which paths, why. That report dispatches
-`factory-setup` with `amend` set; the next episode starts from the current
-manifest, extends it, and opens an amendment PR. That is the only way the
-sandbox changes after setup, and it needs no person:
+report: what it needed, which paths, why. That report starts another setup
+run from the current recipe. One such change at a time.
 
-- **When.** At once, unless the reporter says the need comes from the change
-  itself (`needs_the_change`, a test runner the PR adds); then it waits for
-  that change to merge. One amendment at a time.
-- **Merging.** `bsf sandbox land` merges the amendment itself when it
-  changes only `.factory/sandbox/`, reaches no new host, needs no new
-  secret, and its trial proves at least what main's sandbox did. Anything
-  else waits for the user, with a comment saying which condition stopped
-  it. A factory set to review sandbox repairs makes every amendment
-  wait.
-- **After.** The changes that reported the need are brought up to date with
-  main, which holds the new sandbox, and verified again. (A label added by the
-  factory's App is refused at the verifier's checkout, so a push is used.) Until
-  then a change the sandbox could not judge is held in review: it is not rebuilt
-  and costs nothing.
-- **When it does not work.** A need reported again after its repair landed
-  is tried once more. After two amendments, it is put to the user as one
-  issue saying what is missing, and not retried.
-
-## Commands with side effects
-
-`bsf consistency` reports, as `runbook_command_touches_state`, a command the
-runbook runs whose chain applies migrations, deploys or publishes. Under the
-sandbox it acts on a throwaway target; the finding exists so the runbook says
-so.
-
-## Sidecars and the agent's network
-
-Services run on the runner, published on `127.0.0.1`. An agent inside AWF
-reaching a published port needs `sandbox.agent.runtime:
-docker-sudo-iptables`, a weaker isolation profile, so the default compiled
-roles do not assume it. A repo whose sandbox has services is recompiled at
-setup with that posture; tell the user it gets a measurably weaker isolation
-level than a repo with none, and why.
+- It waits for the product change to merge only when the need comes from
+  that change itself. Otherwise it starts at once.
+- It may merge on its own when it changes only the sandbox, reaches no new
+  host, needs no new secret, and the trial proves at least what the default
+  branch already proved. Anything else waits for the person. You still watch
+  the pull request. You do not tell them to come back and say they merged.
+- After two tries, put it to the person as one issue saying what is missing.
 
 ## What to watch for
 
-- **A real connection string reaching the sandbox.** If the repo's
-  `DATABASE_URL` points at a hosted database, the manifest must give the app a
-  throwaway service's URL instead, never the hosted one. The closed environment
-  is a positive list, not a denylist: a variable reaches the app only because
-  the manifest names it, so a forgotten production value is absent rather than
-  inherited.
-- **A tier claimed but not reached.** The setup PR states the measured tier.
-  If the agent's notes say `renders` and the trial says `build_and_test`, the
-  trial is right; read `tier_reason` for what stopped it.
-- **A stub standing in for something the change touches.** A stub has
-  provenance (`captured_from`, `captured_at`); when a work item changes
-  behaviour that depends on the stubbed service, the verifier's report should
-  name it under `not_exercised` rather than pass it.
-- **Services without the isolation they need.** See the section above: a
-  manifest with services means the weaker runtime posture, and the user is
-  told so.
+- **A fake key or a forgetful stub.** If the only proof is that the process
+  booted, the integration is not done. Ask once for the test-mode secret.
+- **A partial trial treated as success.** Do not save it. Do not open it as
+  the pull request you ask them to merge and then postpone the checkers.
+- **A check that can only see the default branch.** Do not merge to make
+  that check pass. The gate has to read the recipe in the pull request.
+- **A red pull request.** Repair it. Do not hand it to the person.
+- **Tests turned off to go green.** That means this phase is not done.
+- **Services and isolation.** Services run on the runner, on localhost. A
+  repository whose private copy needs them gets a weaker isolation level
+  than one with none. Tell the person that, in everyday words, and why.

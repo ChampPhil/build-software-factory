@@ -82,9 +82,17 @@ describe("the sandbox's environment is closed", () => {
 });
 
 describe("the manifest", () => {
-  it("is read from the default branch's copy, not the change's", () => {
-    const pr = repo(full({ commands: { install: null, build: null, run: null, test: "true" } }));
-    const main = repo(full({ commands: { install: null, build: null, run: null, test: "npm test" } }));
+  it("is the one in the checkout, even when the default branch has another", () => {
+    const pr = repo(full({ commands: { install: null, build: null, run: null, test: "npm test" } }));
+    const main = repo(full({ commands: { install: null, build: null, run: null, test: "true" } }));
+    process.env["BSF_TRUSTED_ROOT"] = main;
+    const loaded = loadManifest(pr);
+    expect(loaded.kind === "ok" && loaded.manifest.commands.test).toBe("npm test");
+  });
+
+  it("is read when it exists only on the pull request head", () => {
+    const pr = repo(full({ commands: { install: null, build: null, run: null, test: "npm test" } }));
+    const main = repo(undefined);
     process.env["BSF_TRUSTED_ROOT"] = main;
     const loaded = loadManifest(pr);
     expect(loaded.kind === "ok" && loaded.manifest.commands.test).toBe("npm test");

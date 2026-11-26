@@ -1,10 +1,10 @@
 import type { GitHub } from "../lib/github.js";
-import { FactoryStore, INDEX, LEDGER, json } from "../lib/store.js";
+import { FactoryStore, BUDGET, INDEX, LEDGER, json } from "../lib/store.js";
 import { sweepReports } from "./sandbox-reports.js";
 import type { Change } from "../lib/dataref.js";
 import { MEDIA_REF } from "../lib/dataref.js";
 import {
-  runRollup, pausedPipelines,
+  runRollup, pausedPipelines, indexSpend, budgetMonthSpend,
   type RunSummary, type WorkItemSummary, type Metrics, type BudgetState,
 } from "./rollup.js";
 import type { Pipeline } from "../lib/types.js";
@@ -104,11 +104,16 @@ export async function runRollupCommand(opts: RollupOptions): Promise<RollupRepor
     ...(opts.setupFinished === undefined ? {} : { setupFinished: opts.setupFinished }),
   });
 
+  // Run files are the spend when they exist. When they are missing, a budget
+  // that already has this month's charges must not be written back as $0.
+  const budgetDoc = await store.data.readJson<{ month?: string; spent_usd?: Record<string, number> }>(BUDGET);
+  const spend = indexSpend(result.metrics.spend_usd, runs.length, budgetMonthSpend(budgetDoc, opts.now));
+
   const index = {
     schema: "index/1",
     updated_at: opts.now,
     factory: { runner: opts.runnerPin, harness: opts.harness },
-    metrics: result.metrics,
+    metrics: { ...result.metrics, spend_usd: spend },
     // Run ids, as schema/index.json and the dashboard read them. The rollup
     // wrote objects here, which the schema refused, so the index never
     // updated once a factory had a run and every metric read zero.
