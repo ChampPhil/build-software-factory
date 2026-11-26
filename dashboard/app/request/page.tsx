@@ -211,7 +211,7 @@ function fromDoc(doc: WorkItemDoc, issues: readonly IssueSummary[]): Request {
 
 /** What the state asks of the person, said once above whatever tab is open. */
 function Callout({ request: r }: { request: Request }) {
-  const { client, act, ask, live, version } = useApp();
+  const { client, act, ask, live, version, held } = useApp();
   const target = r.pr ?? r.issue;
   const comments = useIssueComments(client, r.status === "escalated" ? target : null, version);
   if (r.status === "escalated") {
@@ -243,15 +243,17 @@ function Callout({ request: r }: { request: Request }) {
   }
   if (r.status === "waiting_trust" && r.issue !== null) {
     const issue = r.issue;
+    if (held(`issue-gone:${issue}`)) return <p className="muted">Closed #{issue}.</p>;
+    if (held(`issue-accepted:${issue}`)) return <p className="muted">#{issue} can start. The factory reads it within a minute.</p>;
     return (
       <div className="callout">
         <h2>Asked by someone who can&rsquo;t start work</h2>
         <p>Nothing is spent until one of you says so. Letting it start adds the <code>factory:accept</code> label.</p>
         <div className="acts">
-          <button className="btn go" type="button" onClick={() => void act(() => client.addLabels(issue, ["factory:accept"]), `#${issue} can start.`)}>
+          <button className="btn go" type="button" onClick={() => void act(() => client.addLabels(issue, ["factory:accept"]), `#${issue} can start.`, `issue-accepted:${issue}`)}>
             Let the factory start it
           </button>
-          <button className="btn quiet" type="button" onClick={() => void act(() => client.setIssueState(issue, "closed"), `Closed #${issue}.`)}>
+          <button className="btn quiet" type="button" onClick={() => void act(() => client.setIssueState(issue, "closed"), `Closed #${issue}.`, `issue-gone:${issue}`)}>
             Close it
           </button>
         </div>
@@ -325,7 +327,7 @@ function ReopenButton({ issue }: { issue: number }) {
 }
 
 function Details({ request: r, spent, runs }: { request: Request; spent: number; runs: number }) {
-  const { client, act, ask, issues, repo } = useApp();
+  const { client, act, ask, issues, repo, held } = useApp();
   const convo = useBrainstorm(client, r.id);
   const frame = convo.state === "ready" ? convo.data?.frame : undefined;
   const other = frame?.readings?.find((x) => !(frame.reading_taken ?? "").toLowerCase().includes(x.term.toLowerCase()));
@@ -471,12 +473,13 @@ function Details({ request: r, spent, runs }: { request: Request; spent: number;
             <button
               className="btn"
               type="button"
+              disabled={held(`issue-gone:${r.issue}`)}
               onClick={() => void (async () => {
                 const ok = await ask({ title: `Close #${r.issue}?`, body: "Closing the issue stops the factory working on it.", confirm: "Close it", noText: true });
-                if (ok !== null) await act(() => client.setIssueState(r.issue!, "closed"), `Closed #${r.issue}.`);
+                if (ok !== null) await act(() => client.setIssueState(r.issue!, "closed"), `Closed #${r.issue}.`, `issue-gone:${r.issue}`);
               })()}
             >
-              Close the issue
+              {held(`issue-gone:${r.issue}`) ? "Closing…" : "Close the issue"}
             </button>
           ))}
         {r.open && <DropButton id={r.id} />}

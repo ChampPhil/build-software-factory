@@ -225,6 +225,26 @@ describe("finishRun", () => {
     expect(failures.items[0].text).toContain("no-unused-vars");
   });
 
+  it("a retry pushes to the same PR on every attempt and never opens or closes another (fix 19)", async () => {
+    const failing = [
+      { name: "factory/gate-static", status: "completed", conclusion: "failure", text: "lib/a.ts:3 no-unused-vars" },
+      { name: "factory/gates", status: "completed", conclusion: "failure" },
+    ];
+    const first = fakeGh([failing]);
+    await finishRun({ ...base, gh: first.gh, attempt: 1, pr: 5 });
+    const second = fakeGh([failing]);
+    await finishRun({ ...base, gh: second.gh, attempt: 2, pr: 5 });
+    // Both retries name PR 5, so the builder pushes to it (pr_number != 0 is what turns on push-to-pull-request-branch).
+    expect(first.dispatched).toEqual([{ work_item: WI, attempt: "2", pr_number: "5" }]);
+    expect(second.dispatched).toEqual([{ work_item: WI, attempt: "3", pr_number: "5" }]);
+    // The lifecycle itself opens no pull request and closes none while retrying.
+    for (const calls of [first.sent, second.sent]) {
+      expect(calls.filter((c) => c.method === "POST" && /\/pulls$/.test(c.path))).toEqual([]);
+      expect(calls.filter((c) => c.method === "PATCH" && /\/pulls\/\d+$/.test(c.path) && JSON.stringify(c.body).includes("closed"))).toEqual([]);
+    }
+    expect(JSON.parse(files.get(`work-items/${WI}.json`) ?? "{}").pr ?? 5).toBe(5);
+  });
+
   it("holds a change the sandbox could not judge: no rebuild, no escalation, verified again once the repair lands", async () => {
     files.set(`live/${RUN}.json`, JSON.stringify({ started_at: "2026-11-22T00:00:00.000Z" }));
     files.set("sandbox-reports/abc.json", JSON.stringify({ work_item: WI, reported_at: "2026-11-22T00:10:00.000Z", last_reported_at: "2026-11-22T00:10:00.000Z" }));

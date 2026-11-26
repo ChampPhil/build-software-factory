@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { applySettingsChange, type SettingsOutcome, type Stage } from "@/lib/apply-settings";
 import { SETTINGS, applySettings, changesFrom, describeValue, readSettings, type Setting, type SettingValue } from "@/lib/settings";
+import { saveButtonLabel, saveHint } from "@/lib/save-copy";
 import { GOAL_LANES, liveGoals } from "@/lib/routing";
 import { day, hourLabel, pipeName } from "@/lib/view";
 import type { StandingGoalsFile } from "@/lib/types";
@@ -159,7 +160,7 @@ export function SettingsForm({ yaml, enforcement }: { yaml: string; enforcement:
       {ORDER.filter((id) => !SHARE_IDS.includes(id)).slice(1).map(row)}
       <div className="acts">
         <button className="btn go" type="submit" disabled={pending === 0 || problem !== null || busy}>
-          {pending === 0 ? "No changes" : enforcement === "audit" ? "Open the pull request" : `Save ${pending} ${pending === 1 ? "change" : "changes"}`}
+          {saveButtonLabel(enforcement, pending)}
         </button>
         {pending > 0 && !busy && (
           <button className="btn quiet" type="button" onClick={() => setDraft({ ...current })}>
@@ -173,9 +174,7 @@ export function SettingsForm({ yaml, enforcement }: { yaml: string; enforcement:
               ? problem
               : demo
                 ? "In the demo, saving is refused like every change."
-                : enforcement === "audit"
-                  ? "Saving opens a pull request. On this repository GitHub does not offer required checks (free private plan), so the factory cannot merge it by itself: you merge it. GitHub Pro or a public repository lets the factory merge by itself."
-                  : "Saving opens a pull request that changes the factory's settings and merges it once the policy check passes, usually within a minute."}
+                : saveHint(enforcement)}
         </span>
       </div>
       {outcome !== null && (

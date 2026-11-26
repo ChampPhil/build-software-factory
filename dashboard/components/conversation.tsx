@@ -75,7 +75,7 @@ export function Conversation({ request }: { request: Request }) {
     const turn: Turn = { at: new Date().toISOString(), who: "person", by: "You", text: words.trim(), sending: true };
     setMine((m) => [...m, turn]);
     setText("");
-    const ok = await act(() => client.comment(request.issue!, words.trim()), live ? "Sent. It's reading your answer." : "Sent. Your answer wakes the factory; the next question takes a few minutes.");
+    const ok = await act(() => client.comment(request.issue!, words.trim()), live ? "Sent. It's reading your answer." : "Sent. The factory replies within about 2 minutes.");
     if (!ok) {
       setMine((m) => m.filter((x) => x !== turn));
       setText(words);

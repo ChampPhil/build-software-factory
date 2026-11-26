@@ -60,7 +60,7 @@ function AllRuns() {
 
   const rows: Row[] = [
     ...(live.state === "ready" ? live.data : []).map((l) => ({ id: l.run, work_item: l.work_item, pipeline: l.pipeline, outcome: "running", started_at: l.started_at, duration_sec: null, cost: l.cost_usd_so_far ?? 0, pr: null })),
-    ...(files.state === "ready" ? files.data : []).map((r) => ({ id: r.id, work_item: r.work_item, pipeline: r.pipeline, outcome: r.outcome, started_at: r.started_at, duration_sec: r.duration_sec ?? null, cost: r.cost_usd, pr: r.pr ?? null })),
+    ...(files.state === "ready" ? files.data : []).map((r) => ({ id: r.id, work_item: r.work_item, pipeline: r.pipeline, outcome: r.outcome === "failed" && r.pr != null ? "draft_pr" : r.outcome, started_at: r.started_at, duration_sec: r.duration_sec ?? null, cost: r.cost_usd, pr: r.pr ?? null })),
   ];
   const fits = FILTERS.find((f) => f.id === filter)!.fits;
   const shown = rows.filter((r) => fits(r.outcome));
@@ -105,7 +105,7 @@ function AllRuns() {
                   </small>
                 </span>
                 <span role="cell">
-                  <OutcomeBadge outcome={r.outcome === "failed" && r.pr !== null ? "draft_pr" : r.outcome} />
+                  <OutcomeBadge outcome={r.outcome} pr={r.pr} />
                 </span>
                 <span role="cell">{pipeName(r.pipeline)}</span>
                 <span role="cell">{ago(r.started_at)}</span>
@@ -198,7 +198,7 @@ function OneRun({ id }: { id: string }) {
       <Link className="back" href="/runs/">All runs</Link>
       <header className="req-head">
         <div className="where">
-          <OutcomeBadge outcome={r?.outcome ?? "running"} />
+          <OutcomeBadge outcome={r?.outcome ?? "running"} pr={r?.pr} />
           <span>{pipeName(r?.pipeline ?? going?.pipeline)}</span>
           <span>{id}</span>
         </div>

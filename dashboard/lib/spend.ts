@@ -1,4 +1,5 @@
-import type { RunFile } from "./types";
+import { SHARE_OF, type ShareUse } from "./metrics";
+import type { Pipeline, RunFile } from "./types";
 
 /** One step record the runner writes at `steps/<run>/<role>-<attempt>.json`. */
 export interface StepRecord {
@@ -46,4 +47,27 @@ export function medianRequestToPr(runs: readonly Pick<RunFile, "started_at" | "e
 export function outcomeLabel(run: Pick<RunFile, "outcome" | "pr">, fallback: string): string {
   if (run.pr !== null && run.pr !== undefined) return `Opened PR #${run.pr}`;
   return fallback;
+}
+
+/**
+ * What each share of the budget spent this month, from the step records: every
+ * step is charged to the share of the pipeline its run belongs to. A step whose
+ * run is not known (older than the runs read) is left out rather than guessed.
+ */
+export function spentByShare(
+  steps: readonly StepRecord[],
+  pipelineOfRun: Readonly<Record<string, Pipeline>>,
+  month: string,
+): Record<ShareUse["share"], number> {
+  const out: Record<ShareUse["share"], number> = { product_work: 0, gardening: 0, review_and_benchmarks: 0 };
+  for (const s of steps) {
+    if (monthOf(s.at) !== month) continue;
+    const pipeline = pipelineOfRun[s.run_id];
+    if (pipeline === undefined) continue;
+    const share = SHARE_OF[pipeline];
+    if (share === undefined) continue;
+    out[share] += s.cost_usd ?? 0;
+  }
+  for (const k of Object.keys(out) as ShareUse["share"][]) out[k] = Math.round(out[k] * 100) / 100;
+  return out;
 }

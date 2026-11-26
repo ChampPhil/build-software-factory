@@ -27,3 +27,24 @@ describe("request to PR and outcome", () => {
     expect(outcomeLabel({ outcome: "failed", pr: null }, "Failed")).toBe("Failed");
   });
 });
+
+import { spentByShare } from "../lib/spend";
+describe("spend by share", () => {
+  it("charges each step to the share of its run's pipeline", () => {
+    const steps = [
+      { role: "b", run_id: "r1", at: "2026-11-02T00:00:00Z", cost_usd: 2 },
+      { role: "g", run_id: "r2", at: "2026-11-03T00:00:00Z", cost_usd: 1.5 },
+      { role: "h", run_id: "r3", at: "2026-11-03T00:00:00Z", cost_usd: 0.5 },
+      { role: "x", run_id: "unknown", at: "2026-11-03T00:00:00Z", cost_usd: 9 },
+      { role: "old", run_id: "r1", at: "2026-10-03T00:00:00Z", cost_usd: 9 },
+    ];
+    const out = spentByShare(steps, { r1: "product_work", r2: "gardening", r3: "hardening" }, "2026-11");
+    expect(out).toEqual({ product_work: 2, gardening: 2, review_and_benchmarks: 0 });
+  });
+});
+
+describe("outcome label rule used by the badge", () => {
+  it("is Opened PR #N for any run with a PR whose outcome is failed or draft_pr", () => {
+    expect(outcomeLabel({ outcome: "draft_pr", pr: 12 }, "Opened a PR")).toBe("Opened PR #12");
+  });
+});

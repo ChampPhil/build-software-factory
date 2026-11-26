@@ -73,12 +73,12 @@ export function statusLabel(
  * the factory's health, not a request: it must not appear among requests or
  * questions, and a person must never be offered "Let the factory start it".
  */
-export function isGhAwIssue(i: { readonly title: string; readonly labels: readonly { readonly name: string }[] }): boolean {
-  return i.labels.some((l) => l.name === "agentic-workflows") || i.title.startsWith("[aw] ");
+export function isGhAwIssue(i: { readonly title: string; readonly labels: readonly { readonly name: string }[]; readonly body?: string | null }): boolean {
+  return i.labels.some((l) => l.name === "agentic-workflows") || i.title.startsWith("[aw] ") || (i.body ?? "").includes("gh-aw-agentic-workflow");
 }
 
 /** Issues the factory itself raised about its own health: gh-aw failures and factory_health items. */
-export function isFactoryHealthIssue(i: { readonly title: string; readonly labels: readonly { readonly name: string }[] }): boolean {
+export function isFactoryHealthIssue(i: { readonly title: string; readonly labels: readonly { readonly name: string }[]; readonly body?: string | null }): boolean {
   return isGhAwIssue(i) || i.labels.some((l) => l.name === "factory:health");
 }
 

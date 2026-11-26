@@ -152,6 +152,7 @@ pre-agent-steps:
       echo "BSF_TRUSTED_ROOT=$RUNNER_TEMP/bsf-trusted" >> "$GITHUB_ENV"
       rm -rf .factory-trusted
       echo "$RUNNER_TEMP/bsf" >> "$GITHUB_PATH"
+      chmod +x "$RUNNER_TEMP/bsf/"*
       "$RUNNER_TEMP/bsf/bsf" --version
   # The conventions this repository writes down for agents: AGENTS.md,
   # CLAUDE.md, .claude/skills/ and anything policy.yaml declares. Resolved on
@@ -408,6 +409,14 @@ recorded. That is deliberate: when this was a line asking you to "also
 comment", the comment was the half that went missing whenever a run ended
 early, and the person who filed the request got an acknowledgement followed by
 permanent silence. Write the file; the factory does the talking.
+
+**Always end the run the same way.** After you have written `triage.json`, call
+the `noop` safe output with one line saying what you decided, even when there is
+nothing else for you to hand over. A run that writes its file and then ends with
+no safe output is reported by gh-aw as a failure, and the factory has no way to
+tell that from a run that crashed. The file is what the factory reads; the noop
+is only how you tell gh-aw that finishing without a comment or label was
+deliberate.
 
 When the work item's `source.ref` is null the request came from the dashboard
 and has no thread; your `reason` is the answer, and the dashboard shows it.

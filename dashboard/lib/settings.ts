@@ -153,3 +153,15 @@ export function describeValue(s: Setting, v: SettingValue): string {
   if (s.unit === "utc_hour") return `${String(v).padStart(2, "0")}:00 UTC`;
   return String(v);
 }
+
+/**
+ * What setup recorded about enforcement in factory.yaml (`enforcement.branch_protection`),
+ * for the first load, before a rollup has written `health.enforcement`.
+ * "off" means the plan cannot require checks; "auto" means setup has not decided.
+ */
+export function storedEnforcement(yaml: string | null | undefined): "branch_protection" | "audit" | null {
+  const m = /^enforcement:\s*\n(?:[ \t]+.*\n)*?[ \t]+branch_protection:[ \t]*(\w+)/m.exec(yaml ?? "");
+  if (m?.[1] === "on") return "branch_protection";
+  if (m?.[1] === "off") return "audit";
+  return null;
+}

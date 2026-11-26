@@ -190,3 +190,10 @@ describe("needs you includes unanswered asks", () => {
     expect(answered).toHaveLength(0);
   });
 });
+
+describe("gh-aw issues are recognised by their body too", () => {
+  it("drops an issue whose body carries the gh-aw marker, whatever its title and labels", () => {
+    expect(isGhAwIssue({ title: "Workflow failed", labels: [], body: "x\n<!-- gh-aw-agentic-workflow: triage -->" })).toBe(true);
+    expect(isGhAwIssue({ title: "Workflow failed", labels: [], body: "plain" })).toBe(false);
+  });
+});

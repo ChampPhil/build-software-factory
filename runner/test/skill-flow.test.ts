@@ -75,14 +75,39 @@ describe("closing the setup (fix 18)", () => {
 });
 
 describe("launchers are executable wherever a workflow copies them (fix 13)", () => {
-  it("every plain workflow chmods the copied launchers before first running one", () => {
+  it("every workflow and role prompt chmods the copied launchers before first running one", () => {
     const bad: string[] = [];
-    for (const f of readdirSync(WF).filter((n) => n.endsWith(".yml"))) {
+    for (const f of readdirSync(WF).filter((n) => n.endsWith(".yml") || n.endsWith(".md"))) {
       const lines = readFileSync(join(WF, f), "utf8").split("\n");
       lines.forEach((l, i) => {
         if (l.includes('"$RUNNER_TEMP/bsf/bsf" --version') && !(lines[i - 1] ?? "").includes('chmod +x "$RUNNER_TEMP/bsf/"*')) bad.push(`${f}:${i + 1}`);
       });
     }
     expect(bad).toEqual([]);
+  });
+});
+
+describe("the triage role always ends its run with a noop (fix 22)", () => {
+  it("tells the agent to call noop after writing its outcome file", () => {
+    const text = readFileSync(join(WF, "factory-role-triage.md"), "utf8");
+    expect(text).toContain("Always end the run the same way");
+    expect(text).toContain("`noop` safe output");
+  });
+});
+
+describe("a held brainstorm never keeps a runner open past ten minutes (fix 22)", () => {
+  it("the brainstorm role's timeout is ten minutes", () => {
+    const text = readFileSync(join(WF, "factory-role-brainstorm.md"), "utf8");
+    expect(/^timeout-minutes: 10$/m.test(text)).toBe(true);
+  });
+});
+
+describe("only the first attempt may open a pull request (fix 19)", () => {
+  it("factory-run hands the builder the existing PR number, and the builder pushes to it", () => {
+    const run = readFileSync(join(WF, "factory-run.yml"), "utf8");
+    expect(run).toContain("pr_number: ${{ fromJSON(inputs.reason == 'conflict' && '0' || inputs.pr_number) }}");
+    const builder = readFileSync(join(WF, "factory-role-builder.md"), "utf8");
+    expect(builder).toContain("Attempt 1 opens the draft PR; later attempts push to its branch.");
+    expect(builder).toContain("target: ${{ inputs.pr_number }}");
   });
 });

@@ -21,7 +21,7 @@ const METHOD_WORDS: Record<Method, string> = { squash: "Squash and merge", merge
  * merge bar stays at the bottom of the screen the whole way down.
  */
 export function PullPane({ number, workItem }: { number: number; workItem: string | null }) {
-  const { client, repo, act, ask, version } = useApp();
+  const { client, repo, act, ask, version, held } = useApp();
   const pr = usePull(client, number, version);
   const files = usePullFiles(client, number, version);
   const sha = pr.state === "ready" && pr.data !== null ? pr.data.head.sha : null;
@@ -43,7 +43,7 @@ export function PullPane({ number, workItem }: { number: number; workItem: strin
   const running = checks.state === "ready" ? checks.data.filter((c) => c.status !== "completed") : [];
 
   const merge = async (): Promise<void> => {
-    await act(() => client.mergePull(number, method), `Merged #${number}. The request closes and its branch goes.`);
+    await act(() => client.mergePull(number, method), `Merged #${number}. The request closes and its branch goes.`, `pr-gone:${number}`);
   };
   const requestChanges = async (): Promise<void> => {
     const words = await ask({ title: `Request changes on #${number}`, body: "Say what's wrong. The factory reads this as a correction and tries again; it also holds the pull request from merging itself.", placeholder: "What should change", confirm: "Request changes" });
@@ -51,7 +51,7 @@ export function PullPane({ number, workItem }: { number: number; workItem: strin
   };
   const close = async (): Promise<void> => {
     const ok = await ask({ title: `Close #${number} without merging?`, body: "The branch stays, and you can reopen it on GitHub. The request goes back to the factory, which won't try this attempt again.", confirm: "Close it", noText: true, danger: true });
-    if (ok !== null) await act(() => client.closePull(number), `Closed #${number} without merging.`);
+    if (ok !== null) await act(() => client.closePull(number), `Closed #${number} without merging.`, `pr-gone:${number}`);
   };
   const approve = async (): Promise<void> => {
     await act(() => client.approvePull(number), `Approved #${number}.`);
@@ -204,7 +204,7 @@ export function PullPane({ number, workItem }: { number: number; workItem: strin
               Approve
             </button>
             <span className="split">
-              <button className="btn go" type="button" disabled={p.draft} onClick={() => void merge()}>
+              <button className="btn go" type="button" disabled={p.draft || held(`pr-gone:${number}`)} onClick={() => void merge()}>
                 {METHOD_WORDS[method]}
               </button>
               <select aria-label="How to merge" value={method} onChange={(e) => setMethod(e.target.value as Method)}>

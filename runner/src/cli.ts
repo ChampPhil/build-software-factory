@@ -297,6 +297,7 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
       practices.md, and a rule where one can enforce it. Same as commenting
       /practice TEXT on any issue or PR.
   bsf sandbox ui-paths [--file PATH]   (record which files are the UI)
+  bsf enforcement detect [--file PATH] (record whether this repo can require checks)
   bsf sandbox scrub [--file PATH]   (replace secret-shaped placeholder values)
   bsf sandbox dry-run   (start the sandbox and serve the app, as the checker will)
   bsf sandbox start
@@ -508,6 +509,20 @@ async function main(argv: readonly string[]): Promise<number> {
 
     case "sync-settings":
       return syncCommand(args);
+
+    case "enforcement": {
+      // `bsf enforcement detect [--file PATH]`: write what this repo can enforce
+      // into factory.yaml, so the dashboard knows before the first rollup.
+      if (second !== "detect") die("usage: bsf enforcement detect [--file PATH]");
+      const file = typeof args["file"] === "string" ? args["file"] : ".factory/definition/factory.yaml";
+      if (!existsSync(file)) die(`${file} does not exist`);
+      const gh = new GitHub({ repo: requireRepo() });
+      const { detectEnforcement, withBranchProtection } = await import("./lib/enforcement.js");
+      const value = await detectEnforcement(gh, await gh.defaultBranch());
+      writeFileSync(file, withBranchProtection(readFileSync(file, "utf8"), value));
+      process.stdout.write(`enforcement: branch_protection ${value}${value === "off" ? " (this plan cannot require checks; the factory audits instead)" : ""}\n`);
+      return 0;
+    }
 
     case "attribution":
       // One place for the credit line, so every surface that shows it — the

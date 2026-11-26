@@ -52,3 +52,14 @@ describe("the controls' view of settings", () => {
     expect(dash.describeValue(by("gardening_prs"), null)).toBe("not set");
   });
 });
+
+import { storedEnforcement } from "../lib/settings";
+describe("enforcement recorded at setup", () => {
+  const yaml = (v: string) => `a: 1\nenforcement:\n  merge_queue: auto\n  branch_protection: ${v}\n`;
+  it("off is audit, on is branch protection, auto is unknown", () => {
+    expect(storedEnforcement(yaml("off"))).toBe("audit");
+    expect(storedEnforcement(yaml("on"))).toBe("branch_protection");
+    expect(storedEnforcement(yaml("auto"))).toBeNull();
+    expect(storedEnforcement(null)).toBeNull();
+  });
+});

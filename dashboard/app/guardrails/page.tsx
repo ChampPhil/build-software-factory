@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { useCorrections, useImprovement } from "@/lib/data";
+import { useCorrections, useImprovement, useRunFiles } from "@/lib/data";
+import { reviewDueNow, reviewInputFrom } from "@/lib/review-due";
 import { quoteOf, sourceLink, whereOf } from "@/lib/corrections";
 import { day, pct, plural } from "@/lib/view";
 import type { ReviewFile } from "@/lib/types";
@@ -23,9 +24,11 @@ const FIX: Readonly<Record<string, string>> = {
  * loosen one needs a person to approve it.
  */
 export default function Guardrails() {
-  const { client, guardrails, ledger, act, installed, compose, demo } = useApp();
+  const { client, guardrails, ledger, act, installed, compose, demo, index } = useApp();
   const corrections = useCorrections(client, ledger.state === "ready" ? ledger.data : null);
   const improvement = useImprovement(client);
+  const recent = index.state === "ready" ? (index.data?.recent_runs ?? []) : [];
+  const runFiles = useRunFiles(client, recent.slice(0, 60));
 
   if (guardrails.state === "loading") return <Page><Loading what="the guardrails" /></Page>;
   if (guardrails.state === "error") return <Page><Problem error={guardrails.error} retry={guardrails.retry} /></Page>;
@@ -37,6 +40,10 @@ export default function Guardrails() {
   const rules = Object.entries(baselines?.rules ?? {}).sort((a, b) => Number(a[1].retired === true) - Number(b[1].retired === true) || b[1].count - a[1].count);
   const reviews = improvement.state === "ready" ? improvement.data.reviews : [];
   const latest: ReviewFile | undefined = reviews[0];
+  const due =
+    runFiles.state === "ready" && improvement.state === "ready"
+      ? reviewDueNow(reviewInputFrom(runFiles.data, latest?.window.to ?? null, new Date().toISOString()))
+      : null;
 
   return (
     <Page>
@@ -132,8 +139,10 @@ export default function Guardrails() {
             <h2 className="sect">The factory&rsquo;s self-review</h2>
             {improvement.state === "loading" && <Loading what="the reviews" />}
             {latest === undefined && improvement.state === "ready" && <p className="muted">No review yet. The factory grades its own recent work every few days.</p>}
-            {latest !== undefined && Date.now() - Date.parse(latest.window.to) < 3 * 86_400_000 && (
-              <p className="muted small">The last review is from {day(latest.window.to)}. The factory skips a scheduled review that is not due yet; Run a review now always starts one.</p>
+            {due !== null && (
+              <p className="muted small">
+                {due.due ? "A review is due now and the scheduled run will start one" : "No review is due yet; the scheduled run skips itself"}: {due.reason}. Run a review now always starts one.
+              </p>
             )}
             {latest !== undefined && <Review review={latest} onAsk={(title) => compose({ title, details: "", goal: "", kind: "harden" })} />}
             <div className="acts">

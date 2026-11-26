@@ -3,11 +3,11 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { useRunFiles, useStepRecords, useWorkItems } from "@/lib/data";
-import { medianRequestToPr, minutesFromSteps, spendFromSteps } from "@/lib/spend";
+import { medianRequestToPr, minutesFromSteps, spendFromSteps, spentByShare } from "@/lib/spend";
 import { projectToMonthEnd, shareUse } from "@/lib/metrics";
 import { readSettings } from "@/lib/settings";
 import { day, dur, outcomeName, pct, pipeName, plural, titleOf, usd } from "@/lib/view";
-import type { DailyPoint } from "@/lib/types";
+import type { DailyPoint, Pipeline } from "@/lib/types";
 import { useApp } from "@/components/app";
 import { Bar, Loading, Problem } from "@/components/ui";
 import { EmptyFactoryNote } from "@/components/empty-factory";
@@ -18,7 +18,7 @@ const SHARE_NAME: Readonly<Record<string, string>> = { product_work: "Product wo
 export default function Spend() {
   const { client, index, settings, installed } = useApp();
   const ids = index.state === "ready" ? (index.data?.recent_runs ?? []) : [];
-  const runs = useRunFiles(client, ids.slice(0, 40));
+  const runs = useRunFiles(client, ids.slice(0, 60));
   const top = runs.state === "ready" ? [...runs.data].sort((a, b) => b.cost_usd - a.cost_usd).slice(0, 6) : [];
   const steps = useStepRecords(client, ids.slice(0, 60));
   const docs = useWorkItems(client, top.map((r) => r.work_item));
@@ -48,7 +48,10 @@ export default function Spend() {
   const read = settings.state === "ready" && settings.data !== null ? readSettings(settings.data) : null;
   const num = (k: string): number => (typeof read?.[k] === "number" ? read[k] : 0);
   const monthly = typeof read?.["monthly_budget"] === "number" ? read["monthly_budget"] : budget;
-  const shares = read === null ? [] : shareUse({ ...data, metrics: { ...data.metrics, budget_usd: monthly } }, { product_work: num("share_product_work"), gardening: num("share_gardening"), review_and_benchmarks: num("share_review") });
+  const pipelineOfRun: Record<string, Pipeline> = {};
+  if (runs.state === "ready") for (const r of runs.data) pipelineOfRun[r.id] = r.pipeline;
+  const stepSpend = steps.state === "ready" && steps.data.length > 0 ? spentByShare(steps.data, pipelineOfRun, month) : undefined;
+  const shares = read === null ? [] : shareUse({ ...data, metrics: { ...data.metrics, budget_usd: monthly } }, { product_work: num("share_product_work"), gardening: num("share_gardening"), review_and_benchmarks: num("share_review") }, stepSpend);
   const merged = m.merged ?? 0;
   const clean = m.automation_rate === undefined ? null : Math.round(merged * m.automation_rate);
 

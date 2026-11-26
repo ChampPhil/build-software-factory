@@ -114,7 +114,10 @@ sandbox:
     mounts:
       - ${{ github.workspace }}:/workspace:rw
 
-timeout-minutes: 25
+# Ten minutes, the most a held conversation may keep a runner open. `wait` gives
+# up after five quiet minutes by itself; this is the hard stop behind it, and
+# the conversation resumes from its saved log on the person's next comment.
+timeout-minutes: 10
 # A ceiling per run, in gh-aw AI credits (1 credit = $0.01). A normal run is
 # well under it; it stops a runaway before it costs a week's budget.
 # A conversation is cheap: a question and a reply, several times over. Well
@@ -186,6 +189,7 @@ pre-agent-steps:
       echo "BSF_TRUSTED_ROOT=$RUNNER_TEMP/bsf-trusted" >> "$GITHUB_ENV"
       rm -rf .factory-trusted
       echo "$RUNNER_TEMP/bsf" >> "$GITHUB_PATH"
+      chmod +x "$RUNNER_TEMP/bsf/"*
       "$RUNNER_TEMP/bsf/bsf" --version
   # The conventions this repository writes down for agents: AGENTS.md,
   # CLAUDE.md, .claude/skills/ and anything policy.yaml declares. Resolved on

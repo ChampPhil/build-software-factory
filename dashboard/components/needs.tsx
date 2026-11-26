@@ -93,7 +93,7 @@ function QuestionCard({ id, issue, title, since }: { id: string; issue: number |
         <p className="muted">This came from somewhere without an issue, so there&rsquo;s nowhere to answer it. Send it again as a new request.</p>
       ) : sent ? (
         <p className="listening">
-          <Check /> Sent. {live ? "It's reading your answer now." : "Your answer wakes the factory; the next question takes a few minutes."}{" "}
+          <Check /> Sent. {live ? "It's reading your answer now." : "The factory replies within about 2 minutes."}{" "}
           <Link href={requestHref(id, "talk")}>Carry on the conversation</Link>
         </p>
       ) : (
@@ -103,7 +103,8 @@ function QuestionCard({ id, issue, title, since }: { id: string; issue: number |
             e.preventDefault();
             const words = text.trim();
             if (words === "") return;
-            void act(() => client.comment(issue, words), `Answered on #${issue}.`).then((ok) => ok && setSent(true));
+            setSent(true);
+            void act(() => client.comment(issue, words), `Answered on #${issue}.`, `answered:${id}`).then((ok) => { if (!ok) setSent(false); });
           }}
         >
           <textarea className="field" rows={1} value={text} aria-label={`Your answer to ${title}`} placeholder="Answer here, or on the issue" onChange={(e) => { setText(e.target.value); autoGrow(e.target); }} />
@@ -130,8 +131,8 @@ function QuestionCard({ id, issue, title, since }: { id: string; issue: number |
 }
 
 function ReviewCard({ number, workItem, title, sha, opened, cost }: { number: number; workItem: string | null; title: string; sha: string; opened: string; cost: number | null }) {
-  const { client, act, ask, version } = useApp();
-  const [gone, setGone] = useState(false);
+  const { client, act, ask, version, held } = useApp();
+  const gone = held(`pr-gone:${number}`);
   const pr = usePull(client, number, version);
   const checks = useCheckRuns(client, sha);
   const report = useVerifierReport(client, workItem);
@@ -172,7 +173,7 @@ function ReviewCard({ number, workItem, title, sha, opened, cost }: { number: nu
           <button
             className="btn go"
             type="button"
-            onClick={() => void act(() => client.mergePull(number, "squash"), `Merged #${number}. The request closes and its branch goes.`, { apply: () => setGone(true), rollback: () => setGone(false) })}
+            onClick={() => void act(() => client.mergePull(number, "squash"), `Merged #${number}. The request closes and its branch goes.`, `pr-gone:${number}`)}
           >
             Merge #{number}
           </button>
@@ -212,9 +213,10 @@ function ReviewCard({ number, workItem, title, sha, opened, cost }: { number: nu
 }
 
 function PracticeCard({ number, title, opened }: { number: number; title: string; opened: string }) {
-  const { client, act, ask, version } = useApp();
+  const { client, act, ask, version, held } = useApp();
   const pr = usePull(client, number, version);
   const summary = pr.state === "ready" && pr.data !== null ? summaryOf(pr.data.body, 3) : [];
+  if (held(`pr-gone:${number}`)) return null;
   return (
     <article className="item">
       <div className="where">
@@ -225,7 +227,7 @@ function PracticeCard({ number, title, opened }: { number: number; title: string
       <h3>{cap(title.replace(/^Practice:\s*/i, ""))}</h3>
       {summary.length > 0 ? <p className="voice small">{summary.join(" ")}</p> : <p className="muted small">A standing instruction someone declared with /practice. Every agent follows it once it is merged.</p>}
       <div className="acts">
-        <button className="btn" type="button" onClick={() => void act(() => client.mergePull(number, "squash"), "Adopted. Every agent follows it from the next run.")}>
+        <button className="btn" type="button" onClick={() => void act(() => client.mergePull(number, "squash"), "Adopted. Every agent follows it from the next run.", `pr-gone:${number}`)}>
           Adopt it
         </button>
         <button
@@ -233,7 +235,7 @@ function PracticeCard({ number, title, opened }: { number: number; title: string
           type="button"
           onClick={() => void (async () => {
             const ok = await ask({ title: `Turn down #${number}?`, body: "The pull request closes. Nothing changes for the agents.", confirm: "Turn it down", noText: true });
-            if (ok !== null) await act(() => client.closePull(number), `Closed #${number}.`);
+            if (ok !== null) await act(() => client.closePull(number), `Closed #${number}.`, `pr-gone:${number}`);
           })()}
         >
           Not this one
@@ -298,7 +300,8 @@ function EscalatedCard({ id, title, target, issue, cost, since }: { id: string; 
 }
 
 function TrustCard({ id, number, title, who, since }: { id: string | null; number: number | null; title: string; who: string; since: string | undefined }) {
-  const { client, act, ask } = useApp();
+  const { client, act, ask, held } = useApp();
+  if (number !== null && (held(`issue-gone:${number}`) || held(`issue-accepted:${number}`))) return null;
   return (
     <article className="item">
       <div className="where">
@@ -311,7 +314,7 @@ function TrustCard({ id, number, title, who, since }: { id: string | null; numbe
       <p className="muted">{who} can&rsquo;t start work here, so nothing is spent until one of you says so. Letting it start adds the factory:accept label.</p>
       {number !== null && (
         <div className="acts">
-          <button className="btn" type="button" onClick={() => void act(() => client.addLabels(number, ["factory:accept"]), `#${number} can start. The factory reads it within a minute.`)}>
+          <button className="btn" type="button" onClick={() => void act(() => client.addLabels(number, ["factory:accept"]), `#${number} can start. The factory reads it within a minute.`, `issue-accepted:${number}`)}>
             Let the factory start it
           </button>
           <button
@@ -319,7 +322,7 @@ function TrustCard({ id, number, title, who, since }: { id: string | null; numbe
             type="button"
             onClick={() => void (async () => {
               const ok = await ask({ title: `Close #${number}?`, body: `${who} sees it closed. You can reopen it later.`, confirm: "Close it", noText: true });
-              if (ok !== null) await act(() => client.setIssueState(number, "closed"), `Closed #${number}.`);
+              if (ok !== null) await act(() => client.setIssueState(number, "closed"), `Closed #${number}.`, `issue-gone:${number}`);
             })()}
           >
             Close it
@@ -332,8 +335,9 @@ function TrustCard({ id, number, title, who, since }: { id: string | null; numbe
 }
 
 function CandidateCard({ c }: { c: Extract<Need, { kind: "candidate" }>["candidate"] }) {
-  const { client, act } = useApp();
+  const { client, act, held } = useApp();
   const fix = c.proposed_fix === "static_rule" ? "a lint rule" : c.proposed_fix === "verification" ? "a check in verification" : c.proposed_fix === "api_change" ? "a change that makes the mistake impossible" : "whatever fits best";
+  if (held(`candidate-decided:${c.id}`)) return null;
   return (
     <article className="item">
       <div className="where">
@@ -346,10 +350,10 @@ function CandidateCard({ c }: { c: Extract<Need, { kind: "candidate" }>["candida
       {c.sources[0]?.quote !== undefined && <p className="voice small">&ldquo;{c.sources[0].quote}&rdquo;</p>}
       <p className="muted small">Adding it starts a hardening run that writes {fix}, with an example it must catch.</p>
       <div className="acts">
-        <button className="btn" type="button" onClick={() => void act(() => client.decideCandidate(c.id, "accept"), "Accepted. Hardening starts shortly.")}>
+        <button className="btn" type="button" onClick={() => void act(() => client.decideCandidate(c.id, "accept"), "Accepted. Hardening starts shortly.", `candidate-decided:${c.id}`)}>
           Add the rule
         </button>
-        <button className="btn quiet" type="button" onClick={() => void act(() => client.decideCandidate(c.id, "reject"), "Noted. It won't be proposed again.")}>
+        <button className="btn quiet" type="button" onClick={() => void act(() => client.decideCandidate(c.id, "reject"), "Noted. It won't be proposed again.", `candidate-decided:${c.id}`)}>
           Not a rule
         </button>
       </div>
