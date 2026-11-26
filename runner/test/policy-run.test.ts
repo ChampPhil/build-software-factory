@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gatherPullFacts, pipelineFromLabels, summarize } from "../src/commands/policy-run.js";
@@ -213,7 +213,8 @@ describe("the bsf CLI", () => {
   });
 
   it("prints its version", () => {
-    expect(execFileSync("node", [cli, "version"], { encoding: "utf8" }).trim()).toBe("0.1.0");
+    const pkg = JSON.parse(readFileSync(join(ROOT, "runner/package.json"), "utf8")) as { version: string };
+    expect(execFileSync("node", [cli, "version"], { encoding: "utf8" }).trim()).toBe(pkg.version);
   });
 
   it("lists the schemas it reads and writes", () => {

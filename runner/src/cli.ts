@@ -77,7 +77,7 @@ import { fileURLToPath } from "node:url";
  * and can be tested without a model.
  */
 
-const VERSION = "0.1.0";
+const VERSION = "0.1.1";
 
 const USAGE = `bsf ${VERSION} — Build Software Factory runner
 
