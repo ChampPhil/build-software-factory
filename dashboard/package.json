@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "next build && node scripts/csp-hashes.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "e2e": "node e2e/check-site.mjs"
