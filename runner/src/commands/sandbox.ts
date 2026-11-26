@@ -201,6 +201,15 @@ export interface StartReport {
   readonly envFile: string;
 }
 
+/**
+ * Remove a leftover container of ours by name, so starting is safe to repeat
+ * (setup starts the sandbox for the baseline and again for the dry run).
+ * Nothing to remove is fine.
+ */
+export function clearContainer(name: string): void {
+  spawnSync("docker", ["rm", "-f", name], { stdio: "ignore" });
+}
+
 export async function startSandbox(opts: {
   readonly root: string;
   readonly workspace: string;
@@ -219,6 +228,7 @@ export async function startSandbox(opts: {
   if (missing.length > 0) throw new Error(`the sandbox needs values that are not set: ${missing.join(", ")}`);
 
   for (const svc of m.services) {
+    clearContainer(`bsf-${svc.name}`);
     const args = ["run", "-d", "--rm", "--name", `bsf-${svc.name}`, "-p", `127.0.0.1:${svc.port}:${svc.port}`];
     for (const [k, v] of Object.entries(svc.env ?? {})) args.push("-e", `${k}=${v}`);
     args.push(svc.image);
@@ -406,6 +416,7 @@ export async function trialSandbox(opts: {
     steps.push({ step: "install", command: null, ok: false, exit: null, seconds: 0, tail: `values not set: ${missing.join(", ")}` });
   } else {
     for (const svc of m.services) {
+      clearContainer(`bsf-${svc.name}`);
       const args = ["run", "-d", "--rm", "--name", `bsf-${svc.name}`, "-p", `127.0.0.1:${svc.port}:${svc.port}`];
       for (const [k, v] of Object.entries(svc.env ?? {})) args.push("-e", `${k}=${v}`);
       args.push(svc.image);
