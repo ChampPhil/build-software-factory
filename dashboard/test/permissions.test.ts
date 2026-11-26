@@ -44,8 +44,8 @@ describe("the prefilled token link", () => {
     expect(url.searchParams.get("description")!.length).toBeLessThanOrEqual(1024);
   });
 
-  it("asks for nothing it does not use: no administration, no secrets", () => {
-    for (const k of ["administration", "secrets", "environments", "pages", "security_events"]) {
+  it("asks for nothing it does not use: no administration, no secrets, no Checks", () => {
+    for (const k of ["administration", "secrets", "environments", "pages", "security_events", "checks"]) {
       expect(url.searchParams.has(k)).toBe(false);
     }
   });
@@ -113,10 +113,11 @@ describe("checking a token at sign-in", () => {
     if (!result.ok) expect(result.reason).toContain("refused that token");
   });
 
-  it("does not block a repo that has no commits yet", async () => {
-    // GitHub answers the check-runs probe with 404 or 422 when there is nothing to check.
-    const { fetch } = api({ "/check-runs": 422, "repos/owner/name": 200 });
-    expect((await new GitHubClient(auth, fetch).checkAccess()).ok).toBe(true);
+  it("does not call the Checks API, which a fine-grained token cannot be allowed to use", async () => {
+    const { fetch, urls } = api({ "/check-runs": 403, "repos/owner/name": 200 });
+    const result = await new GitHubClient(auth, fetch).checkAccess();
+    expect(result.ok).toBe(true);
+    expect(urls.some((u) => u.includes("check-runs"))).toBe(false);
   });
 });
 

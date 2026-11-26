@@ -1,9 +1,12 @@
 /**
- * What the dashboard needs from a token, in the words a person sees.
+ * What the dashboard needs from a sign-in, in the words a person sees.
  *
- * One list drives three things, so they cannot drift apart: the link that
- * opens GitHub's token form already filled in, the probes run at sign-in, and
- * the message shown when a request is refused later.
+ * A fine-grained personal access token and a GitHub App are not given the
+ * same permissions. GitHub's token form has no Checks row, and a fine-grained
+ * token is refused by the Checks API no matter which boxes are ticked.
+ * `PERMISSIONS` is what that form can actually grant. `APP_PERMISSIONS` is
+ * what "Sign in with GitHub" asks for: the same list, plus Checks, which only
+ * the app can hold.
  */
 
 export interface PermissionNeed {
@@ -22,9 +25,26 @@ export const PERMISSIONS: readonly PermissionNeed[] = [
   { key: "issues", label: "Issues", level: "write", why: "send requests and answer questions" },
   { key: "actions", label: "Actions", level: "write", why: "hand your decisions to the factory" },
   { key: "workflows", label: "Workflows", level: "write", why: "move the nightly cleanup time" },
-  { key: "checks", label: "Checks", level: "read", why: "see whether the factory's own check passed" },
   { key: "metadata", label: "Metadata", level: "read", why: "see the repository (GitHub always adds this)" },
 ];
+
+/**
+ * Checks, which a GitHub App can be given and a fine-grained token cannot.
+ *
+ * key: GitHub's permission name on an app registration.
+ * label: the word a person would look for. It is absent from the token form.
+ * level: read. The dashboard only looks at results. It does not create them.
+ * why: what the read is for.
+ */
+const CHECKS: PermissionNeed = {
+  key: "checks",
+  label: "Checks",
+  level: "read",
+  why: "see whether the factory's own check passed",
+};
+
+/** What the dashboard's GitHub App asks for. Includes Checks; the token form does not. */
+export const APP_PERMISSIONS: readonly PermissionNeed[] = [...PERMISSIONS, CHECKS];
 
 export const TOKEN_NAME = "Software Factory dashboard";
 
@@ -74,7 +94,7 @@ export function missingPermissionSentence(missing: readonly { readonly label: st
 }
 
 function need(key: string): PermissionNeed {
-  const found = PERMISSIONS.find((p) => p.key === key);
+  const found = APP_PERMISSIONS.find((p) => p.key === key);
   if (found === undefined) throw new Error(`unknown permission ${key}`);
   return found;
 }
@@ -98,7 +118,14 @@ export function permissionForRequest(method: string, path: string): PermissionNe
   return null;
 }
 
-/** A sentence naming what to change, for a request that was refused. */
+/**
+ * A sentence naming what to change, for a request that was refused.
+ *
+ * perm: the permission the refused request needed.
+ */
 export function missingPermissionMessage(perm: PermissionNeed): string {
+  if (perm.key === "checks") {
+    return "A fine-grained token cannot read GitHub check results. There is no Checks permission to add. Sign in with GitHub, which uses the dashboard's app.";
+  }
   return `This sign-in is not allowed to do that. It needs "${perm.label}: ${levelWords(perm.level)}" (${perm.why}). Add that permission, then sign in again.`;
 }

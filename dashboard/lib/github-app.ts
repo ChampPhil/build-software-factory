@@ -2,16 +2,16 @@
  * The GitHub App that "Sign in with GitHub" signs people in to.
  *
  * It is registered once, by the person who runs the dashboard, from a link
- * that fills in GitHub's registration form. What it asks for comes from the
- * same list as the token form (`permissions.ts`), so the two ways of signing in
- * can never ask for different things.
+ * that fills in GitHub's registration form. It asks for everything the token
+ * form asks for, plus Checks. A fine-grained token cannot be given Checks, and
+ * GitHub refuses the Checks API to those tokens. An app can read check runs.
  *
  * The callback is the site's front page, because that is where the sign-in
  * function sends people back to. Webhooks are off: the dashboard reads GitHub
  * when you look, and nothing needs telling.
  */
 
-import { PERMISSIONS } from "./permissions";
+import { APP_PERMISSIONS } from "./permissions";
 
 export const APP_NAME = "Software Factory Dashboard";
 
@@ -31,6 +31,6 @@ export function appRegistrationLink(origin: string, organization?: string): stri
     request_oauth_on_install: "false",
   });
   params.append("callback_urls[]", `${site.origin}/`);
-  for (const p of PERMISSIONS) params.set(p.key, p.level);
+  for (const p of APP_PERMISSIONS) params.set(p.key, p.level);
   return `${base}?${params.toString()}`;
 }

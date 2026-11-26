@@ -531,12 +531,14 @@ export class GitHubClient {
     if (!repoRes.ok) throw new GitHubHttpError(repoRes.status, base, await repoRes.text(), "GET");
     const repo = (await repoRes.json()) as { permissions?: Record<string, boolean> };
 
+    // Checks is not probed. A fine-grained token has no Checks permission, and
+    // GitHub answers the Checks API with 403 for every one of them. Probing it
+    // here would refuse a token the person cannot fix.
     const probes: readonly (readonly [string, string])[] = [
       ["contents", `${base}/contents`],
       ["pull_requests", `${base}/pulls?per_page=1`],
       ["issues", `${base}/issues?per_page=1`],
       ["actions", `${base}/actions/workflows?per_page=1`],
-      ["checks", `${base}/commits/HEAD/check-runs?per_page=1`],
     ];
     const results = await Promise.all(
       probes.map(async ([key, path]) => [key, (await this.request(path)).status] as const),
