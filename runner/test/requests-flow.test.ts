@@ -12,6 +12,7 @@ vi.mock("../src/lib/store.js", async (orig) => {
   class FactoryStore {
     constructor(_gh: unknown, _ref?: string) {}
     data = {
+      pin: async () => null,
       read: async (p: string) => files.get(p) ?? null,
       readJson: async (p: string) => (files.has(p) ? (JSON.parse(files.get(p)!) as unknown) : null),
       list: async (prefix = "") => [...files.keys()].filter((k) => k.startsWith(prefix)),
@@ -35,7 +36,7 @@ vi.mock("../src/lib/store.js", async (orig) => {
   return { ...real, FactoryStore };
 });
 
-const { runIntakeCommand } = await import("../src/commands/intake-run.js");
+const { runIntakeCommand, recordIntakeCommand } = await import("../src/commands/intake-run.js");
 const { LEDGER, workItemPath } = await import("../src/lib/store.js");
 
 const policy: Policy = {
@@ -48,7 +49,9 @@ const policy: Policy = {
 };
 
 const posted: { path: string; body: string }[] = [];
-function runEvent(eventName: string, payload: unknown, dispatched: string[], now: string) {
+function runEvent(eventName: string, payload: unknown, dispatched: string[], now: string, record: true): Promise<Awaited<ReturnType<typeof recordIntakeCommand>>>;
+function runEvent(eventName: string, payload: unknown, dispatched: string[], now: string, record?: false): ReturnType<typeof runIntakeCommand>;
+function runEvent(eventName: string, payload: unknown, dispatched: string[], now: string, record = false): Promise<unknown> {
   const path = join(mkdtempSync(join(tmpdir(), "bsf-ev-")), "event.json");
   writeFileSync(path, JSON.stringify(payload));
   const gh = {
@@ -58,7 +61,7 @@ function runEvent(eventName: string, payload: unknown, dispatched: string[], now
     dispatchWorkflow: async (_w: string, _r: unknown, inputs: Record<string, string>) => { dispatched.push(inputs["work_item"]!); },
     defaultBranch: async () => "main",
   } as never;
-  return runIntakeCommand({
+  return (record ? recordIntakeCommand : runIntakeCommand)({
     gh, eventName, eventPath: path, now, policy,
     triggers: { issues: true, comments: true, ci_failure_on_main: true, dashboard_dispatch: true },
     maxRuns: 3, runningRuns: 0, setupFinished: true,
@@ -133,5 +136,28 @@ describe("a request, start to finish", () => {
     expect(JSON.parse(files.get(workItemPath("wi_Q"))!).body).toContain("The settings page, please.");
     expect(dispatched).toEqual(["wi_Q"]);
     expect(posted.at(-1)!.body).toContain("answers the question");
+  });
+});
+
+describe("recording an event on its own (fix 4)", () => {
+  it("writes the event down and marks the issue queued, deciding nothing", async () => {
+    emptyFactory();
+    const dispatched: string[] = [];
+    const r = await runEvent("issues", opened("### What do you want?\n\nExport"), dispatched, "2026-11-22T10:00:00Z", true);
+    expect(r.recorded).toBe(true);
+    expect(r.event).not.toBeNull();
+    expect([...files.keys()].some((k) => k.startsWith("work-items/"))).toBe(false);
+    expect(dispatched).toHaveLength(0);
+    expect(posted.map((p) => p.path)).toEqual(["repos/o/r/issues/9/labels"]);
+  });
+
+  it("recording twice, then processing, still makes one work item", async () => {
+    emptyFactory();
+    const ev = opened("### What do you want?\n\nExport");
+    await runEvent("issues", ev, [], "2026-11-22T10:00:00Z", true);
+    await runEvent("issues", ev, [], "2026-11-22T10:00:00Z", true);
+    const dispatched: string[] = [];
+    await runEvent("issues", ev, dispatched, "2026-11-22T10:00:00Z");
+    expect([...files.keys()].filter((k) => k.startsWith("work-items/"))).toHaveLength(1);
   });
 });

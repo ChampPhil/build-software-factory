@@ -143,3 +143,50 @@ describe("a diff", () => {
     ]);
   });
 });
+
+import { statusLabel as statusLabelFor } from "../lib/view";
+
+describe("statusLabel", () => {
+  const ok = (name: string) => ({ name, status: "completed", conclusion: "success" });
+  it("never says Ready to merge for a draft with a failed gate", () => {
+    const label = statusLabelFor({ status: "in_review" }, { draft: true }, [{ name: "factory/gates", status: "completed", conclusion: "failure" }]);
+    expect(label).not.toContain("Ready to merge");
+    expect(label).toContain("In review");
+  });
+  it("names the failing gate on a non-draft", () => {
+    const label = statusLabelFor({ status: "in_review" }, { draft: false }, [
+      { name: "factory/gates", status: "completed", conclusion: "failure" },
+      ok("factory/verification"),
+    ]);
+    expect(label).toBe("In review: waiting on factory/gates (failure)");
+  });
+  it("waits on a check that has not reported", () => {
+    expect(statusLabelFor({ status: "in_review" }, { draft: false }, [ok("factory/gates")])).toBe("In review: waiting on factory/verification");
+  });
+  it("is ready only when both checks succeeded and it is not a draft", () => {
+    expect(statusLabelFor({ status: "in_review" }, { draft: false }, [ok("factory/gates"), ok("factory/verification")])).toBe("Ready to merge");
+  });
+});
+
+import { isFactoryHealthIssue, isGhAwIssue } from "../lib/view";
+describe("factory health issues", () => {
+  it("recognises gh-aw reports by label or title", () => {
+    expect(isGhAwIssue({ title: "x", labels: [{ name: "agentic-workflows" }] })).toBe(true);
+    expect(isGhAwIssue({ title: "[aw] Triage failed", labels: [] })).toBe(true);
+    expect(isGhAwIssue({ title: "Add CSV export", labels: [{ name: "factory:ask" }] })).toBe(false);
+  });
+  it("treats factory:health as health too", () => {
+    expect(isFactoryHealthIssue({ title: "Spend records disagree", labels: [{ name: "factory:health" }] })).toBe(true);
+  });
+});
+
+import { needsFrom as needsFor } from "../lib/view";
+describe("needs you includes unanswered asks", () => {
+  it("lists a factory:ask issue with no comments and the count matches", () => {
+    const issue = { number: 5, title: "[Settings] x", html_url: "u", created_at: "2026-11-01T00:00:00Z", user: { login: "me" }, labels: [{ name: "factory:ask" }], author_association: "OWNER", comments: 0 };
+    const list = needsFor({ ledger: null, pulls: [], issues: [issue], candidates: [] });
+    expect(list.map((n) => n.kind)).toEqual(["ask"]);
+    const answered = needsFor({ ledger: null, pulls: [], issues: [{ ...issue, comments: 2 }], candidates: [] });
+    expect(answered).toHaveLength(0);
+  });
+});

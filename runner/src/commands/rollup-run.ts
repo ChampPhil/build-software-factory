@@ -85,6 +85,7 @@ export async function readAll(store: FactoryStore): Promise<{
 
 export async function runRollupCommand(opts: RollupOptions): Promise<RollupReport> {
   const store = new FactoryStore(opts.gh);
+  await store.data.pin();
   const { runs, workItems } = await readAll(store);
   const ledger = await store.ledger(opts.now);
 

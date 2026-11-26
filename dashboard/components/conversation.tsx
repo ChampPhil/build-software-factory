@@ -150,7 +150,7 @@ export function Conversation({ request }: { request: Request }) {
             ) : (
               <>
                 <span className="cold-dot" aria-hidden="true" />
-                <span>Not listening right now. Send anyway: your answer wakes the factory, and the next question takes a few minutes.</span>
+                <span>Answer now. The factory replies within about 2 minutes.</span>
               </>
             )}
           </div>

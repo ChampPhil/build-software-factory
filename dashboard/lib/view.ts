@@ -23,7 +23,9 @@ export const pipeName = (p: string | null | undefined): string => (p == null ? "
 export const STATUS: Readonly<Record<string, string>> = {
   queued: "Queued",
   running: "Running",
-  in_review: "Ready to merge",
+  in_review: "In review",
+  in_review_ready: "Ready to merge",
+  in_review_blocked: "In review",
   queued_to_merge: "Merging itself",
   merged: "Merged",
   escalated: "Stuck, needs you",
@@ -34,6 +36,51 @@ export const STATUS: Readonly<Record<string, string>> = {
   closed: "Closed",
 };
 export const statusName = (s: string): string => STATUS[s] ?? s.replace(/_/g, " ");
+
+/** The checks a pull request needs before it is ready to merge. */
+export const REQUIRED_CHECKS: readonly string[] = ["factory/gates", "factory/verification"];
+
+export interface CheckLike {
+  readonly name: string;
+  readonly status: string;
+  readonly conclusion: string | null;
+}
+
+/**
+ * The one place that decides what an in-review pull request is called.
+ * "Ready to merge" only when it is not a draft and both required checks
+ * succeeded; otherwise it names the check it is waiting on.
+ */
+export function statusLabel(
+  item: { readonly status: string },
+  pull: { readonly draft: boolean } | null | undefined,
+  checks: readonly CheckLike[] | null | undefined,
+): string {
+  if (item.status !== "in_review") return statusName(item.status);
+  if (pull == null || checks == null) return "In review";
+  if (pull.draft) return "In review: still a draft";
+  for (const name of REQUIRED_CHECKS) {
+    const c = checks.find((x) => x.name === name);
+    if (c === undefined) return `In review: waiting on ${name}`;
+    if (c.status !== "completed") return `In review: waiting on ${name}`;
+    if (c.conclusion !== "success") return `In review: waiting on ${name} (${(c.conclusion ?? "no result").replace(/_/g, " ")})`;
+  }
+  return "Ready to merge";
+}
+
+/**
+ * An issue the workflow tooling (gh-aw) files about its own failures. It is
+ * the factory's health, not a request: it must not appear among requests or
+ * questions, and a person must never be offered "Let the factory start it".
+ */
+export function isGhAwIssue(i: { readonly title: string; readonly labels: readonly { readonly name: string }[] }): boolean {
+  return i.labels.some((l) => l.name === "agentic-workflows") || i.title.startsWith("[aw] ");
+}
+
+/** Issues the factory itself raised about its own health: gh-aw failures and factory_health items. */
+export function isFactoryHealthIssue(i: { readonly title: string; readonly labels: readonly { readonly name: string }[] }): boolean {
+  return isGhAwIssue(i) || i.labels.some((l) => l.name === "factory:health");
+}
 
 export type Tone = "you" | "stop" | "busy" | "done" | "";
 export function toneOf(status: string): Tone {
@@ -259,6 +306,7 @@ export type Need =
   | { readonly kind: "escalated"; readonly item: LedgerOpenItem; readonly pull: PullSummary | null }
   | { readonly kind: "trust"; readonly item: LedgerOpenItem; readonly issue: number | null }
   | { readonly kind: "outside"; readonly issue: IssueSummary }
+  | { readonly kind: "ask"; readonly issue: IssueSummary }
   | { readonly kind: "candidate"; readonly candidate: CandidatesFile["candidates"][number] };
 
 /**
@@ -305,6 +353,13 @@ export function needsFrom(input: {
     if (isTrusted(issue.author_association) || has(issue.labels, "factory:accept")) continue;
     if (trustIssues.has(issue.number) || known.has(issue.number)) continue;
     out.push({ kind: "outside", issue });
+  }
+  // A question to the factory (factory:ask) that nobody has answered yet is waiting on the factory, but the person
+  // who asked it should see it is still open rather than assume it was handled.
+  for (const issue of input.issues) {
+    if (issue.pull_request !== undefined || !has(issue.labels, "factory:ask")) continue;
+    if ((issue.comments ?? 0) > 0) continue;
+    out.push({ kind: "ask", issue });
   }
   for (const candidate of input.candidates.filter((c) => c.status === "pending")) out.push({ kind: "candidate", candidate });
   return out;
@@ -383,6 +438,12 @@ export function day(iso: string | null | undefined): string {
 export function hourLocal(utcHour: number, ref: Date = new Date()): string {
   const d = new Date(Date.UTC(ref.getUTCFullYear(), ref.getUTCMonth(), ref.getUTCDate(), utcHour));
   return d.toLocaleTimeString("en-US", { hour: "numeric" }).replace(" ", " ").toLowerCase();
+}
+
+/** "1:00 am (06:00 UTC)": the local time first, the UTC hour in the style the workflow file uses. */
+export function hourLabel(utcHour: number, ref: Date = new Date()): string {
+  const local = hourLocal(utcHour, ref).replace(/^(\d+)/, "$1:00");
+  return `${local} (${String(utcHour).padStart(2, "0")}:00 UTC)`;
 }
 
 export const plural = (n: number, one: string, many = `${one}s`): string => `${n.toLocaleString("en-US")} ${n === 1 ? one : many}`;

@@ -6,7 +6,7 @@ import { conversationLive, useBrainstorm, useCheckRuns, useIssueComments, usePul
 import { questionFrom } from "@/lib/questions";
 import { isFrameTurn, plain, questionOf, sentence } from "@/lib/frame";
 import type { Need } from "@/lib/view";
-import { ago, pipeName, summaryOf, usd } from "@/lib/view";
+import { ago, pipeName, statusLabel, summaryOf, usd } from "@/lib/view";
 import { evidenceOf } from "@/lib/evidence";
 import type { IssueSummary } from "@/lib/github";
 import { useApp } from "@/components/app";
@@ -33,6 +33,22 @@ export function NeedCard({ need, title, cost, issues }: { need: Need; title: Tit
     }
     case "outside":
       return <TrustCard id={null} number={need.issue.number} title={need.issue.title} who={need.issue.user?.login ?? "someone"} since={need.issue.created_at} />;
+    case "ask":
+      return (
+        <article className="item">
+          <div className="head">
+            <div className="where">
+              <span className="tag">Asked, no reply yet</span>
+              <span>#{need.issue.number}</span>
+              <span>opened {ago(need.issue.created_at)}</span>
+            </div>
+            <h3>{need.issue.title}</h3>
+          </div>
+          <div className="body">
+            <p className="muted">The factory has not answered this yet. <Out href={need.issue.html_url}>Open it on GitHub</Out></p>
+          </div>
+        </article>
+      );
     case "candidate":
       return <CandidateCard c={need.candidate} />;
   }
@@ -103,7 +119,7 @@ function QuestionCard({ id, issue, title, since }: { id: string; issue: number |
             ) : (
               <>
                 <span className="cold-dot" aria-hidden="true" />
-                Not listening right now. Your answer wakes it; the next question takes a few minutes.
+                Answer now. The factory replies within about 2 minutes.
               </>
             )}
           </span>
@@ -115,6 +131,7 @@ function QuestionCard({ id, issue, title, since }: { id: string; issue: number |
 
 function ReviewCard({ number, workItem, title, sha, opened, cost }: { number: number; workItem: string | null; title: string; sha: string; opened: string; cost: number | null }) {
   const { client, act, ask, version } = useApp();
+  const [gone, setGone] = useState(false);
   const pr = usePull(client, number, version);
   const checks = useCheckRuns(client, sha);
   const report = useVerifierReport(client, workItem);
@@ -125,11 +142,12 @@ function ReviewCard({ number, workItem, title, sha, opened, cost }: { number: nu
   const detail = workItem === null ? null : requestHref(workItem, "pr");
   const issueOf = pr.state === "ready" && pr.data !== null ? /#(\d+)/.exec(pr.data.title)?.[1] : undefined;
 
+  if (gone) return null;
   return (
     <article className="item proof">
       <div className="head">
         <div className="where">
-          <span className="tag">Ready to merge</span>
+          <span className="tag">{statusLabel({ status: "in_review" }, pr.state === "ready" ? pr.data : null, checks.state === "ready" ? checks.data : null)}</span>
           <span>PR #{number}{issueOf !== undefined ? ` for #${issueOf}` : ""}</span>
           <span>opened {ago(opened)}</span>
         </div>
@@ -154,7 +172,7 @@ function ReviewCard({ number, workItem, title, sha, opened, cost }: { number: nu
           <button
             className="btn go"
             type="button"
-            onClick={() => void act(() => client.mergePull(number, "squash"), `Merged #${number}. The request closes and its branch goes.`)}
+            onClick={() => void act(() => client.mergePull(number, "squash"), `Merged #${number}. The request closes and its branch goes.`, { apply: () => setGone(true), rollback: () => setGone(false) })}
           >
             Merge #{number}
           </button>

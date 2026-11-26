@@ -67,8 +67,31 @@ export class DataRefStore implements Loader {
     private readonly ref: string = DATA_REF,
   ) {}
 
+  /**
+   * While pinned, `head()` answers from the commit pinned instead of asking
+   * GitHub, so a command that reads many files (intake, rollup) pays for the
+   * ref lookup once, not once per read (fix 2). A write moves the pin to its
+   * own commit; a write that finds the ref moved re-pins before retrying.
+   */
+  private pinned: string | null | undefined = undefined;
+
+  /** Look the head up once and answer every read from it until `unpin()`. */
+  async pin(): Promise<string | null> {
+    this.pinned = await this.fetchHead();
+    return this.pinned;
+  }
+
+  unpin(): void {
+    this.pinned = undefined;
+  }
+
   /** The commit the ref points at, or null when the ref does not exist yet. */
   async head(): Promise<string | null> {
+    return this.pinned !== undefined ? this.pinned : this.fetchHead();
+  }
+
+  /** Always asks GitHub: the compare-and-swap checks need the real head. */
+  private async fetchHead(): Promise<string | null> {
     try {
       const r = await this.gh.get<RefResponse>(`${this.base}/git/ref/${this.shortRef}`);
       return r.object.sha;
@@ -173,7 +196,7 @@ export class DataRefStore implements Loader {
     // re-reads: a true compare-and-swap. Without it, the head is looked up
     // here, which suits writes merged after the fact (the ledger) but not
     // one computed from a value that may already be stale.
-    const parent = onParent === undefined ? await this.head() : onParent;
+    const parent = onParent === undefined ? await this.fetchHead() : onParent;
 
     const entries: Record<string, unknown>[] = [];
     for (const c of changes) {
@@ -211,9 +234,10 @@ export class DataRefStore implements Loader {
         });
       } catch (err) {
         // Someone else created the ref first: the same race, one step earlier.
-        if ((await this.head()) !== null) throw new RefMoved(this.ref);
+        if ((await this.fetchHead()) !== null) throw new RefMoved(this.ref);
         throw err;
       }
+      if (this.pinned !== undefined) this.pinned = commit.sha;
       return commit.sha;
     }
 
@@ -225,10 +249,11 @@ export class DataRefStore implements Loader {
     } catch (err) {
       // Without force, GitHub rejects an update whose parent is no longer the
       // head. That is the concurrent-write case, not a failure of this write.
-      const current = await this.head();
+      const current = await this.fetchHead();
       if (current !== parent) throw new RefMoved(this.ref);
       throw err;
     }
+    if (this.pinned !== undefined) this.pinned = commit.sha;
     return commit.sha;
   }
 
@@ -245,6 +270,7 @@ export class DataRefStore implements Loader {
       } catch (err) {
         if (!(err instanceof RefMoved)) throw err;
         lastError = err;
+        if (this.pinned !== undefined) this.pinned = await this.fetchHead();
         // Back off a little: concurrent writers are rollup, intake and the
         // end-of-run step, and they finish in well under a second.
         await new Promise((r) => setTimeout(r, 150 * (i + 1)));
@@ -267,7 +293,7 @@ export class DataRefStore implements Loader {
   ): Promise<R> {
     let lastError: unknown;
     for (let i = 0; i < attempts; i++) {
-      const head = await this.head();
+      const head = await this.fetchHead();
       const text = head === null ? null : await this.readAt(head, path);
       const { next, result } = step(text === null ? null : (JSON.parse(text) as T));
       if (next === null) return result;
@@ -306,7 +332,7 @@ export class DataRefStore implements Loader {
     for (const at of this.verifyDelaysMs) {
       await new Promise((r) => setTimeout(r, Math.max(0, at - waited)));
       waited = at;
-      const head = await this.head();
+      const head = await this.fetchHead();
       if (head === null) return true;
       if (head === sha) continue;
       const cmp = await this.gh
@@ -328,7 +354,7 @@ export class DataRefStore implements Loader {
    * descendant of the old head. It is only ever used on the media ref.
    */
   async replaceWith(keep: readonly string[], message: string): Promise<string> {
-    const head = await this.head();
+    const head = await this.fetchHead();
     if (head === null) throw new Error(`${this.ref} does not exist`);
     const tree = await this.treeOf(head);
     const bySha = new Map(tree.tree.filter((e) => e.type === "blob").map((e) => [e.path, e.sha]));

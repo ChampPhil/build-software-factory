@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { validate, type SchemaName } from "../lib/schema.js";
@@ -114,7 +115,43 @@ export function referencedInWorkflows(root: string): {
   };
 }
 
+/**
+ * The launchers under `.factory/bin` that git records without the execute bit.
+ *
+ * A Windows checkout drops modes, so a launcher committed from there is stored
+ * as 100644, and the workflow that copies it onto PATH dies with "permission
+ * denied" on its first line. Reading the committed mode (not the file on disk)
+ * is the only check that matches what Actions will check out. `null` means
+ * this is not a git repo, so there is nothing to say.
+ */
+export function execBitProblems(root: string): string[] | null {
+  let out: string;
+  try {
+    out = execFileSync("git", ["ls-files", "-s", "--", ".factory/bin"], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+  } catch {
+    return null;
+  }
+  const bad: string[] = [];
+  for (const line of out.split("\n")) {
+    const m = /^(\d{6}) \S+ \d\t(.+)$/.exec(line);
+    if (m !== null && m[1] !== "100755" && !m[2]!.endsWith(".cmd")) bad.push(m[2]!);
+  }
+  return bad;
+}
+
+/** Re-commit the modes: stage the bit, which the caller then commits. */
+export function restoreExecBits(root: string, files: readonly string[]): boolean {
+  try {
+    execFileSync("git", ["update-index", "--chmod=+x", "--", ...files], { cwd: root, stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export interface DoctorOptions {
+  /** Stage the execute bit on launchers that lack it, and look again once. */
+  readonly fixModes?: boolean;
   readonly root: string;
   /** Omitted for a local-only check: everything needing the API is skipped. */
   readonly gh?: GitHub;
@@ -143,6 +180,26 @@ export async function runDoctor(opts: DoctorOptions): Promise<DoctorReport> {
       "run the setup skill to install one",
     );
     return { installed: false, findings, checked };
+  }
+
+  /* ----------------------------------------------------------- exec bits */
+
+  did("exec-bits");
+  {
+    let bad = execBitProblems(opts.root);
+    if (bad !== null && bad.length > 0 && opts.fixModes === true) {
+      // One retry: an antivirus scan can hold the index for a moment on Windows.
+      if (!restoreExecBits(opts.root, bad)) restoreExecBits(opts.root, bad);
+      bad = execBitProblems(opts.root);
+    }
+    if (bad !== null && bad.length > 0) {
+      add(
+        "exec-bits",
+        "broken",
+        `${bad.join(", ")} ${bad.length === 1 ? "is" : "are"} committed without the execute bit, so every workflow that runs them fails with "permission denied"`,
+        `run \`bsf doctor --fix-modes\` and commit the change (git update-index --chmod=+x ${bad.join(" ")})`,
+      );
+    }
   }
 
   /* ---------------------------------------------------------- the definition */

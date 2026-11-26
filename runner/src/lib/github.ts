@@ -10,6 +10,12 @@ import { spawn } from "node:child_process";
  * went out empty, `reportCheck` included, which is how every gate tells
  * GitHub its verdict. A cast on the options object had hidden the type error.
  */
+let apiCalls = 0;
+/** How many `gh` calls this process has made, for the "api calls" line (fix 2). */
+export function apiCallCount(): number {
+  return apiCalls;
+}
+
 function execWithInput(
   file: string,
   args: readonly string[],
@@ -22,6 +28,7 @@ function execWithInput(
     readonly timeoutMs?: number;
   },
 ): Promise<{ stdout: string }> {
+  if (file === "gh") apiCalls++;
   return new Promise((resolve, reject) => {
     const child = spawn(file, [...args], { env: opts.env, stdio: ["pipe", "pipe", "pipe"] });
     // A child that waits on stdin forever would hold a workflow job open
@@ -442,4 +449,17 @@ export async function effectiveAssociation(
   } catch {
     return association;
   }
+}
+
+
+/**
+ * Close a factory PR and say why first. Every path that closes one goes
+ * through here, so nobody finds a PR gone with no explanation.
+ */
+export async function closePullWithReason(gh: GitHub, pr: number, text: string): Promise<boolean> {
+  await gh.send("POST", `repos/${gh.repo}/issues/${pr}/comments`, { body: text }).catch(() => undefined);
+  return gh.send("PATCH", `repos/${gh.repo}/pulls/${pr}`, { state: "closed" }).then(
+    () => true,
+    () => false,
+  );
 }

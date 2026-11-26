@@ -115,6 +115,17 @@ export class GitHubClient {
     return res;
   }
 
+  /**
+   * Whether the factory's data ref moved since `etag`. A 304 costs no rate limit,
+   * so this is cheap enough to ask every few seconds while the page is visible.
+   */
+  async dataRefChanged(etag: string | null): Promise<{ readonly changed: boolean; readonly etag: string | null }> {
+    const res = await this.request(`repos/${this.auth.repo}/git/ref/factory/data`, etag === null ? {} : { headers: { "if-none-match": etag } });
+    if (res.status === 304) return { changed: false, etag };
+    if (!res.ok) return { changed: false, etag };
+    return { changed: etag !== null, etag: res.headers.get("etag") };
+  }
+
   async get<T>(path: string): Promise<T> {
     const res = await this.request(path);
     if (!res.ok) throw new GitHubHttpError(res.status, path, await res.text(), "GET");
@@ -380,7 +391,24 @@ export class GitHubClient {
     await this.dispatchWorkflow("factory-run.yml", await this.defaultBranch(), { work_item: workItem });
   }
 
-  /** Run one of the factory's workflows that needs no input, now, on the default branch. */
+  /** The newest run of one workflow, for rows the shared recent-runs list does not cover. Cached for a minute. */
+  private readonly lastRuns = new Map<number, { at: number; run: WorkflowRunSummary | null }>();
+  async lastRunOf(workflowId: number): Promise<WorkflowRunSummary | null> {
+    const hit = this.lastRuns.get(workflowId);
+    if (hit !== undefined && Date.now() - hit.at < 60_000) return hit.run;
+    const res = await this.get<{ workflow_runs: WorkflowRunSummary[] }>(`repos/${this.repo}/actions/workflows/${workflowId}/runs?per_page=1`);
+    const run = res.workflow_runs[0] ?? null;
+    this.lastRuns.set(workflowId, { at: Date.now(), run });
+    return run;
+  }
+
+  /**
+   * Run one of the factory's workflows that needs no input, now, on the default branch.
+   *
+   * Only factory-review has a "due" check of its own (it skips when it ran
+   * recently), so it alone is sent `force`. Every other workflow here has no
+   * due check to skip: they do their work or find nothing to do.
+   */
   async runWorkflowNow(file: string): Promise<void> {
     await this.dispatchWorkflow(file, await this.defaultBranch(), file === "factory-review.yml" ? { force: "true" } : {});
   }
@@ -571,6 +599,8 @@ export interface IssueSummary {
   readonly user: { readonly login: string } | null;
   readonly labels: readonly { readonly name: string }[];
   readonly author_association: string;
+  /** How many comments the issue has; GitHub always sends it. */
+  readonly comments?: number;
   /** Present on PRs; absent on true issues. */
   readonly pull_request?: unknown;
 }

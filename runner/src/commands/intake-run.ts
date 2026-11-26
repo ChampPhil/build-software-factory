@@ -45,8 +45,20 @@ export interface IntakeRunOptions {
   readonly ref?: string;
   /** Set to skip dispatching, for a dry run. */
   readonly plan?: boolean;
+  /**
+   * Only write the event down (and mark the issue queued), then stop. The
+   * intake workflow's first job does this in a group of its own, so no event
+   * is lost to GitHub keeping one pending run per group (fix 4).
+   */
+  readonly recordOnly?: boolean;
   /** The chief of staff. Without one, the fixed table's route stands. */
   readonly router?: Router;
+}
+
+/** What a record-only run returns: the event is on the data ref, nothing was decided. */
+export interface IntakeRecordedReport {
+  readonly recorded: true;
+  readonly event: number | null;
 }
 
 export interface IntakeRunReport {
@@ -107,6 +119,9 @@ export function normalizeEvent(
   if (eventName === "issues" && payload.issue !== undefined) {
     const kind: EventKind = payload.action === "labeled" ? "issue_labeled" : "issue_opened";
     if (payload.action !== "opened" && payload.action !== "labeled") return null;
+    // The report issues gh-aw files about its own runs ("[aw] Triage: finished
+    // without a terminal safe output") are the factory's noise, not a request.
+    if (isGhAwReport(payload.issue)) return null;
     return {
       id, kind, at: now,
       actor: payload.issue.user?.login ?? payload.sender?.login ?? "unknown",
@@ -316,7 +331,21 @@ function isFork(pr: NonNullable<Payload["pull_request"]>): boolean {
 }
 
 export async function runIntakeCommand(opts: IntakeRunOptions): Promise<IntakeRunReport> {
+  const r = await intakeImpl({ ...opts, recordOnly: false });
+  if ("recorded" in r) throw new Error("unreachable: record-only was off");
+  return r;
+}
+
+/** The first intake job: write the event down and mark the issue queued (fix 4). */
+export async function recordIntakeCommand(opts: IntakeRunOptions): Promise<IntakeRecordedReport> {
+  const r = await intakeImpl({ ...opts, recordOnly: true });
+  if (!("recorded" in r)) throw new Error("unreachable: record-only was on");
+  return r;
+}
+
+async function intakeImpl(opts: IntakeRunOptions): Promise<IntakeRunReport | IntakeRecordedReport> {
   const store = new FactoryStore(opts.gh);
+  await store.data.pin();
   const payload = JSON.parse(readFileSync(opts.eventPath, "utf8")) as Payload;
   // A person accepting or rejecting a candidate on the dashboard. Rejecting is
   // only a record; accepting is also a request to harden against it now, which
@@ -387,27 +416,22 @@ export async function runIntakeCommand(opts: IntakeRunOptions): Promise<IntakeRu
     );
   }
 
+  if (opts.recordOnly === true) {
+    // The issue says "queued" from here until a run starts (fix 3).
+    const num = incoming?.kind === "issue_opened" ? /^#(\d+)$/.exec(incoming.ref ?? "")?.[1] : undefined;
+    if (num !== undefined) {
+      await opts.gh.send("POST", `repos/${opts.gh.repo}/issues/${num}/labels`, { labels: ["factory:queued"] }).catch(() => undefined);
+    }
+    return { recorded: true, event: incoming?.id ?? null };
+  }
+
   const cursorDoc = await store.data.readJson<{ cursor?: number }>(CURSOR);
   const cursor = cursorDoc?.cursor ?? 0;
   const ledger = await store.ledger(opts.now);
 
-  // An issue whose own intake run never got to record it — GitHub keeps one
-  // pending run per concurrency group and cancels the rest, so three issues
-  // opened together started three runs and two were dropped — is picked up
-  // here from the issue list, so no request is lost however the runs fall.
-  if (opts.triggers.issues) {
-    const missed = await missedIssues(opts.gh, store, queued, ledger, opts.now, opts.policy.trust.associations).catch(() => []);
-    if (missed.length > 0) {
-      queued.push(...missed);
-      await store.data.commitWithRetry(
-        async () => {
-          const text = (await store.data.read(INCOMING)) ?? "";
-          return [{ path: INCOMING, content: `${text}${missed.map((e) => JSON.stringify(e)).join("\n")}\n` }];
-        },
-        `intake: recover ${missed.length} issue(s) whose events were dropped`,
-      );
-    }
-  }
+  // The sweep that used to re-list every issue here is gone (fix 2): the
+  // record job gives every event its own run, so none is dropped, and the
+  // sweep cost one API call per open issue on every run.
 
   const openItems: LedgerOpenItem[] = ledger.open.map((o) => ({
     work_item: o.work_item,
@@ -431,8 +455,19 @@ export async function runIntakeCommand(opts: IntakeRunOptions): Promise<IntakeRu
     if (heldLive(convo, new Date(opts.now))) liveConversations.push(o.work_item);
   }
 
+  // What each open item is already doing, so a correction that repeats it or
+  // edits the same files folds into it rather than opening a second PR.
+  const openItemBodies: Record<string, string> = {};
+  if (queued.some((e) => e.pr !== undefined && e.id > cursor)) {
+    for (const o of openItems) {
+      const doc = await store.get<{ body?: string }>(workItemPath(o.work_item), "work-item").catch(() => null);
+      if (doc?.body !== undefined) openItemBodies[o.work_item] = doc.body;
+    }
+  }
+
   const result = runIntake(queued, {
     prItems,
+    openItemBodies,
     policy: opts.policy,
     triggers: opts.triggers,
     cursor,
@@ -491,6 +526,7 @@ export async function runIntakeCommand(opts: IntakeRunOptions): Promise<IntakeRu
         at: opts.now,
         who: "person",
         text: (d.event.body ?? "").trim(),
+        ...(commentIdOf(d.event.url) === null ? {} : { comment: commentIdOf(d.event.url) as number }),
       }).catch(() => undefined);
     }
     let next: Record<string, unknown> = { ...doc, status: "queued", body };
@@ -528,6 +564,20 @@ export async function runIntakeCommand(opts: IntakeRunOptions): Promise<IntakeRu
   // What a person corrected is kept on the run it corrected, which is where
   // scoring and the review read `human_corrections` from.
   changes.push(...(await correctionChanges(store, result.decisions)));
+  // Say on the existing PR that the same thing was asked again, and on the
+  // source PR that it is already covered.
+  for (const d of result.decisions) {
+    const a = d.alsoRequested;
+    if (a === undefined || opts.plan === true) continue;
+    if (a.pr !== null) {
+      await opts.gh.send("POST", `repos/${opts.gh.repo}/issues/${a.pr}/comments`, { body: `Also requested: ${a.text}` }).catch(() => undefined);
+    }
+    await opts.gh
+      .send("POST", `repos/${opts.gh.repo}/issues/${a.sourcePr}/comments`, {
+        body: a.pr !== null ? `Already covered by #${a.pr}.` : "Already covered by work the factory has open.",
+      })
+      .catch(() => undefined);
+  }
 
   if (newItems.length > 0 || requeued.size > 0 || result.cursor !== cursor) {
     const nextLedger = {
@@ -782,4 +832,21 @@ export async function missedIssues(
     });
   }
   return out;
+}
+
+
+/** The comment id in a GitHub comment URL (`...#issuecomment-123`), or null. */
+export function commentIdOf(url: string | undefined): number | null {
+  const m = /(?:issuecomment-|#c|discussion_r)(\d+)/.exec(url ?? "");
+  return m === null ? null : Number(m[1]);
+}
+
+
+/** An issue gh-aw filed about one of its own runs: labelled, titled or marked as one. */
+export function isGhAwReport(issue: { title?: string | undefined; body?: string | null | undefined; labels?: readonly { name?: string | undefined }[] | undefined }): boolean {
+  return (
+    (issue.labels ?? []).some((l) => l.name === "agentic-workflows") ||
+    (issue.title ?? "").startsWith("[aw] ") ||
+    (issue.body ?? "").includes("gh-aw-agentic-workflow")
+  );
 }

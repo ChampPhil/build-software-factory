@@ -1,7 +1,12 @@
 /** Shared types for the shapes defined in /schema. Doc 09 is the source of truth. */
 
 export type Harness = "claude-code" | "cursor-cli" | "kilo-code" | "pi" | "hermes-agent";
-export type Pipeline = "product_work" | "gardening" | "hardening" | "definition" | "conflict";
+/**
+ * `factory_health` is not work the factory does: it is a problem with the
+ * factory itself (a checker that never started, a gate that never reported),
+ * filed for a person and never dispatched (fix 8).
+ */
+export type Pipeline = "product_work" | "gardening" | "hardening" | "definition" | "conflict" | "factory_health";
 export type Role = "triage" | "spec" | "builder" | "verifier" | "gardener" | "hardener" | "scorer";
 export type TriggerClass = "request" | "dev_event" | "signal" | "scheduled" | "self";
 export type Association = "OWNER" | "MEMBER" | "COLLABORATOR" | "CONTRIBUTOR" | "FIRST_TIME_CONTRIBUTOR" | "NONE";

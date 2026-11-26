@@ -43,6 +43,10 @@
           },
           "text": {
             "type": "string"
+          },
+          "comment": {
+            "type": "integer",
+            "description": "The id of the GitHub comment this turn came from, so one comment is recorded once however many jobs see it."
           }
         }
       }

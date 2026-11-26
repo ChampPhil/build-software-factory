@@ -1,5 +1,7 @@
 "use client";
 
+import type { StepRecord } from "./spend";
+import { isFactoryHealthIssue } from "./view";
 import { routingCandidates } from "./routing";
 import { FACTORY_YAML } from "./settings";
 
@@ -356,9 +358,16 @@ export function usePulls(client: GitHubClient | null, version = 0): Loaded<reado
 }
 
 /** Open issues, without the pull requests GitHub lists among them. */
+/** Open issues that are requests: the factory's own health issues are left out (see useHealthIssues). */
 export function useIssues(client: GitHubClient | null, version = 0): Loaded<readonly IssueSummary[]> {
-  const load = client === null ? null : async () => (await client.issues()).filter((i) => i.pull_request === undefined);
+  const load = client === null ? null : async () => (await client.issues()).filter((i) => i.pull_request === undefined && !isFactoryHealthIssue(i));
   return usePolled(load, 30_000, [client?.repo, version]);
+}
+
+/** Issues about the factory's own health: workflow failures filed by gh-aw and factory_health items. */
+export function useHealthIssues(client: GitHubClient | null, version = 0): Loaded<readonly IssueSummary[]> {
+  const load = client === null ? null : async () => (await client.issues()).filter((i) => i.pull_request === undefined && isFactoryHealthIssue(i));
+  return usePolled(load, 60_000, [client?.repo, version]);
 }
 
 export function usePull(client: GitHubClient | null, n: number | null, version = 0): Loaded<PullDetail | null> {
@@ -415,6 +424,25 @@ export function useRunFiles(client: GitHubClient | null, ids: readonly string[])
       : async () => {
           const runs = await Promise.all(ids.map((id) => client.fileFromRef<RunFile>(`runs/${id}.json`).catch(() => null)));
           return runs.filter((r): r is RunFile => r !== null);
+        };
+  return usePolled(load, 60_000, [client?.repo, key]);
+}
+
+/** Every step record for the given runs (`steps/<run>/*.json`), the ledger of what was actually spent. */
+export function useStepRecords(client: GitHubClient | null, runIds: readonly string[]): Loaded<readonly StepRecord[]> {
+  const key = runIds.join(",");
+  const load =
+    client === null
+      ? null
+      : async () => {
+          const perRun = await Promise.all(
+            runIds.map(async (id) => {
+              const names = await client.listFromRef(`steps/${id}`).catch(() => [] as readonly string[]);
+              const docs = await Promise.all(names.map((n) => client.fileFromRef<StepRecord>(`steps/${id}/${n}`).catch(() => null)));
+              return docs.filter((d): d is StepRecord => d !== null);
+            }),
+          );
+          return perRun.flat();
         };
   return usePolled(load, 60_000, [client?.repo, key]);
 }

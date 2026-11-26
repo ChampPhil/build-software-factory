@@ -1,5 +1,5 @@
 {
-  "frozen_at": "2026-11-25",
+  "frozen_at": "2026-11-26",
   "schema_major": 1,
   "note": "The shape of every schema at the frozen major. `bsf schema-surface --check` compares the live schemas against this and fails on a breaking change. Regenerate with `bsf schema-surface --freeze` only alongside an additive change, or alongside a major bump that ships a migration in `bsf migrate`.",
   "surface": {
@@ -68,6 +68,7 @@
         "enum": [
           "\"conflict\"",
           "\"definition\"",
+          "\"factory_health\"",
           "\"gardening\"",
           "\"hardening\"",
           "\"product_work\""
@@ -191,6 +192,7 @@
         "type": "object",
         "properties": [
           "at",
+          "comment",
           "text",
           "who"
         ],
@@ -212,6 +214,9 @@
       },
       "/properties/turns/items/properties/text": {
         "type": "string"
+      },
+      "/properties/turns/items/properties/comment": {
+        "type": "integer"
       },
       "/properties/understood": {
         "type": "null|string"
@@ -2925,7 +2930,8 @@
           "static_checks",
           "stubs",
           "tier",
-          "tier_reason"
+          "tier_reason",
+          "ui_paths"
         ],
         "required": [
           "capabilities",
@@ -3471,6 +3477,13 @@
       "/properties/sign_in/properties/why": {
         "type": "string",
         "minLength": 1
+      },
+      "/properties/ui_paths": {
+        "type": "array"
+      },
+      "/properties/ui_paths/items": {
+        "type": "string",
+        "minLength": 1
       }
     },
     "step-report.json": {
@@ -3601,6 +3614,7 @@
           "previous_prs",
           "priority",
           "related",
+          "requeues",
           "routing",
           "runs",
           "schema",
@@ -3837,6 +3851,10 @@
       "/properties/previous_prs/items": {
         "type": "integer",
         "minimum": 1
+      },
+      "/properties/requeues": {
+        "type": "integer",
+        "minimum": 0
       },
       "/properties/goal": {
         "type": "null|string",

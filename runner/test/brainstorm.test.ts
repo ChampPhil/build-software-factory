@@ -278,6 +278,25 @@ describe("waiting for an answer", async () => {
     id, body: "only the unpaid ones", user: { login: "philip" }, author_association: "OWNER", created_at: "2026-11-25T12:00:05Z",
   });
 
+  it("a go-ahead closes the conversation instead of being read as another answer (fix 7)", async () => {
+    const closed: number[] = [];
+    const { outcome } = await run(
+      [{ status: 200, etag: 'W/"1"', body: [{ ...comment(12), body: "Build it." }] }],
+      { onGoAhead: async (c: IssueComment) => { closed.push(c.id); } },
+    );
+    expect(outcome.kind).toBe("closed");
+    expect(closed).toEqual([12]);
+  });
+
+  it("isGoAhead matches the start of a reply, not a sentence that merely contains the words", () => {
+    expect(bs.isGoAhead("Build it")).toBe(true);
+    expect(bs.isGoAhead("  yes, ship it")).toBe(true);
+    expect(bs.isGoAhead("LGTM!")).toBe(true);
+    expect(bs.isGoAhead("go ahead but keep the old button")).toBe(true);
+    expect(bs.isGoAhead("yesterday it broke")).toBe(false);
+    expect(bs.isGoAhead("only the unpaid ones, then build it")).toBe(false);
+  });
+
   it("returns the answer as soon as one appears", async () => {
     const { outcome } = await run([
       { status: 200, etag: 'W/"1"', body: [] },

@@ -63,6 +63,7 @@ jobs:
           cp -R .factory-trusted/.factory/bin/. "$RUNNER_TEMP/bsf/"
           rm -rf .factory-trusted
           echo "$RUNNER_TEMP/bsf" >> "$GITHUB_PATH"
+          chmod +x "$RUNNER_TEMP/bsf/"*
           "$RUNNER_TEMP/bsf/bsf" --version
       - name: Apply the sandbox's choices to the role sources
         if: steps.app.outputs.present == 'true'

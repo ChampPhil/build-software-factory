@@ -1,3 +1,4 @@
+import { scopeOf, scopesOverlap, type GardenScope } from "../lib/scope.js";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { GitHub } from "../lib/github.js";
@@ -277,26 +278,8 @@ export async function runGardenCommand(opts: GardenOptions): Promise<GardenRepor
   return { scan: { items: found, skipped }, picked, filed, dispatched };
 }
 
-/** The files a gardening item changes; `null` means the whole repo. */
-export type GardenScope = ReadonlySet<string> | null;
-
-export function scopeOf(files: readonly string[]): GardenScope {
-  const clean = files.map((f) => f.trim().replace(/^\.\//, "")).filter((f) => f !== "");
-  return clean.length === 0 ? null : new Set(clean);
-}
-
-export function scopesOverlap(a: GardenScope, b: GardenScope): boolean {
-  if (a === null || b === null) return true;
-  for (const f of a) {
-    if (b.has(f)) return true;
-    // A folder named in one item covers the files under it in the other.
-    for (const g of b) {
-      const dir = (x: string) => (x.endsWith("/") ? x : `${x}/`);
-      if (g.startsWith(dir(f)) || f.startsWith(dir(g))) return true;
-    }
-  }
-  return false;
-}
+export { scopeOf, scopesOverlap } from "../lib/scope.js";
+export type { GardenScope } from "../lib/scope.js";
 
 /** The files listed in a gardening work item's body ("Files:" section). */
 export function filesInBody(body: string): string[] {

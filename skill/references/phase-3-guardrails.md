@@ -75,19 +75,29 @@ set the diff minimum to 80% (this is the main check), and count existing skips.
 With no tests at all: floor 0%, and gardening seeded to add tests per feature
 folder. Diff coverage still applies, so say that to the user.
 
-## 6. Baselines
+## 6. Nothing is baselined
 
-**Apply only mechanical fixes now.** The formatter runs over the whole repo as
-one separate commit, exempt from the 20-file cap and listed in
-`.git-blame-ignore-revs` so blame stays useful. Linters' own autofixes run too.
+Every setup installs, and installs fully:
 
-Everything else gets a **per-file** baseline: in the linter's own baseline file
-where it has one (`eslint --suppress-all` writes `eslint-suppressions.json`),
-otherwise in `baselines.json`. Per file, not per rule — a fix in one file must
-not pay for a new violation in another.
+- **A linter**, with every rule in `AGENTS.md` written as a lint rule, so what
+  the repo says in prose is also enforced.
+- **A formatter**, run over the whole repo as one "format only" commit, exempt
+  from the 20-file cap and listed in `.git-blame-ignore-revs` so blame stays
+  useful.
+- **Every rule candidate** from phase 1, de-duplicated, each verified in step 7.
+- **The local correction hook**, on by default, so a correction the person makes
+  in a local session becomes a candidate rule.
 
-Nothing that needs judgment is fixed here. The setup PR has to stay
-reviewable.
+Then the setup **removes every existing violation**. Nothing is suppressed and
+no `baselines.json` or `eslint-suppressions.json` is written: a baseline is a
+promise to clean up later, and the factory then spends its first weeks
+enforcing rules the repo itself breaks. Linter autofixes run first; what is
+left is fixed by hand.
+
+How the violations get fixed is your call, and you do not ask: one pull request
+when the whole change stays reviewable, or a sequence of PRs (mechanical first,
+then one per rule or feature folder) when it would not. Say which you chose and
+why in one line.
 
 ## 7. Verify every rule
 
@@ -103,9 +113,9 @@ rule pack entry that cannot be verified is a bug in the pack.
 
 ## What to watch for
 
-- **An enormous baseline is a finding, not a problem to hide.** Report the
-  count. Do not loosen the rule to make the number look better; gardening
-  exists for this.
+- **An enormous violation count is a finding, not a problem to hide.** Report
+  the count and work through it. Do not loosen the rule to make the number look
+  better, and do not baseline it.
 - **Do not add a rule the repo's dominant pattern violates.** You would be
   enforcing your taste over their codebase, and every PR would fail.
 - **A guardrail in an existing tool's config** (`pyproject.toml#tool.ruff`)

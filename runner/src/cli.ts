@@ -10,7 +10,7 @@ import { runStaticGate, runCoverageGate, checkedFromCheckRuns, summarizeGates, G
 import { runPolicyCommand } from "./commands/policy-run.js";
 import { planGates } from "./commands/gates.js";
 import { SCHEMA_NAMES, assertValid, type SchemaName, SCHEMA_DIR } from "./lib/schema.js";
-import { runIntakeCommand } from "./commands/intake-run.js";
+import { runIntakeCommand, recordIntakeCommand } from "./commands/intake-run.js";
 import { runRollupCommand, squashMedia } from "./commands/rollup-run.js";
 import { runMergeCommand } from "./commands/merge-run.js";
 import { runGardenCommand } from "./commands/garden.js";
@@ -55,6 +55,7 @@ import {
   measuredUsd, detectionUsd, canStart, type BudgetDoc, type BudgetLimits, type BudgetMeasure,
 } from "./commands/budget.js";
 import { loadFactory, trustedRoot } from "./lib/config.js";
+import { reportApiCalls } from "./lib/apicalls.js";
 import { startSandbox, loadManifest, loadManifestAt, trialSandbox, freezeManifest, needsHost, serveOnHost, closedEnv, trialMet } from "./commands/sandbox.js";
 import { fetchWorkItem, writeSpec, fetchArtifact, storeMedia } from "./commands/role-io.js";
 import { gardenScan, gardenFile, hardenContext, reviewCollect, reviewWrite } from "./commands/role-steps.js";
@@ -92,7 +93,7 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
       Gate 1. Runs the repo's own linters, compares every rule's count per
       file against the baselines on the base ref, and checks for weakening.
 
-  bsf gates coverage [--base REF] [--report-check NAME]
+  bsf gates coverage [--base REF] [--pr N] [--report-check NAME]
       Gate 2's coverage half. Diff coverage of the changed files is the main
       check; total coverage must stay above the floor.
 
@@ -105,7 +106,7 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
       Record a gate's result against the head commit, so the same commit is
       never checked twice.
 
-  bsf intake [--event-name NAME] [--event PATH] [--plan]
+  bsf intake [--record-only] [--at TIME] [--event-name NAME] [--event PATH] [--plan]
       Normalize every unprocessed event into work items and dispatch runs.
       Appends the incoming event to the data ref before deciding anything, so
       a dropped run costs a delay rather than a request.
@@ -116,7 +117,12 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
   bsf run start WORK_ITEM [--attempt N] [--escalate true] [--first-step ROLE]
   bsf run after-gates WORK_ITEM --run-id R [--attempt N] [--pr N] [--build-result R] [--wait-min M] [--steps-dir DIR]
   bsf run after-gates --static S --verification V [--attempt N]
-      What happens after the gates: verify, retry, escalate or clear.
+      What happens after the gates: verify, retry, escalate or clear. With
+      --wait-min 0 (the default) a run whose gates have not reported parks its
+      item in review and returns awaiting_gates.
+  bsf run decide PR
+      Finish the run parked on PR's gates: factory-gates calls this once the
+      verdict is recorded. Nothing parked is a no-op.
 
   bsf rollup [--squash-media] [--plan]
       Rebuild index.json and ledger.json from the run files, and dispatch
@@ -141,6 +147,8 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
       charged at the ceiling.
 
   bsf budget status
+  bsf budget verify   (budget.json and steps/ must agree to the cent)
+  bsf budget minutes   (Actions minutes billed this month against the limit)
       Spent, held and left this month.
 
   bsf merge-queue [--apply]
@@ -238,6 +246,7 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
   bsf write-triage WORK_ITEM --from PATH
   bsf guardrails record [--out PATH]
   bsf run status WORK_ITEM
+  bsf run fail-step WORK_ITEM --step triage
   bsf run announce WORK_ITEM
       Make sure a run that produced no PR still told the author why.
   bsf run closed --pr N --merged true|false
@@ -287,6 +296,9 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
       Declare a practice every agent follows from now on. Opens a PR adding it to
       practices.md, and a rule where one can enforce it. Same as commenting
       /practice TEXT on any issue or PR.
+  bsf sandbox ui-paths [--file PATH]   (record which files are the UI)
+  bsf sandbox scrub [--file PATH]   (replace secret-shaped placeholder values)
+  bsf sandbox dry-run   (start the sandbox and serve the app, as the checker will)
   bsf sandbox start
       Bring up the frozen sandbox: its services, its closed environment, its install.
   bsf sandbox check [--file PATH]
@@ -321,7 +333,8 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
       It is a static export that talks to GitHub from your browser, so there
       is nothing else to run and no server sees your token.
 
-  bsf doctor [--root PATH] [--repo OWNER/REPO] [--json] [--quiet]
+  bsf context merge-intent --existing PATH --incoming PATH --out PATH
+  bsf doctor [--root PATH] [--repo OWNER/REPO] [--json] [--quiet] [--fix-modes]
       What is wrong with an installed factory: missing definition, role or
       context files, a guardrail file that no longer validates, a missing
       workflow, a lock file too stale for gh-aw to run, and — with --repo — a
@@ -473,7 +486,9 @@ async function main(argv: readonly string[]): Promise<number> {
       if (second === "settle") return budgetSettleCommand(args);
       if (second === "measure") return budgetMeasureCommand(args);
       if (second === "status") return budgetStatusCommand();
-      if (second !== "check") die("usage: bsf budget check|reserve|measure|settle|status");
+      if (second === "verify") return budgetVerifyCommand();
+      if (second === "minutes") return budgetMinutesCommand();
+      if (second !== "check") die("usage: bsf budget check|reserve|measure|settle|status|verify|minutes");
       return budgetCommand(args);
 
     case "merge-queue":
@@ -533,6 +548,19 @@ async function main(argv: readonly string[]): Promise<number> {
 
     case "doctor":
       return doctorCommand(args);
+    case "context": {
+      // `bsf context merge-intent --existing PATH --incoming PATH --out PATH`:
+      // the person's "Product intent (from you)" block survives the setup
+      // workflow rewriting the rest of fundamentals.md.
+      if (second !== "merge-intent") die("usage: bsf context merge-intent --existing PATH --incoming PATH --out PATH");
+      const incoming = args["incoming"];
+      const out = args["out"];
+      if (typeof incoming !== "string" || typeof out !== "string") die("usage: bsf context merge-intent --existing PATH --incoming PATH --out PATH");
+      const existing = typeof args["existing"] === "string" && existsSync(args["existing"]) ? readFileSync(args["existing"], "utf8") : null;
+      const { mergeProductIntent } = await import("./lib/product-intent.js");
+      writeFileSync(out, mergeProductIntent(existing, readFileSync(incoming, "utf8")));
+      return 0;
+    }
 
     case "contribute-corrections":
       return contributeCorrectionsCommand(args);
@@ -873,8 +901,23 @@ async function gatesCoverage(args: Args): Promise<number> {
   const base = baseRef(args);
   const loaded = loadManifest(root);
   const report = loaded.kind === "ok" ? loaded.manifest.coverage_report : undefined;
+  // The PR's pipeline, from the ledger: gardening and hardening are held to
+  // the coverage floor but not to diff coverage (fix 20).
+  let pipeline: string | undefined;
+  const prNumber = Number(args["pr"]);
+  if (prNumber > 0 && process.env["GITHUB_REPOSITORY"] !== undefined && process.env["GITHUB_REPOSITORY"] !== "") {
+    try {
+      const { FactoryStore } = await import("./lib/store.js");
+      const store = new FactoryStore(new GitHub({ repo: process.env["GITHUB_REPOSITORY"] }));
+      const led = await store.ledger(new Date().toISOString());
+      pipeline = led.open.find((o: { pr?: number | null }) => o.pr === prNumber)?.pipeline;
+    } catch {
+      pipeline = undefined;
+    }
+  }
   const result = await runCoverageGate({
     root,
+    ...(pipeline === undefined ? {} : { pipeline }),
     current: await loadCoverage(new DiskLoader(root)),
     changedFiles: changedFilesSince(base),
     changedLines: changedLinesSince(base),
@@ -1213,11 +1256,15 @@ async function intakeCommand(args: Args): Promise<number> {
   }
 
   const triggers = cfg.triggers ?? {};
-  const report = await runIntakeCommand({
+  // The record job fixes the event's time and hands it to the process job
+  // with --at, so both name the event the same id and it is one event, not
+  // two (fix 4).
+  const at = typeof args["at"] === "string" && !Number.isNaN(Date.parse(args["at"])) ? args["at"] : nowIso();
+  const intakeOpts = {
     gh,
     eventName,
     eventPath,
-    now: nowIso(),
+    now: at,
     policy: await loadPolicy(new DiskLoader(process.cwd())),
     triggers: {
       issues: triggers["issues"] !== false,
@@ -1231,8 +1278,16 @@ async function intakeCommand(args: Args): Promise<number> {
     setupFinished: await gh.setupFinished(),
     ...(args["plan"] === true ? { plan: true } : {}),
     ...(await chiefOfStaff(cfg, gh)),
-  });
+  };
 
+  if (args["record-only"] === true) {
+    const recorded = await recordIntakeCommand(intakeOpts);
+    setOutput("at", at);
+    process.stdout.write(`recorded event ${recorded.event ?? "(none: not a request)"}\n`);
+    await reportApiCalls(gh, nowIso(), (t) => process.stdout.write(t));
+    return 0;
+  }
+  const report = await runIntakeCommand(intakeOpts);
   for (const d of report.result.decisions) {
     process.stdout.write(`${d.event.kind}: ${d.outcome} — ${d.reason}\n`);
   }
@@ -1240,6 +1295,7 @@ async function intakeCommand(args: Args): Promise<number> {
     `${report.result.processed} event(s) processed; dispatched ${report.dispatched.length}: ${report.decision.reason}\n`,
   );
   setOutput("dispatched", report.dispatched.join(","));
+  await reportApiCalls(gh, nowIso(), (t) => process.stdout.write(t));
   return 0;
 }
 
@@ -1257,13 +1313,30 @@ async function runCommand(second: string | undefined, args: Args, third?: string
     const workItemId = third;
     let pipeline = typeof args["pipeline"] === "string" ? args["pipeline"] : undefined;
     let hasSpec = true;
-    if (pipeline === undefined && typeof workItemId === "string") {
+    // Fix 7: what the item already knows decides which steps a run repeats.
+    let skipTriage = false;
+    let brainstormOpen = false;
+    if (typeof workItemId === "string") {
       const { FactoryStore, workItemPath } = await import("./lib/store.js");
       const store = new FactoryStore(new GitHub({ repo: requireRepo() }));
-      const item = await store.get<{ pipeline: string; spec?: unknown }>(workItemPath(workItemId), "work-item");
-      if (item === null) die(`${workItemId} is not on the data ref`);
-      pipeline = item.pipeline;
-      hasSpec = item.spec !== null && item.spec !== undefined;
+      const item = await store.get<{ pipeline: string; spec?: unknown; triage_reason?: unknown }>(workItemPath(workItemId), "work-item");
+      if (item === null && pipeline === undefined) die(`${workItemId} is not on the data ref`);
+      if (item !== null) {
+        if (pipeline === undefined) {
+          pipeline = item.pipeline;
+          hasSpec = item.spec !== null && item.spec !== undefined;
+        }
+        // Triage already ran and a spec exists: a reply or an approval does
+        // not need the item read again (about 3 billable minutes each time).
+        const spec = item.spec;
+        skipTriage =
+          typeof item.triage_reason === "string" &&
+          spec !== null && typeof spec === "object" && Object.keys(spec).length > 0;
+        // A conversation is still open on this item: the reply goes to it.
+        const { brainstormPath } = await import("./commands/brainstorm.js");
+        const b = await store.data.readJson<{ closed_at?: string }>(brainstormPath(workItemId)).catch(() => null);
+        brainstormOpen = b !== null && b.closed_at === undefined;
+      }
     }
     // A conflict rebuild: the same change, rebuilt on the current main by the
     // builder and verified. The intent and spec are the item's already.
@@ -1318,7 +1391,10 @@ async function runCommand(second: string | undefined, args: Args, third?: string
     process.stdout.write(`${plan.reason}\nroles: ${roles.join(" -> ") || "(none)"}\n`);
     setOutput("pipeline", pipeline);
     setOutput("roles", roles.join(","));
-    setOutput("needs_triage", String(roles.includes("triage")));
+    const runsTriage = roles.includes("triage") && !skipTriage && !brainstormOpen;
+    setOutput("needs_triage", String(runsTriage));
+    setOutput("skip_triage", String(skipTriage || brainstormOpen));
+    setOutput("brainstorm_open", String(brainstormOpen));
     setOutput("needs_hardener", String(roles.includes("hardener")));
     setOutput("needs_spec", String(roles.includes("spec")));
     setOutput("protected_files_policy", protectedFilesPolicy);
@@ -1372,6 +1448,18 @@ async function runCommand(second: string | undefined, args: Args, third?: string
     const store = new FactoryStore(gh);
     const sweep = await sweepReports({ gh, store, ledger: await store.ledger(now), now, fits: async () => amendmentFits(gh, await factoryConfig()) });
     process.stdout.write(`${sweep.why}\n`);
+    return 0;
+  }
+
+  if (second === "fail-step") {
+    // `bsf run fail-step ITEM --step triage`: a role's job failed. Carry on if
+    // its agent in fact finished; otherwise queue the item again.
+    if (third === undefined || typeof args["step"] !== "string") die("usage: bsf run fail-step WORK_ITEM --step triage");
+    const { failStep } = await import("./commands/run-lifecycle.js");
+    const gh = new GitHub({ repo: requireRepo() });
+    const r = await failStep({ gh, workItem: third, step: args["step"], runId: process.env["GITHUB_RUN_ID"] ?? "", now: new Date().toISOString() });
+    process.stdout.write(`${r.action}: ${r.reason}\n`);
+    setOutput("recovered", String(r.recovered));
     return 0;
   }
 
@@ -1431,6 +1519,50 @@ async function runCommand(second: string | undefined, args: Args, third?: string
     return 0;
   }
 
+  if (second === "decide") {
+    // `bsf run decide PR`: the gates for PR have finished (factory-gates calls
+    // this), so finish the run that handed off to them: clear, retry or
+    // escalate. Nothing parked for the PR means nothing to do (fix 6).
+    const prNumber = Number(third);
+    if (!Number.isInteger(prNumber) || prNumber <= 0) die("usage: bsf run decide PR_NUMBER");
+    const { finishRun } = await import("./commands/run-lifecycle.js");
+    const { FactoryStore } = await import("./lib/store.js");
+    type Handoff = import("./commands/run-lifecycle.js").Handoff;
+    const gh = new GitHub({ repo: requireRepo() });
+    const store = new FactoryStore(gh);
+    await store.data.pin();
+    const parked = (await store.data.list("handoff/")).filter((p: string) => p.endsWith(".json"));
+    let handoff: Handoff | null = null;
+    for (const path of parked) {
+      const h = await store.data.readJson<Handoff>(path);
+      if (h !== null && h.pr === prNumber) handoff = h;
+    }
+    if (handoff === null) {
+      process.stdout.write(`nothing is waiting on the gates for PR #${prNumber}\n`);
+      setOutput("next", "none");
+      return 0;
+    }
+    store.data.unpin();
+    const cfg: FactoryConfig = await factoryConfig().catch((): FactoryConfig => ({}));
+    const r = await finishRun({
+      gh,
+      workItem: handoff.work_item,
+      runId: handoff.run,
+      attempt: handoff.attempt,
+      maxAttempts: cfg.limits?.retry_cap ?? 3,
+      pr: handoff.pr,
+      buildResult: handoff.build_result,
+      now: nowIso,
+      // One look: the gates have just reported, or this was called too early.
+      waitMs: 0,
+      pollMs: 60_000,
+    });
+    process.stdout.write(`${r.next}: ${r.reason}${r.pr === null ? "" : ` (PR #${r.pr})`}\n`);
+    setOutput("next", r.next);
+    await reportApiCalls(gh, nowIso(), (t) => process.stdout.write(t));
+    return 0;
+  }
+
   if (second === "after-gates" && third !== undefined && args["static"] === undefined) {
     // `bsf run after-gates WORK_ITEM --run-id R --attempt N [--pr N] [--build-result R] [--wait-min M]`
     const { finishRun } = await import("./commands/run-lifecycle.js");
@@ -1439,7 +1571,8 @@ async function runCommand(second: string | undefined, args: Args, third?: string
     const cfg: FactoryConfig = await factoryConfig().catch((): FactoryConfig => ({}));
     const attempt = typeof args["attempt"] === "string" ? Number(args["attempt"]) : 1;
     const pr = typeof args["pr"] === "string" ? Number(args["pr"]) : 0;
-    const waitMin = typeof args["wait-min"] === "string" ? Number(args["wait-min"]) : 90;
+    // 0 hands the run to the gates' own workflow instead of waiting here (fix 6).
+    const waitMin = typeof args["wait-min"] === "string" ? Number(args["wait-min"]) : 0;
     // The roles' StepReports, downloaded from this run's artifacts.
     const steps: import("./commands/run-lifecycle.js").StepReportDoc[] = [];
     const stepsDir = typeof args["steps-dir"] === "string" ? args["steps-dir"] : undefined;
@@ -1493,7 +1626,7 @@ async function runCommand(second: string | undefined, args: Args, third?: string
     return 0;
   }
 
-  die("usage: bsf run plan|start|after-gates");
+  die("usage: bsf run plan|start|decide|after-gates");
 }
 
 async function rollupCommand(args: Args): Promise<number> {
@@ -1544,6 +1677,7 @@ async function rollupCommand(args: Args): Promise<number> {
   if (report.paused.length > 0) {
     process.stdout.write(`paused: ${report.paused.join(", ")}\n`);
   }
+  await reportApiCalls(gh, now, (t) => process.stdout.write(t));
 
   if (args["squash-media"] === true) {
     const months = cfg.data?.media_retention_months ?? 12;
@@ -1678,17 +1812,119 @@ async function budgetSettleCommand(args: Args): Promise<number> {
   const { FactoryStore } = await import("./lib/store.js");
   const store = new FactoryStore(gh);
   const now = nowIso();
+  let heldSince: string | null = null;
   const r = await store.data.updateJson<BudgetDoc, ReturnType<typeof settleBudget>>(
     BUDGET_PATH,
     (current) => {
       const base = current !== null && current.schema === "budget/2" ? current : null;
+      heldSince = base?.inflight.find((f) => f.key === key)?.started_at ?? null;
       const out = settleBudget(base, { key, agentUsd, detectionUsd: detUsd, ...(pipeline === undefined ? {} : { pipeline }) }, now);
       return { next: out.doc === base || (base !== null && base.settled.includes(key)) ? null : out.doc, result: out };
     },
     `budget: settle ${key}`,
   );
   process.stdout.write(`${key}: ${r.reason}\n`);
+  // The same command that charged the budget records the step, so the two
+  // cannot disagree about what a run cost (fix 23).
+  const parsed = (await import("./commands/run-lifecycle.js")).parseBudgetKey(key);
+  if (parsed !== null && r.chargedUsd > 0) {
+    const started = heldSince === null ? Date.parse(now) : Date.parse(heldSince);
+    const billed = await billedMinutes(gh, parsed.run);
+    const record: import("./commands/run-lifecycle.js").StepRecord = {
+      role: parsed.role,
+      run_id: parsed.run,
+      attempt: parsed.attempt,
+      at: now,
+      cost_usd: r.chargedUsd,
+      duration_sec: Math.max(0, Math.round((Date.parse(now) - started) / 1000)),
+      ...(billed === null ? {} : { billed_minutes: billed }),
+    };
+    await store.put([{ path: `steps/${parsed.run}/${parsed.role}-${parsed.attempt}.json`, content: `${JSON.stringify(record, null, 2)}\n` }], `steps: ${key}`);
+  }
   return 0;
+}
+
+/**
+ * `bsf budget verify`: budget.json and steps/ must agree to the cent. When
+ * they do not, say so, file a factory_health item once, and exit 1.
+ */
+async function budgetVerifyCommand(): Promise<number> {
+  const gh = new GitHub({ repo: requireRepo() });
+  const { FactoryStore, LEDGER, json, workItemPath } = await import("./lib/store.js");
+  const store = new FactoryStore(gh);
+  const raw = await store.data.readJson<BudgetDoc>(BUDGET_PATH);
+  const doc = raw !== null && raw.schema === "budget/2" ? raw : null;
+  const names = (await store.data.list("steps/")).filter((n) => n.endsWith(".json"));
+  const steps: { at: string; cost_usd: number }[] = [];
+  for (const n of names) {
+    const d = await store.data.readJson<{ at?: string; cost_usd?: number }>(n).catch(() => null);
+    if (d !== null && typeof d.cost_usd === "number" && typeof d.at === "string") steps.push({ at: d.at, cost_usd: d.cost_usd });
+  }
+  const { verifySpend } = await import("./commands/budget.js");
+  const v = verifySpend(doc, steps);
+  process.stdout.write(`budget.json $${v.budget_usd.toFixed(4)}, steps/ $${v.steps_usd.toFixed(4)}: ${v.ok ? "they agree" : `they differ by $${v.difference_usd.toFixed(4)}`}\n`);
+  if (v.ok) return 0;
+  const { fingerprint } = await import("./commands/intake.js");
+  const { workItemId } = await import("./lib/ids.js");
+  const now = nowIso();
+  const ledger = await store.ledger(now);
+  const fp = fingerprint({ title: "factory_health", body: "spend_mismatch" });
+  if (!ledger.open.some((o: { fingerprint?: string; status: string }) => o.fingerprint === fp && o.status === "queued")) {
+    const id = workItemId(Date.parse(now));
+    const item = {
+      schema: "work-item/1" as const, id, created_at: now,
+      source: { kind: "review_routed", ref: null, actor: "factory", via: null },
+      trigger_class: "self" as const, pipeline: "factory_health" as const,
+      title: "The factory's two records of spend disagree",
+      body: `budget.json says $${v.budget_usd.toFixed(4)} and steps/ says $${v.steps_usd.toFixed(4)}. They are written by the same command, so a write was lost.`,
+      priority: "high" as const, fingerprint: fp, status: "queued" as const, runs: [], pr: null, parent: null, related: [], spec: null,
+    };
+    await store.put(
+      [
+        { path: workItemPath(id), content: json(item) },
+        { path: LEDGER, content: json({ ...ledger, updated_at: now, open: [...ledger.open, { work_item: id, pipeline: "factory_health", status: "queued", fingerprint: fp, priority: "high", created_at: now, fixes: ["spend_mismatch"] }] }) },
+      ],
+      "budget verify: spend records disagree",
+    );
+  }
+  return 1;
+}
+
+/**
+ * `bsf budget minutes`: Actions minutes billed this month, from the steps'
+ * billed_minutes, against the plan's limit. A null limit (public repos,
+ * where standard runners are free) is never exceeded.
+ */
+async function budgetMinutesCommand(): Promise<number> {
+  const cfg = await factoryConfig();
+  const gh = new GitHub({ repo: requireRepo() });
+  const { FactoryStore } = await import("./lib/store.js");
+  const store = new FactoryStore(gh);
+  const month = nowIso().slice(0, 7);
+  let used = 0;
+  for (const n of (await store.data.list("steps/")).filter((x) => x.endsWith(".json"))) {
+    const d = await store.data.readJson<{ at?: string; billed_minutes?: number }>(n).catch(() => null);
+    if (d !== null && typeof d.at === "string" && d.at.startsWith(month) && typeof d.billed_minutes === "number") used += d.billed_minutes;
+  }
+  const limit = cfg.budget?.monthly_actions_minutes ?? null;
+  setOutput("minutes_used", String(used));
+  if (limit === null) {
+    process.stdout.write(`${used} Actions minutes billed this month; no limit applies here\n`);
+    return 0;
+  }
+  process.stdout.write(`${used} of ${limit} Actions minutes billed this month${used > limit ? ": over the limit" : ""}\n`);
+  return used > limit ? 1 : 0;
+}
+
+/** Minutes GitHub billed for a run, from its timing; null when unreadable. */
+async function billedMinutes(gh: GitHub, runId: string): Promise<number | null> {
+  try {
+    const t = await gh.get<{ run_duration_ms?: number; billable?: Record<string, { total_ms?: number }> }>(`repos/${gh.repo}/actions/runs/${runId}/timing`);
+    const ms = Object.values(t.billable ?? {}).reduce((a, b) => a + (b.total_ms ?? 0), 0);
+    return ms > 0 ? Math.ceil(ms / 60_000) : null;
+  } catch {
+    return null;
+  }
 }
 
 /** `bsf budget status`: spent, held and left, for a person reading a log. */
@@ -2195,10 +2431,18 @@ async function brainstormTurnCommand(sub: "say" | "wait" | "close" | "frame", wo
         at: c.created_at ?? nowIso(),
         who: "person",
         text: (c.body ?? "").trim(),
+        comment: c.id,
       });
     },
     onHeartbeat: async () => {
       await bs.mark(gh, workItem, { holder, now: nowIso() });
+    },
+    // "Build it" ends the conversation with what the factory understood, and
+    // says nothing back: the run goes straight on to spec (fix 7).
+    onGoAhead: async () => {
+      const current = await bs.readBrainstorm(gh, workItem);
+      const lastFactory = [...(current?.turns ?? [])].reverse().find((t) => t.who === "factory")?.text ?? "";
+      await bs.closeBrainstorm(gh, workItem, current?.understood ?? lastFactory, nowIso());
     },
   });
 
@@ -2359,7 +2603,71 @@ async function sandboxCommandCli(second: string | undefined, args: Args): Promis
         log: (l) => process.stdout.write(`${l}\n`),
       });
       setOutput("app_url", served.url ?? "");
+      // An app the manifest says to run that never answered is a failure of
+      // this step, not a quiet note for the agent to trip over: the role
+      // cannot verify anything without it (fix 1).
+      if (served.appExpected && served.url === null) {
+        process.stdout.write(`${served.failure ?? "the app did not start"}; the last lines of its log are in app.json\n`);
+        return 1;
+      }
     }
+    return 0;
+  }
+  if (second === "ui-paths") {
+    // `bsf sandbox ui-paths [--file PATH]`: record which files are the UI, so
+    // the PR report needs a video only for changes to them.
+    const file = typeof args["file"] === "string" ? args["file"] : ".factory/sandbox/manifest.json";
+    if (!existsSync(file)) die(`${file} does not exist`);
+    const { detectUiPaths } = await import("./lib/ui-paths.js");
+    const manifest = JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>;
+    const found = detectUiPaths(process.cwd());
+    writeFileSync(file, `${JSON.stringify({ ...manifest, ui_paths: found }, null, 2)}\n`);
+    process.stdout.write(`ui paths: ${found.length === 0 ? "none found" : found.join(", ")}\n`);
+    return 0;
+  }
+  if (second === "scrub") {
+    // `bsf sandbox scrub [--file PATH]`: replace credential-shaped placeholder values
+    // in the manifest, so a secret scanner has nothing to refuse the PR over.
+    const file = typeof args["file"] === "string" ? args["file"] : ".factory/sandbox/manifest.json";
+    if (!existsSync(file)) die(`${file} does not exist`);
+    const { scrubPlaceholders } = await import("./lib/placeholders.js");
+    const out = scrubPlaceholders(readFileSync(file, "utf8"));
+    if (out.replaced > 0) writeFileSync(file, out.text);
+    process.stdout.write(`scrubbed ${out.replaced} secret-shaped value${out.replaced === 1 ? "" : "s"} in ${file}\n`);
+    return 0;
+  }
+  if (second === "dry-run") {
+    // `bsf sandbox dry-run`: do exactly what the checker does before its
+    // agent starts (start the sandbox, serve the app on the host) and say
+    // whether the app answered. Setup runs it so it cannot finish with a
+    // sandbox the checker could not use.
+    const loaded = loadManifest(process.cwd());
+    if (loaded.kind !== "ok") {
+      process.stdout.write("dry run: no usable sandbox manifest\n");
+      return 1;
+    }
+    const workspace = process.env["GITHUB_WORKSPACE"] ?? process.cwd();
+    await startSandbox({
+      root: process.cwd(),
+      workspace,
+      ...(process.env["FACTORY_SANDBOX_ENV"] === undefined ? {} : { secretBlob: process.env["FACTORY_SANDBOX_ENV"] }),
+    });
+    const { mkdtempSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const served = await serveOnHost({
+      manifest: loaded.manifest,
+      workspace,
+      env: closedEnv(workspace) ?? {},
+      infoFile: join(mkdtempSync(join(tmpdir(), "bsf-dry-")), "app.json"),
+      log: (l) => process.stdout.write(`${l}\n`),
+    });
+    const { stopServing } = await import("./commands/sandbox.js");
+    stopServing();
+    if (served.appExpected && served.url === null) {
+      process.stdout.write(`dry run failed: ${served.failure ?? "the app did not start"}\n`);
+      return 1;
+    }
+    process.stdout.write(`dry run passed: ${served.url ?? "no app to serve"}\n`);
     return 0;
   }
   if (second === "report") {
@@ -2657,6 +2965,7 @@ async function doctorCommand(args: Args): Promise<number> {
 
   const report = await runDoctor({
     root,
+    fixModes: args["fix-modes"] === true,
     ...(repo === undefined ? {} : { gh: new GitHub({ repo }) }),
   });
 

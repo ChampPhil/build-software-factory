@@ -12,6 +12,7 @@ vi.mock("../src/lib/store.js", async (orig) => {
   class FactoryStore {
     constructor(_gh: unknown, _ref?: string) {}
     data = {
+      pin: async () => null,
       read: async (p: string) => files.get(p) ?? null,
       readJson: async (p: string) => (files.has(p) ? (JSON.parse(files.get(p)!) as unknown) : null),
       list: async (prefix = "") => [...files.keys()].filter((k) => k.startsWith(prefix)),

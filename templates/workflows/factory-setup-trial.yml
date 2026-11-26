@@ -47,6 +47,7 @@ jobs:
           cp -R .factory-trusted/.factory/bin/. "$RUNNER_TEMP/bsf/"
           rm -rf .factory-trusted
           echo "$RUNNER_TEMP/bsf" >> "$GITHUB_PATH"
+          chmod +x "$RUNNER_TEMP/bsf/"*
           "$RUNNER_TEMP/bsf/bsf" --version
       - name: Fetch this round's design
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4

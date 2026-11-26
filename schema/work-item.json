@@ -244,6 +244,11 @@
       },
       "description": "PRs this item had before its current one: each was rebuilt on main as the next after it conflicted. An approval on one carries to the next when the rebuilt change adds the same lines and removes nothing new."
     },
+    "requeues": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "How many times a run ended without finishing and the factory put this item back in the queue. At 2 it stops and asks a person."
+    },
     "goal": {
       "type": [
         "string",

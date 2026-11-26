@@ -1,6 +1,8 @@
 "use client";
 
-import { useActions, useStandingGoals, useWriters } from "@/lib/data";
+import { useEffect, useState } from "react";
+import type { WorkflowRunSummary } from "@/lib/github";
+import { useActions, useHealthIssues, useStandingGoals, useWriters } from "@/lib/data";
 import { ago, clock, day } from "@/lib/view";
 import { useApp } from "@/components/app";
 import { AskFactory, Goals, SettingsForm } from "@/components/settings";
@@ -44,6 +46,17 @@ export default function Factory() {
   const goals = useStandingGoals(client);
   const writers = useWriters(client);
   const actions = useActions(client, version);
+  const healthIssues = useHealthIssues(client, version);
+  // The shared list holds the newest runs of everything; a quiet workflow can fall off it, so ask for its own last run.
+  const [fetched, setFetched] = useState<Record<number, WorkflowRunSummary | null>>({});
+  useEffect(() => {
+    const list = actions.state === "ready" ? actions.data : null;
+    if (list === null) return;
+    for (const w of list.workflows) {
+      if (list.runs.some((r) => r.workflow_id === w.id) || w.id in fetched) continue;
+      void client.lastRunOf(w.id).then((r) => setFetched((f) => ({ ...f, [w.id]: r }))).catch(() => setFetched((f) => ({ ...f, [w.id]: null })));
+    }
+  }, [actions, client, fetched]);
   const data = index.state === "ready" ? index.data : null;
   const health = data?.health;
   const name = repo.split("/")[1] ?? repo;
@@ -88,7 +101,7 @@ export default function Factory() {
               <div className="table wf-t" role="table" aria-label="Workflows">
                 {actions.data.workflows.map((w) => {
                   const file = w.path.split("/").pop() ?? w.path;
-                  const last = actions.data!.runs.find((r) => r.workflow_id === w.id);
+                  const last = actions.data!.runs.find((r) => r.workflow_id === w.id) ?? fetched[w.id] ?? undefined;
                   return (
                     <div className="tr" role="row" key={w.id}>
                       <span role="cell" className="t">
@@ -148,6 +161,21 @@ export default function Factory() {
 
           <section id="health">
             <h2 className="sect">Health</h2>
+            {healthIssues.state === "ready" && healthIssues.data.length > 0 && (
+              <div className="health-issues">
+                <h3>Problems the factory reported about itself</h3>
+                <ul className="plain-list">
+                  {healthIssues.data.map((i) => (
+                    <li key={i.number}>
+                      <Cross /> <Out href={i.html_url}>#{i.number} {i.title}</Out>{" "}
+                      <button className="btn small" type="button" onClick={() => void act(() => client.setIssueState(i.number, "closed"), "Closed. It comes back only if the problem does.")}>
+                        Close
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
             {health === undefined ? (
               <p className="muted">Nothing recorded yet. The first run writes it.</p>
             ) : (

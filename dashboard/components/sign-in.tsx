@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { GitHubClient } from "@/lib/github";
 import { fetchAuthConfig, startGithubLogin, type AuthConfig } from "@/lib/github-login";
-import { PERMISSIONS, levelWords, tokenLink } from "@/lib/permissions";
+import { PERMISSIONS, levelWords, missingPermissionSentence, tokenLink, tokenSteps } from "@/lib/permissions";
 import { looksLikeToken, repoFromAddress, startDemo, validRepo, writeSession, type Session } from "@/lib/session";
 import { Mark, Out } from "@/components/ui";
 import { BrandCredit } from "@/components/brand-credit";
@@ -87,7 +87,7 @@ export function SignIn({
               setWaiting(session);
             }
           } else {
-            setProblem(access.reason);
+            setProblem(access.missing !== undefined && access.missing.length > 0 ? missingPermissionSentence(access.missing) : access.reason);
           }
           return;
         }
@@ -186,11 +186,11 @@ export function SignIn({
         ) : (
           <span className="muted small">Enter the repository first.</span>
         )}
-        <span className="muted small">
-          The form opens with the name, the lifetime and every permission already chosen. Under Repository access,
-          pick Only select repositories and choose <b>{repoOk ? repo.trim() : "your repository"}</b>. Then press
-          Generate token and copy it.
-        </span>
+        <ol className="token-steps">
+          {tokenSteps(repo).map((t, i) => (
+            <li key={i}>{t}</li>
+          ))}
+        </ol>
         <details className="perms">
           <summary>What the token is allowed to do</summary>
           <ul className="plain-list">
@@ -333,7 +333,7 @@ export function SignIn({
 
           {auth !== undefined && (
             <details className="token" open={!sso}>
-              <summary>{sso ? "Use a token instead" : "Sign in with a token"}</summary>
+              <summary>{sso ? "Or use a token" : "Sign in with a token"}</summary>
               {tokenForm}
             </details>
           )}

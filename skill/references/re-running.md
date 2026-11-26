@@ -28,8 +28,8 @@ So:
 - **Definition and context files** are left alone unless the user asked for a
   change, or a new runner version needs a field they do not have — in which
   case add the field with its default and say which you added.
-- **Guardrails** are extended, never reset. A baseline gardening has been
-  lowering is not re-recorded at today's count: that would undo the work.
+- **Guardrails** are extended, never reset. A rule that is already enforced
+  stays enforced: never loosen one, and never baseline a new one.
 - **Data refs** are left alone entirely.
 - **Candidates** are re-mined, but only new corrections are shown. One the user
   already rejected is not offered again:

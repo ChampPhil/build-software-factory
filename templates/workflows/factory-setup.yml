@@ -120,6 +120,7 @@ jobs:
           echo "BSF_TRUSTED_ROOT=$RUNNER_TEMP/bsf-trusted" >> "$GITHUB_ENV"
           rm -rf .factory-trusted
           echo "$RUNNER_TEMP/bsf" >> "$GITHUB_PATH"
+          chmod +x "$RUNNER_TEMP/bsf/"*
           "$RUNNER_TEMP/bsf/bsf" --version
       # Setup uses the builder's model: it reads code and writes working
       # configuration, which is the builder's kind of work.
@@ -269,6 +270,7 @@ jobs:
           cp -R .factory-trusted/.factory/bin/. "$RUNNER_TEMP/bsf/"
           rm -rf .factory-trusted
           echo "$RUNNER_TEMP/bsf" >> "$GITHUB_PATH"
+          chmod +x "$RUNNER_TEMP/bsf/"*
           "$RUNNER_TEMP/bsf/bsf" --version
       - name: Fetch every round
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
@@ -318,11 +320,29 @@ jobs:
           if [ -f .factory/sandbox/manifest.json ]; then cp .factory/sandbox/manifest.json "$RUNNER_TEMP/main-manifest.json"; fi
           mkdir -p .factory/sandbox .factory/definition/context
           cp "$RUNNER_TEMP/manifest.json" .factory/sandbox/manifest.json
+          # The agent invents plausible-looking values for the keys a sandbox
+          # needs; a secret scanner cannot tell them from real ones and would
+          # block this PR over a value that was never a secret.
+          bsf sandbox scrub --file .factory/sandbox/manifest.json
+          # Which files are the UI, so a video is asked for only when one changes.
+          bsf sandbox ui-paths --file .factory/sandbox/manifest.json
           if [ -d "$design/stubs" ]; then rm -rf .factory/sandbox/stubs; cp -R "$design/stubs" .factory/sandbox/stubs; fi
           if [ -f "$design/research-domains.txt" ]; then cp "$design/research-domains.txt" .factory/sandbox/research-domains.txt; fi
           # An amendment changes the sandbox only; the context stays the
           # user's once it has been merged.
-          if [ -z "$AMEND" ] && [ -d "$design/context" ]; then cp "$design/context/"*.md .factory/definition/context/; fi
+          # fundamentals.md carries the person's own "Product intent (from you)"
+          # block; it is merged around, never rewritten.
+          if [ -z "$AMEND" ] && [ -d "$design/context" ]; then
+            for f in "$design/context/"*.md; do
+              dest=".factory/definition/context/$(basename "$f")"
+              if [ "$(basename "$f")" = "fundamentals.md" ]; then
+                bsf context merge-intent --existing "$dest" --incoming "$f" --out "$RUNNER_TEMP/fundamentals.merged.md"
+                cp "$RUNNER_TEMP/fundamentals.merged.md" "$dest"
+              else
+                cp "$f" "$dest"
+              fi
+            done
+          fi
           # The setup agent's checker configuration. It may not reach the
           # factory's own files or the workflows; the PR is reviewed in full.
           if [ -z "$AMEND" ] && [ -s "$design/guardrails.patch" ]; then
@@ -348,15 +368,31 @@ jobs:
               guard="$guard. Rules: $(jq -r '"\(.installed // [] | length) installed, \(.skipped // [] | length) left out"' "$design/guardrails.json")"
             fi
           fi
-          branch="factory/setup-${GITHUB_RUN_ID}"
+          # The checker starts the sandbox and serves the app exactly like this
+          # before its agent runs. A sandbox that cannot do it is not shipped.
+          bsf sandbox dry-run
+          # One setup PR at a time: a re-run updates the open one rather than
+          # opening a second for the person to sort out.
+          existing=""
+          if [ -z "$AMEND" ]; then
+            existing=$(gh api "repos/${GITHUB_REPOSITORY}/pulls?state=open&per_page=100" \
+              --jq '[.[] | select(.head.ref | startswith("factory/setup-"))] | sort_by(.number) | .[0] | "\(.number) \(.head.ref)"' 2>/dev/null || true)
+            [ "$existing" = "null null" ] && existing=""
+          fi
           git config user.name "factory[bot]"
           git config user.email "factory[bot]@users.noreply.github.com"
-          git checkout -b "$branch"
+          if [ -n "$existing" ]; then
+            existing_pr="${existing%% *}"; branch="${existing#* }"
+            git checkout -q -B "$branch"
+          else
+            existing_pr=""; branch="factory/setup-${GITHUB_RUN_ID}"
+            git checkout -b "$branch"
+          fi
           git add .factory
           if git diff --cached --quiet; then echo "nothing changed"; exit 0; fi
           if [ -z "$AMEND" ]; then title="Set up the software factory"; else title="Amend the factory's sandbox"; fi
           git commit -q -m "$title (sandbox tier: $TIER)"
-          git push -q "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "$branch"
+          git push -q --force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "$branch"
           # The PR is rendered from the setup agent's report, with the trial's
           # screenshot of the app in the frozen sandbox first: proof and
           # diagrams before prose, the full detail one link away.
@@ -364,14 +400,20 @@ jobs:
             focus: ([
               { title: "What the sandbox can exercise", detail: ("It reached tier " + $tier + " when the runner brought it up and measured it. .factory/sandbox/manifest.json says what it runs, what it can and cannot exercise, and every round that was tried.") },
               { title: "No credential of yours is in it", detail: "Every value is local, fake, a throwaway service, or a named test-mode secret." }
-            ] + (if $guard == "" then [] else [{ title: "Guardrails", detail: ($guard + "; existing violations are baselined per file, not fixed here, and gardening clears them in small PRs.") }] end)),
+            ] + (if $guard == "" then [] else [{ title: "Guardrails", detail: ($guard + "; setup removes the violations they flag in its cleanup pull request or requests, so nothing is baselined.") }] end)),
             links: [{ label: "Every round, and its logs", url: $run }]
           }' > "$RUNNER_TEMP/report-extra.json"
           bsf report setup --dir "$design/report" --trial-dir "$ROUNDS_DIR/trial-round-$CHOSEN" --tier "$TIER" \
             --extra "$RUNNER_TEMP/report-extra.json" --out "$RUNNER_TEMP/pr-body.md"
-          pr=$(gh api "repos/${GITHUB_REPOSITORY}/pulls" -f title="$title" -f head="$branch" \
-            -f base="${{ github.event.repository.default_branch }}" -F "body=@$RUNNER_TEMP/pr-body.md" --jq .number)
-          echo "opened #$pr"
+          if [ -n "$existing_pr" ]; then
+            pr="$existing_pr"
+            gh api -X PATCH "repos/${GITHUB_REPOSITORY}/pulls/$pr" -f title="$title" -F "body=@$RUNNER_TEMP/pr-body.md" > /dev/null
+            echo "updated #$pr (the open setup PR)"
+          else
+            pr=$(gh api "repos/${GITHUB_REPOSITORY}/pulls" -f title="$title" -f head="$branch" \
+              -f base="${{ github.event.repository.default_branch }}" -F "body=@$RUNNER_TEMP/pr-body.md" --jq .number)
+            echo "opened #$pr"
+          fi
           if [ -f "$RUNNER_TEMP/pr-body.md.continued.md" ]; then
             gh api "repos/${GITHUB_REPOSITORY}/issues/$pr/comments" -F "body=@$RUNNER_TEMP/pr-body.md.continued.md" > /dev/null
           fi

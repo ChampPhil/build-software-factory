@@ -1,3 +1,5 @@
+import { scopeOf, scopesOverlap, filesNamedIn } from "../lib/scope.js";
+import { closePullWithReason } from "../lib/github.js";
 import { runId as newRunId } from "../lib/ids.js";
 import { FactoryStore, LEDGER, json, livePath, runPath, workItemPath, type Ledger } from "../lib/store.js";
 import { appendTurn, closeBrainstorm } from "./brainstorm.js";
@@ -27,8 +29,21 @@ interface WorkItemDoc {
   readonly runs?: readonly string[];
   readonly pr?: number | null;
   readonly previous_prs?: readonly number[];
+  readonly requeues?: number;
   readonly source?: { readonly ref?: string | null };
   readonly [k: string]: unknown;
+}
+
+/** Where a run parks what the gates' own workflow needs to finish it (fix 6). */
+export const handoffPath = (runId: string): string => `handoff/${runId}.json`;
+
+export interface Handoff {
+  readonly run: string;
+  readonly work_item: string;
+  readonly pr: number;
+  readonly attempt: number;
+  readonly build_result: string;
+  readonly steps: readonly StepReportDoc[];
 }
 
 /** The ledger's open list with one item's status (and PR) changed. */
@@ -108,6 +123,11 @@ export async function startRun(opts: {
     ],
     `run ${id}: ${item.id} ${status} (attempt ${opts.attempt})`,
   );
+  // The issue stops saying "queued" once a run has it (fix 3).
+  const issue = issueNumber(item.source?.ref);
+  if (issue !== null && !opts.escalate && opts.attempt === 1) {
+    await opts.gh.send("DELETE", `repos/${opts.gh.repo}/issues/${issue}/labels/${encodeURIComponent("factory:queued")}`).catch(() => undefined);
+  }
   return { runId: id, status };
 }
 
@@ -199,7 +219,7 @@ async function gateChecks(gh: GitHub, sha: string): Promise<readonly GateCheck[]
 }
 
 export interface AfterGatesReport {
-  readonly next: AfterGates["next"] | "no_pr" | "timed_out" | "stood_down" | "wait_sandbox";
+  readonly next: AfterGates["next"] | "no_pr" | "timed_out" | "stood_down" | "wait_sandbox" | "requeued" | "awaiting_gates";
   readonly reason: string;
   readonly pr: number | null;
   readonly attempt: number;
@@ -236,13 +256,23 @@ export async function finishRun(opts: FinishRunOptions): Promise<AfterGatesRepor
   const pr = opts.pr !== null && opts.pr > 0 ? opts.pr : null;
 
   const live = await store.data.readJson<{ started_at?: string }>(livePath(opts.runId)).catch(() => null);
+  // A run that handed off to the gates' workflow comes back here once they
+  // finish. Its item waits in review, not running.
+  const handed = await store.data.readJson<Handoff>(handoffPath(opts.runId)).catch(() => null);
+  // The data ref is the one place a step's cost is recorded: `bsf budget
+  // settle` writes steps/<run>/<role>-<attempt>.json in the same command that
+  // charges the budget. The artifacts are evidence, and fill in only a role
+  // the ref has no record of, so the two can no longer disagree.
+  const recorded = await stepsFromRef(store, opts.runId);
+  const carried = opts.steps ?? handed?.steps ?? [];
+  const steps = [...recorded, ...carried.filter((c) => !recorded.some((r) => r.role === c.role))];
   const record = (report: AfterGatesReport, checks: readonly GateCheck[], commit: string | null, status: string) => ({
     path: runPath(opts.runId),
     content: json(
       runRecord({
         runId: opts.runId, workItem: item.id, pipeline: item.pipeline,
         startedAt: live?.started_at ?? opts.now(), endedAt: opts.now(), attempt: opts.attempt,
-        report, itemStatus: status, steps: opts.steps ?? [], checks, commit,
+        report, itemStatus: status, steps, checks, commit,
       }),
     ),
   });
@@ -250,7 +280,7 @@ export async function finishRun(opts: FinishRunOptions): Promise<AfterGatesRepor
   // Triage (or a person) already decided what became of the item: needs
   // info, out of scope, a duplicate. There is nothing to gate and nothing to
   // retry; the run only ends its live record.
-  if (item.status !== "running") {
+  if (item.status !== "running" && !(handed !== null && item.status === "in_review")) {
     const stood: AfterGatesReport = { next: "stood_down", reason: `${item.id} is ${item.status}`, pr, attempt: opts.attempt };
     await store.put(
       [{ path: livePath(opts.runId), content: null }, record(stood, [], null, item.status)],
@@ -266,10 +296,19 @@ export async function finishRun(opts: FinishRunOptions): Promise<AfterGatesRepor
   if (pr === null) {
     // No PR: the builder failed, or produced nothing. Another attempt is the
     // same as after a failed gate, and at the cap it is a human's.
-    report =
-      opts.attempt >= opts.maxAttempts
-        ? { next: "escalate", reason: `the build made no PR (${opts.buildResult || "not run"}) on attempt ${opts.attempt} of ${opts.maxAttempts}`, pr, attempt: opts.attempt }
-        : { next: "retry", reason: `the build made no PR (${opts.buildResult || "not run"})`, pr, attempt: opts.attempt + 1 };
+    // A run whose build never ran (triage or an earlier step failed) did not
+    // fail the item: put it back in the queue, say so on the issue, and stop
+    // asking after two tries (fix 3). A build that ran and made nothing keeps
+    // the attempt cap below.
+    const buildRan = opts.buildResult !== "" && opts.buildResult !== "not run" && opts.buildResult !== "skipped";
+    const requeues = item.requeues ?? 0;
+    report = !buildRan
+      ? requeues < 2
+        ? { next: "requeued", reason: `the run ended before the build (${opts.buildResult || "not run"})`, pr, attempt: opts.attempt }
+        : { next: "escalate", reason: `the run ended before the build twice (${opts.buildResult || "not run"})`, pr, attempt: opts.attempt }
+      : opts.attempt >= opts.maxAttempts
+        ? { next: "escalate", reason: `the build made no PR (${opts.buildResult}) on attempt ${opts.attempt} of ${opts.maxAttempts}`, pr, attempt: opts.attempt }
+        : { next: "retry", reason: `the build made no PR (${opts.buildResult})`, pr, attempt: opts.attempt + 1 };
   } else {
     // Link the PR to the item first: the gates' plan reads this link to
     // find the spec the verifier checks the change against.
@@ -302,13 +341,24 @@ export async function finishRun(opts: FinishRunOptions): Promise<AfterGatesRepor
             body: `Rebuilt on the current main as #${pr}, because this branch conflicted with it. An approval given here carries to #${pr} when the rebuilt change adds the same lines and removes nothing new.`,
           })
           .catch(() => undefined);
-        await opts.gh.send("PATCH", `repos/${opts.gh.repo}/pulls/${replaced}`, { state: "closed" }).catch(() => undefined);
+        // The comment above says why; closing goes through the one helper.
+        await closePullWithReason(opts.gh, replaced, `Replaced by #${pr} because this branch conflicted with main.`);
       }
     }
+    // A hardening PR changes the files its correction named, and tests for
+    // them. Anything else (rules, dependencies, config nobody asked for) is
+    // a person's to decide, so the run stops here.
+    const stray = item.pipeline === "hardening" ? await strayHardeningFiles(opts.gh, pr, item) : [];
+    const strayReport: typeof report = {
+      next: "escalate",
+      reason: `this hardening PR changes files its correction did not name: ${stray.slice(0, 5).join(", ")}${stray.length > 5 ? ` and ${stray.length - 5} more` : ""}`,
+      pr,
+      attempt: opts.attempt,
+    };
     const deadline = Date.parse(opts.now()) + opts.waitMs;
     let head = (await opts.gh.pull(pr)).head.sha;
-    let checks = await gateChecks(opts.gh, head);
-    for (;;) {
+    let checks = stray.length > 0 ? [] : await gateChecks(opts.gh, head);
+    for (; stray.length === 0; ) {
       const agg = checks.find((c) => c.name === GATES_CHECK);
       if (agg !== undefined && agg.status === "completed") break;
       if (Date.parse(opts.now()) >= deadline) break;
@@ -319,7 +369,13 @@ export async function finishRun(opts: FinishRunOptions): Promise<AfterGatesRepor
     finalChecks = checks;
     finalHead = head;
     const agg = checks.find((c) => c.name === GATES_CHECK);
-    if (agg === undefined || agg.status !== "completed") {
+    if (stray.length > 0) {
+      report = strayReport;
+    } else if ((agg === undefined || agg.status !== "completed") && opts.waitMs <= 0) {
+      // Hand off: the gates' own workflow finishes this run when they report,
+      // so no job here sits billing minutes while it waits (fix 6).
+      report = { next: "awaiting_gates", reason: `${GATES_CHECK} has not reported on ${head.slice(0, 7)} yet`, pr, attempt: opts.attempt };
+    } else if (agg === undefined || agg.status !== "completed") {
       report = { next: "timed_out", reason: `${GATES_CHECK} did not report on ${head.slice(0, 7)} in ${Math.round(opts.waitMs / 60000)} min`, pr, attempt: opts.attempt };
     } else {
       const d = afterGates({ ...gateVerdicts(checks), attempt: opts.attempt, maxAttempts: opts.maxAttempts });
@@ -346,6 +402,21 @@ export async function finishRun(opts: FinishRunOptions): Promise<AfterGatesRepor
     }
   }
 
+  if (report.next === "awaiting_gates" && pr !== null) {
+    const doc: Handoff = { run: opts.runId, work_item: item.id, pr, attempt: opts.attempt, build_result: opts.buildResult, steps };
+    const now = opts.now();
+    const ledger = await store.ledger(now);
+    await store.put(
+      [
+        { path: workItemPath(item.id), content: json({ ...item, status: "in_review", pr }) },
+        { path: LEDGER, content: json(withStatus(ledger, item, "in_review", pr, now)) },
+        { path: handoffPath(opts.runId), content: json(doc) },
+      ],
+      `run ${opts.runId}: ${item.id} waits for the gates on PR #${pr}`,
+    );
+    return report;
+  }
+
   // Where the item goes. A run that timed out waiting is left in review with
   // its PR: the gates may still report, and merge reads them directly.
   const status: Status =
@@ -353,15 +424,23 @@ export async function finishRun(opts: FinishRunOptions): Promise<AfterGatesRepor
       ? "in_review"
       : report.next === "retry"
         ? "running"
-        : "escalated";
+        : report.next === "requeued"
+          ? "queued"
+          : "escalated";
   const now = opts.now();
   const ledger = await store.ledger(now);
-  const next = { ...item, status, ...(pr === null ? {} : { pr }) };
+  const next = {
+    ...item,
+    status,
+    ...(pr === null ? {} : { pr }),
+    ...(report.next === "requeued" ? { requeues: (item.requeues ?? 0) + 1 } : {}),
+  };
   await store.put(
     [
       { path: workItemPath(item.id), content: json(next) },
       { path: LEDGER, content: json(withStatus(ledger, item, status, pr, now)) },
       { path: livePath(opts.runId), content: null },
+      ...(handed === null ? [] : [{ path: handoffPath(opts.runId), content: null }]),
       record(report, finalChecks, finalHead, status),
       ...(failures === null ? [] : [{ path: gateFailuresPath(item.id), content: json(failures) }]),
     ],
@@ -374,6 +453,19 @@ export async function finishRun(opts: FinishRunOptions): Promise<AfterGatesRepor
       attempt: String(report.attempt),
       pr_number: String(pr ?? 0),
     });
+  }
+  if (report.next === "requeued") {
+    const issue = issueNumber(item.source?.ref);
+    if (issue !== null) {
+      const at = new Date(now);
+      const hhmm = `${String(at.getUTCHours()).padStart(2, "0")}:${String(at.getUTCMinutes()).padStart(2, "0")} UTC`;
+      await opts.gh
+        .send("POST", `repos/${opts.gh.repo}/issues/${issue}/comments`, {
+          body: `I picked this up at ${hhmm} but could not finish the step (${report.reason}). Trying again in 5 minutes.`,
+        })
+        .catch(() => undefined);
+      await opts.gh.send("POST", `repos/${opts.gh.repo}/issues/${issue}/labels`, { labels: ["factory:queued"] }).catch(() => undefined);
+    }
   }
   if (pr !== null && report.next === "clear") {
     // Merge reads only PRs that are out of draft, so clearing is what hands
@@ -919,11 +1011,7 @@ export async function dropItems(opts: {
       }
     }
     if (typeof item.pr === "number") {
-      await opts.gh.send("POST", `repos/${opts.gh.repo}/issues/${item.pr}/comments`, { body: `Dropped by an owner: ${opts.why}` }).catch(() => undefined);
-      await opts.gh.send("PATCH", `repos/${opts.gh.repo}/pulls/${item.pr}`, { state: "closed" }).then(
-        () => closedPrs.push(item.pr as number),
-        () => undefined,
-      );
+      if (await closePullWithReason(opts.gh, item.pr, `Closed because an owner dropped it: ${opts.why}`)) closedPrs.push(item.pr);
     }
     dropped.push(id);
   }
@@ -980,4 +1068,145 @@ async function escalationBody(gh: GitHub, workItem: string, reason: string, fail
     footer: `Work item ${workItem}`,
   });
   return rendered.body;
+}
+
+
+/**
+ * The files a hardening PR changed that its correction did not name. Empty
+ * when the correction names no files (nothing to hold it to) or every changed
+ * file is named or is a test.
+ */
+export async function strayHardeningFiles(gh: GitHub, pr: number, item: { readonly body?: string } | object): Promise<string[]> {
+  const allowed = scopeOf(filesNamedIn((item as { body?: string }).body ?? ""));
+  if (allowed === null) return [];
+  const changed = (await gh.pullFiles(pr).catch(() => [])).map((f) => f.filename);
+  const isTest = (f: string) => /(^|\/)(tests?|__tests__|spec)\//.test(f) || /\.(test|spec)\.[a-z]+$/.test(f);
+  return changed.filter((f) => !isTest(f) && !scopesOverlap(scopeOf([f]), allowed));
+}
+
+/* ------------------------------------------------------ a step that failed */
+
+export interface JobSummary {
+  readonly name: string;
+  readonly conclusion: string | null;
+}
+
+/**
+ * Did the role's agent actually finish? gh-aw wraps every role in jobs named
+ * `<caller> / <job>`. When triage decides to proceed it has nothing to emit,
+ * gh-aw's `conclusion` job reports it "could not complete", and the whole
+ * called workflow fails although the agent, its detection and its safe
+ * outputs all succeeded. That is a recovery, not a failure; any other failed
+ * job is a real one.
+ */
+export function agentFinishedCleanly(jobs: readonly JobSummary[], step: string): boolean {
+  const mine = jobs.filter((j) => j.name.toLowerCase().startsWith(`${step} / `) || j.name.toLowerCase().startsWith(`${step}/`));
+  const part = (j: JobSummary) => j.name.split("/").pop()!.trim().toLowerCase();
+  const agent = mine.find((j) => part(j) === "agent");
+  if (agent?.conclusion !== "success") return false;
+  return mine.every((j) => part(j) === "conclusion" || j.conclusion === "success" || j.conclusion === "skipped");
+}
+
+export interface FailStepReport {
+  readonly recovered: boolean;
+  readonly action: "recovered" | "requeued" | "escalated";
+  readonly reason: string;
+}
+
+/**
+ * `bsf run fail-step ITEM --step triage`: a step ended in failure.
+ *
+ * If its agent in fact finished, the run carries on. Otherwise the item goes
+ * back in the queue through the same counter as a run that ended before the
+ * build (fix 3), and the person is told once, on their issue.
+ */
+export async function failStep(opts: {
+  readonly gh: GitHub;
+  readonly workItem: string;
+  readonly step: string;
+  readonly runId: string;
+  readonly now: string;
+  readonly jobs?: readonly JobSummary[];
+}): Promise<FailStepReport> {
+  const jobs =
+    opts.jobs ??
+    (
+      await opts.gh
+        .get<{ jobs: { name: string; conclusion: string | null }[] }>(`repos/${opts.gh.repo}/actions/runs/${opts.runId}/jobs?per_page=100`)
+        .catch(() => ({ jobs: [] }))
+    ).jobs;
+  if (agentFinishedCleanly(jobs, opts.step)) {
+    return { recovered: true, action: "recovered", reason: `the ${opts.step} agent finished; only gh-aw's closing report failed` };
+  }
+  const store = new FactoryStore(opts.gh);
+  const item = await store.get<WorkItemDoc>(workItemPath(opts.workItem), "work-item");
+  if (item === null) throw new Error(`${opts.workItem} is not on the data ref`);
+  const requeues = item.requeues ?? 0;
+  const escalate = requeues >= 2;
+  const status: Status = escalate ? "escalated" : "queued";
+  const ledger = await store.ledger(opts.now);
+  await store.put(
+    [
+      { path: workItemPath(item.id), content: json({ ...item, status, requeues: escalate ? requeues : requeues + 1 }) },
+      { path: LEDGER, content: json(withStatus(ledger, item, status, item.pr ?? null, opts.now)) },
+    ],
+    `${item.id}: ${opts.step} failed, ${escalate ? "escalated" : "queued again"}`,
+  );
+  const issue = issueNumber(item.source?.ref);
+  if (issue !== null) {
+    await opts.gh
+      .send("POST", `repos/${opts.gh.repo}/issues/${issue}/comments`, {
+        body: escalate
+          ? `The factory could not read this request (${opts.step} failed twice), so it has stopped and needs a person. Comment /retry once that is sorted.`
+          : `The factory could not read this request (${opts.step} failed). Trying again in 5 minutes.`,
+      })
+      .catch(() => undefined);
+    if (!escalate) await opts.gh.send("POST", `repos/${opts.gh.repo}/issues/${issue}/labels`, { labels: ["factory:queued"] }).catch(() => undefined);
+  }
+  return {
+    recovered: false,
+    action: escalate ? "escalated" : "requeued",
+    reason: `${opts.step} failed before its agent finished`,
+  };
+}
+
+
+/** The steps `bsf budget settle` recorded for a run, from `steps/<run>/`. */
+export async function stepsFromRef(store: FactoryStore, runId: string): Promise<StepReportDoc[]> {
+  const names = await store.data.list(`steps/${runId}/`).catch(() => [] as readonly string[]);
+  const out: StepReportDoc[] = [];
+  for (const n of names.filter((x) => x.endsWith(".json"))) {
+    const d = await store.data.readJson<StepRecord>(n).catch(() => null);
+    if (d === null) continue;
+    out.push({
+      role: d.role,
+      model: d.model ?? "unknown",
+      exit: "ok",
+      duration_sec: d.duration_sec,
+      tokens: d.tokens ?? { in: 0, out: 0 },
+      cost_usd: d.cost_usd,
+      transcript: null,
+    });
+  }
+  return out;
+}
+
+/** What `bsf budget settle` writes for each step it charges. */
+export interface StepRecord {
+  readonly role: string;
+  readonly run_id: string;
+  readonly attempt: number;
+  readonly at: string;
+  readonly model?: string;
+  readonly cost_usd: number;
+  readonly duration_sec: number;
+  readonly tokens?: { readonly in: number; readonly out: number };
+  /** Minutes GitHub billed for the job, when it could be read (fix 6). */
+  readonly billed_minutes?: number;
+}
+
+/** Split a budget key `<run>-<attempt>-<role>`. */
+export function parseBudgetKey(key: string): { run: string; attempt: number; role: string } | null {
+  const m = /^(\d+)-(\d+)-(.+)$/.exec(key);
+  return m === null ? null : { run: m[1]!, attempt: Number(m[2]), role: m[3]! };
 }

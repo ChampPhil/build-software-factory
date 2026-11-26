@@ -3,6 +3,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync, read
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { execFileSync } from "node:child_process";
 import { runDoctor, formatReport, rolesOf, rubricsOf, referencedInWorkflows } from "../src/commands/doctor.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -341,5 +342,42 @@ describe("variable classification", () => {
     const r = referencedInWorkflows(dir);
     expect(r.vars).toEqual(["SOME_APP"]);
     expect(r.optionalVars).toEqual(["SOME_LIMIT"]);
+  });
+});
+
+
+describe("exec-bits", () => {
+  const git = (...a: string[]) => execFileSync("git", a, { cwd: root, stdio: "ignore" });
+  const commitBin = (mode: "644" | "755") => {
+    mkdirSync(join(root, ".factory/bin"), { recursive: true });
+    writeFileSync(join(root, ".factory/bin/bsf"), "#!/bin/sh\n");
+    writeFileSync(join(root, ".factory/bin/bsf.cmd"), "@echo off\n");
+    git("init", "-q");
+    git("add", ".factory/bin");
+    git("update-index", `--chmod=${mode === "755" ? "+x" : "-x"}`, ".factory/bin/bsf");
+  };
+
+  it("flags a launcher committed without the execute bit", async () => {
+    commitBin("644");
+    const r = await runDoctor({ root });
+    expect(r.findings.some((f) => f.check === "exec-bits" && f.severity === "broken")).toBe(true);
+    expect(details(r)).toContain(".factory/bin/bsf");
+    expect(details(r)).not.toContain("bsf.cmd is");
+  });
+
+  it("is quiet when the bit is set", async () => {
+    commitBin("755");
+    expect((await runDoctor({ root })).findings.some((f) => f.check === "exec-bits")).toBe(false);
+  });
+
+  it("re-commits the modes with fixModes and finds nothing left", async () => {
+    commitBin("644");
+    const r = await runDoctor({ root, fixModes: true });
+    expect(r.findings.some((f) => f.check === "exec-bits")).toBe(false);
+    expect(execFileSync("git", ["ls-files", "-s", ".factory/bin/bsf"], { cwd: root, encoding: "utf8" })).toContain("100755");
+  });
+
+  it("says nothing outside a git repo", async () => {
+    expect((await runDoctor({ root })).findings.some((f) => f.check === "exec-bits")).toBe(false);
   });
 });

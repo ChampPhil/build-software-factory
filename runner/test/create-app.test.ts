@@ -7,7 +7,12 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 // @ts-expect-error -- a plain .mjs script with no type declarations; the
 // helpers under test are pure, and importing them is only possible because
 // the script now guards its own entry point.
-import { appName, APP_NAME_MAX, slugForAppName, runningAsEntryPoint } from "../../skill/scripts/create-app.mjs";
+import { appName, APP_NAME_MAX, slugForAppName, runningAsEntryPoint, installUrlFor, appJwt, confirmInstallation } from "../../skill/scripts/create-app.mjs";
+// @ts-expect-error -- plain .mjs helpers, no declarations
+import { waitFor, checkFor } from "../../skill/scripts/wait-for.mjs";
+// @ts-expect-error -- plain .mjs helpers, no declarations
+import { nextLine, currentJob, JOB_LINES } from "../../skill/scripts/progress.mjs";
+import { generateKeyPairSync } from "node:crypto";
 
 /**
  * Exercises the App-creation script's local server: the page it posts to
@@ -196,6 +201,28 @@ describe("create-app.mjs local server", () => {
     expect(stdout).toContain("workflows: not requested");
   });
 
+  it("the install landing page is the dashboard's, and says what to do next", async () => {
+    const res = await get("/installed?installation_id=1&setup_action=install");
+    expect(res.status).toBe(200);
+    expect(res.body).toContain("#f4f5f2");
+    expect(res.body).toContain("Your factory is connected");
+    expect(res.body).toContain("You can close this tab. Setup continues in your terminal.");
+    expect(res.body).toContain("window.close()");
+  });
+
+  it("refuses an install redirect that names no installation", async () => {
+    const res = await get("/installed");
+    expect(res.status).toBe(400);
+    expect(res.body).toContain("#f4f5f2");
+  });
+
+  it("the callback sends the browser straight to the install page, not through an interstitial", () => {
+    const src = readFileSync(join(SCRIPTS, "create-app.mjs"), "utf8");
+    expect(src).toContain('res.writeHead(302, { location: installUrl })');
+    expect(src).not.toContain("donePage");
+    expect(src).not.toContain("repos/${repo}/installation");
+  });
+
   // Last in this block on purpose: a handled callback closes the server.
   it("in preview, does not exchange a code even when the state is right", async () => {
     // The code is single-use, so exchanging it would spend it and create a
@@ -364,5 +391,111 @@ describe("the App's owner has to be the repo's owner", () => {
   it("accepts the matching --org without complaint", () => {
     const out = run(["--repo", "bsf-fixtures/ts-webapp", "--org", "bsf-fixtures", "--port", "8932"], "Organization");
     expect(out).not.toContain("does not own");
+  });
+});
+
+
+describe("installing the App on exactly one repository", () => {
+  it("builds the install URL for the one repo", () => {
+    expect(installUrlFor({ htmlUrl: "https://github.com/apps/x", ownerId: 7, repoId: 9 })).toBe(
+      "https://github.com/apps/x/installations/new/permissions?target_id=7&repository_ids[]=9",
+    );
+    expect(installUrlFor({ htmlUrl: "https://github.com/apps/x" })).toBe("https://github.com/apps/x/installations/new");
+  });
+
+  it("signs an App JWT with RS256 and the documented claims", () => {
+    const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+    const pem = privateKey.export({ type: "pkcs1", format: "pem" }) as string;
+    const jwt = appJwt({ pem, clientId: "Iv1.abc", now: 1000 }) as string;
+    const [h, b] = jwt.split(".") as [string, string];
+    expect(JSON.parse(Buffer.from(h, "base64url").toString())).toEqual({ alg: "RS256", typ: "JWT" });
+    expect(JSON.parse(Buffer.from(b, "base64url").toString())).toEqual({ iat: 940, exp: 1540, iss: "Iv1.abc" });
+  });
+
+  const fakeFetch = (selection: string, repos: string[]) =>
+    (async (url: string) => {
+      const ok = (o: unknown) => ({ ok: true, status: 200, json: async () => o });
+      if (url.endsWith("/access_tokens")) return ok({ token: "t" });
+      if (url.includes("/installation/repositories")) return ok({ repositories: repos.map((full_name) => ({ full_name })) });
+      return ok({ repository_selection: selection });
+    }) as unknown as typeof fetch;
+
+  it("accepts an install limited to the repo", async () => {
+    const r = await confirmInstallation({ installationId: 5, repo: "o/r", jwt: "j", fetchImpl: fakeFetch("selected", ["o/r"]) });
+    expect(r.ok).toBe(true);
+  });
+
+  it("stops with the exact fix when the install covers all repositories", async () => {
+    const r = await confirmInstallation({ installationId: 5, repo: "o/r", jwt: "j", fetchImpl: fakeFetch("all", ["o/r"]) });
+    expect(r.ok).toBe(false);
+    expect(r.message).toContain("https://github.com/settings/installations/5");
+  });
+
+  it("stops when the repo is missing from the install", async () => {
+    const r = await confirmInstallation({ installationId: 5, repo: "o/r", jwt: "j", fetchImpl: fakeFetch("selected", ["o/other"]) });
+    expect(r.ok).toBe(false);
+    expect(r.message).toContain("not on o/r");
+  });
+});
+
+describe("wait-for.mjs", () => {
+  it("returns true the moment the check passes, and says one line a minute while waiting", async () => {
+    let t = 0;
+    let calls = 0;
+    const said: string[] = [];
+    const ok = await waitFor(async () => ++calls >= 30, {
+      intervalMs: 5000, timeoutMs: 600000, label: "the PR", say: (l: string) => said.push(l),
+      now: () => t, sleep: async (ms: number) => { t += ms; },
+    });
+    expect(ok).toBe(true);
+    expect(said).toEqual(["still waiting for the PR", "still waiting for the PR"]);
+  });
+
+  it("gives up at the timeout", async () => {
+    let t = 0;
+    const ok = await waitFor(async () => false, { intervalMs: 5000, timeoutMs: 20000, say: () => {}, now: () => t, sleep: async (ms: number) => { t += ms; } });
+    expect(ok).toBe(false);
+  });
+
+  it("treats a failing check as not yet", async () => {
+    let t = 0, n = 0;
+    const ok = await waitFor(async () => { if (++n < 3) throw new Error("blip"); return true; }, { say: () => {}, now: () => t, sleep: async (ms: number) => { t += ms; } });
+    expect(ok).toBe(true);
+  });
+
+  it("knows its three checks and refuses others", () => {
+    expect(checkFor("pr-merged", "4")).not.toBeNull();
+    expect(checkFor("secret", "ANTHROPIC_API_KEY")).not.toBeNull();
+    expect(checkFor("workflow-success", "factory-setup.yml")).not.toBeNull();
+    expect(checkFor("nope", "x")).toBeNull();
+  });
+});
+
+describe("progress.mjs", () => {
+  const job = (name: string, status: string, conclusion: string | null = null) => ({ name, status, conclusion });
+
+  it("names the job in progress", () => {
+    expect(currentJob([job("ready", "completed", "success"), job("plan", "in_progress")])).toBe("plan");
+    expect(currentJob([job("ready", "completed"), job("plan", "completed"), job("freeze", "completed"), job("release", "completed")])).toBeNull();
+  });
+
+  it("speaks when the job changes and stays quiet otherwise", () => {
+    const jobs = [job("ready", "completed", "success"), job("plan", "in_progress")];
+    const a = nextLine(jobs, { job: "ready", at: 0 }, 60000);
+    expect(a.line).toBe(`${JOB_LINES.plan}.`);
+    const b = nextLine(jobs, a.state, 120000);
+    expect(b.line).toBeNull();
+  });
+
+  it("repeats after three quiet minutes", () => {
+    const jobs = [job("ready", "completed", "success"), job("plan", "in_progress")];
+    const first = nextLine(jobs, { job: null, at: 0 }, 0);
+    expect(nextLine(jobs, first.state, 3 * 60 * 1000).line).toBe(`${JOB_LINES.plan}.`);
+  });
+
+  it("celebrates the sandbox starting once freeze succeeds", () => {
+    const jobs = [job("freeze", "completed", "success"), job("release", "in_progress")];
+    const r = nextLine(jobs, { job: "freeze", at: 0 }, 1000);
+    expect(r.line).toContain("Your app just started in the sandbox.");
   });
 });

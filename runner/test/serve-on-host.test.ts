@@ -26,7 +26,7 @@ describe("a sandbox that needs the runner", () => {
     const info = join(dir, "app.json");
     const r = await serveOnHost({
       manifest: { ...base, commands: { ...base.commands, run }, app_url: `http://127.0.0.1:${port}/` },
-      workspace: dir, env: { WHO: "the sandbox" }, infoFile: info, log: () => {},
+      workspace: dir, env: { WHO: "the sandbox", BSF_SUPERVISOR_GRACE_MS: "0" }, infoFile: info, log: () => {},
     });
     expect(r.url).toBe(`http://host.docker.internal:${HOST_APP_PORT}/`);
     expect(JSON.parse(readFileSync(info, "utf8")).url).toBe(r.url);

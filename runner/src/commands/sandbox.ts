@@ -9,6 +9,7 @@ import { connect } from "node:net";
 import { dirname, join } from "node:path";
 import { resolveRead } from "../lib/config.js";
 import { validate } from "../lib/schema.js";
+import { SUPERVISOR_SOURCE } from "./supervisor-source.js";
 
 /**
  * `bsf sandbox start` — bring up the frozen sandbox for a role.
@@ -30,6 +31,8 @@ export interface SandboxManifest {
     readonly seed?: string | null;
     readonly coverage?: string | null;
   };
+  /** Globs for the UI's files; a product-work PR touching one needs a video (fix 28). */
+  readonly ui_paths?: readonly string[];
   readonly coverage_report?: { readonly path: string; readonly format: "lcov" | "cobertura" | "istanbul-summary" };
   readonly static_checks?: readonly StaticCheck[];
   readonly app_url?: string | null;
@@ -770,7 +773,7 @@ export async function serveOnHost(opts: {
   readonly env: Record<string, string>;
   readonly infoFile: string;
   readonly log: (l: string) => void;
-}): Promise<{ url: string | null; services: readonly string[] }> {
+}): Promise<{ url: string | null; services: readonly string[]; appExpected: boolean; failure: string | null }> {
   const m = opts.manifest;
   // One app per runner: an app or forward left from an earlier start would
   // keep the agent's ports, and the agent would be shown the old app.
@@ -789,6 +792,8 @@ export async function serveOnHost(opts: {
   const logDir = join(process.env["RUNNER_TEMP"] ?? tmpdir(), "bsf-app");
   mkdirSync(logDir, { recursive: true });
   let url: string | null = null;
+  let failure: string | null = null;
+  let logTail: string | null = null;
   let sessionFile: string | null = null;
   let signInNote: string | null = null;
   if (m.commands.run !== null && m.app_url != null) {
@@ -803,17 +808,36 @@ export async function serveOnHost(opts: {
     const sup = spawn(process.execPath, ["--input-type=module", "-e", SUPERVISOR_SOURCE, command, opts.workspace, SUPERVISOR_MARK], {
       cwd: opts.workspace, env: { ...shellBase(), ...opts.env }, detached: true, stdio: ["ignore", out, out],
     });
+    let supervisorExit: number | null = null;
+    sup.on("exit", (code) => {
+      supervisorExit = code ?? 1;
+    });
     sup.unref();
-    // Room for a build: a Next.js production build takes a minute or two.
-    const deadline = Date.now() + 480_000;
+    // Room for a build: a Next.js production build takes a minute or two. An
+    // app with no build step either answers soon or is not going to.
+    const deadline = Date.now() + (m.commands.build === null ? 120_000 : 480_000);
     let status: number | null = null;
     while (Date.now() < deadline) {
       status = await httpStatus(m.app_url);
       if (status !== null && status < 500) break;
+      // The supervisor gave up (a restart loop): waiting longer changes nothing.
+      if (supervisorExit !== null) break;
       await new Promise((r) => setTimeout(r, 2000));
     }
     if (status === null || status >= 500) {
-      opts.log(`the app did not answer at ${m.app_url} (see ${logDir}/app.log)`);
+      failure =
+        supervisorExit === 3
+          ? "the app restarted itself in a loop (see the log tail)"
+          : `the app did not answer at ${m.app_url}`;
+      opts.log(`${failure} (see ${logDir}/app.log)`);
+      logTail = tailOfFile(join(logDir, "app.log"), 200);
+      // The agent can only read its own folder, so the log goes there too.
+      try {
+        mkdirSync(dirname(opts.infoFile), { recursive: true });
+        writeFileSync(join(dirname(opts.infoFile), "app.log"), logTail);
+      } catch {
+        /* the info file still carries the tail */
+      }
     } else {
       forward(HOST_APP_PORT, appPort);
       url = `${target.protocol}//host.docker.internal:${HOST_APP_PORT}${target.pathname}${target.search}`;
@@ -847,6 +871,7 @@ export async function serveOnHost(opts: {
         env_file: AGENT_ENV,
         restarts_on_change: url !== null,
         log: join(logDir, "app.log"),
+        ...(failure === null ? {} : { error: failure, log_tail: logTail }),
         session_file: sessionFile,
         ...(signInNote === null ? {} : { sign_in_problem: signInNote }),
       },
@@ -854,7 +879,16 @@ export async function serveOnHost(opts: {
       2,
     )}\n`,
   );
-  return { url, services: forwards };
+  return { url, services: forwards, appExpected: m.commands.run !== null && m.app_url != null, failure };
+}
+
+/** The last `lines` lines of a file, or "" when it cannot be read. */
+export function tailOfFile(path: string, lines: number): string {
+  try {
+    return readFileSync(path, "utf8").split("\n").slice(-lines).join("\n");
+  } catch {
+    return "";
+  }
 }
 
 const SUPERVISOR_MARK = "bsf-app-supervisor";
@@ -884,14 +918,3 @@ const FORWARD_SOURCE = `import net from "node:net";
 const [listen, to] = process.argv.slice(1).map(Number);
 net.createServer((c) => { const u = net.connect(to, "127.0.0.1"); c.pipe(u).pipe(c); u.on("error", () => c.destroy()); c.on("error", () => u.destroy()); }).listen(listen, "0.0.0.0");`;
 
-/** Runs the app and restarts it, debounced, when a file it serves from changes. */
-const SUPERVISOR_SOURCE = `import { spawn } from "node:child_process";
-import { watch } from "node:fs";
-const [cmd, dir] = process.argv.slice(1);
-const IGNORE = /(^|\\/)(\\.git|node_modules|\\.venv|venv|target|bin|obj|dist|build|\\.next|coverage|__pycache__|\\.factory\\/sandbox)(\\/|$)/;
-let child = null, timer = null;
-const start = () => { child = spawn("bash", ["-c", cmd], { cwd: dir, stdio: "inherit", detached: true }); console.log("[bsf] app started"); };
-process.on("SIGTERM", () => { try { process.kill(-child.pid, "SIGTERM"); } catch {} process.exit(0); });
-const restart = () => { try { process.kill(-child.pid, "SIGTERM"); } catch {} setTimeout(start, 1500); console.log("[bsf] a file changed; restarting the app"); };
-start();
-watch(dir, { recursive: true }, (_e, f) => { if (!f || IGNORE.test(f)) return; clearTimeout(timer); timer = setTimeout(restart, 1500); });`;

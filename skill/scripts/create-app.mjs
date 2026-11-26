@@ -25,7 +25,7 @@ import { createServer } from "node:http";
 import { readFileSync, realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { randomBytes } from "node:crypto";
+import { randomBytes, createSign } from "node:crypto";
 import { spawn, execFileSync } from "node:child_process";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -234,36 +234,89 @@ name is ever refused on that page.</p>
 </body></html>`;
 }
 
-function installedPage() {
+/**
+ * One page, one look. These are the dashboard's own tokens, so the last thing
+ * the person sees in the browser belongs to the same product as the dashboard
+ * they are about to open.
+ */
+const PAGE_CSS = `:root{--paper:#f4f5f2;--sheet:#ffffff;--ink:#16181b;--rule:#dcdfd9;--done:#1d6b4c;--done-wash:#e3f2ea;--stop:#b3261e;--stop-wash:#fbeceb}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;background:var(--paper);color:var(--ink);
+font:16px/1.6 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif}
+main{background:var(--sheet);border:1px solid var(--rule);border-radius:10px;padding:2rem 2.25rem;max-width:30rem;margin:1.5rem}
+.chip{display:inline-block;font-size:.8rem;font-weight:600;padding:.15rem .6rem;border-radius:999px}
+.ok .chip{background:var(--done-wash);color:var(--done)}.bad .chip{background:var(--stop-wash);color:var(--stop)}
+h1{font-size:1.4rem;margin:.9rem 0 .4rem}p{margin:.4rem 0;color:#3d4147}`;
+
+function statusPage({ ok, heading, body, closeAfterMs }) {
+  const script = closeAfterMs ? `<script>setTimeout(function(){window.close()},${closeAfterMs})</script>` : "";
   return `<!DOCTYPE html>
-<html lang="en"><head><meta charset="utf-8"><title>Installed</title>
-<style>body{font:16px/1.6 system-ui,sans-serif;max-width:34rem;margin:4rem auto;padding:0 1.5rem;color:#111}</style>
-</head><body>
-<h1>Installed</h1>
-<p>That was the last thing here that needed you. You can close this tab — setup is
-carrying on where you left it.</p>
-</body></html>`;
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${escapeHtml(heading)}</title><style>${PAGE_CSS}</style></head>
+<body><main class="${ok ? "ok" : "bad"}"><span class="chip">${ok ? "Connected" : "Stopped"}</span>
+<h1>${escapeHtml(heading)}</h1>${body}</main>${script}</body></html>`;
 }
 
-function donePage({ appName, installUrl }) {
-  return `<!DOCTYPE html>
-<html lang="en"><head><meta charset="utf-8"><title>App created</title>
-<style>body{font:16px/1.6 system-ui,sans-serif;max-width:34rem;margin:4rem auto;padding:0 1.5rem;color:#111}
-a.btn{display:inline-block;background:#1f883d;color:#fff;padding:.6rem 1.1rem;border-radius:6px;text-decoration:none}</style>
-</head><body>
-<h1>${escapeHtml(appName)} is created</h1>
-<p>Its credentials are being stored on the repository. One step left: install it.</p>
-<p><a class="btn" href="${escapeHtml(installUrl)}">Install the App</a></p>
-<p>Pick the repository the factory runs on. You can close this tab afterwards.</p>
-</body></html>`;
+function installedPage() {
+  return statusPage({
+    ok: true,
+    heading: "Your factory is connected",
+    body: "<p>You can close this tab. Setup continues in your terminal.</p>",
+    closeAfterMs: 2000,
+  });
 }
 
 function errorPage(message) {
-  return `<!DOCTYPE html>
-<html lang="en"><head><meta charset="utf-8"><title>Something went wrong</title>
-<style>body{font:16px/1.6 system-ui,sans-serif;max-width:34rem;margin:4rem auto;padding:0 1.5rem;color:#111}</style>
-</head><body><h1>Something went wrong</h1><p>${escapeHtml(message)}</p>
-<p>Nothing was stored. Run the script again.</p></body></html>`;
+  return statusPage({
+    ok: false,
+    heading: "Something went wrong",
+    body: `<p>${escapeHtml(message)}</p><p>Nothing was stored. Run the script again.</p>`,
+  });
+}
+
+/* ------------------------------------------------- installing, and checking it */
+
+/**
+ * The install page, already pointed at the one repository. Without the
+ * repository id GitHub opens its generic picker, where "All repositories" is
+ * one click away and the person has to find the right repo by hand.
+ */
+export function installUrlFor({ htmlUrl, ownerId, repoId }) {
+  const q = ownerId && repoId ? `/permissions?target_id=${ownerId}&repository_ids[]=${repoId}` : "";
+  return `${htmlUrl}/installations/new${q}`;
+}
+
+/** A GitHub App JWT: RS256, ten minutes at most, issued by the client id. */
+export function appJwt({ pem, clientId, now = Math.floor(Date.now() / 1000) }) {
+  const b64 = (o) => Buffer.from(JSON.stringify(o)).toString("base64url");
+  const head = b64({ alg: "RS256", typ: "JWT" });
+  const body = b64({ iat: now - 60, exp: now + 540, iss: clientId });
+  const sig = createSign("RSA-SHA256").update(`${head}.${body}`).sign(pem).toString("base64url");
+  return `${head}.${body}.${sig}`;
+}
+
+/**
+ * Confirm the installation is on exactly the repository, using the App's own
+ * credentials. Returns {ok:true} or {ok:false, message} with the exact fix.
+ */
+export async function confirmInstallation({ installationId, repo, jwt, fetchImpl = fetch }) {
+  const h = { authorization: `Bearer ${jwt}`, accept: "application/vnd.github+json", "user-agent": "bsf-create-app" };
+  const inst = await fetchImpl(`https://api.github.com/app/installations/${installationId}`, { headers: h });
+  if (!inst.ok) return { ok: false, message: `GitHub did not recognise installation ${installationId} (${inst.status}).` };
+  const fix = `https://github.com/settings/installations/${installationId}`;
+  const info = await inst.json();
+  if (info.repository_selection === "all") {
+    return { ok: false, message: `The App was installed on all of your repositories. Open ${fix}, choose "Only select repositories", and pick ${repo}.` };
+  }
+  const tok = await fetchImpl(`https://api.github.com/app/installations/${installationId}/access_tokens`, { method: "POST", headers: h });
+  if (!tok.ok) return { ok: false, message: `Could not check which repositories the install covers (${tok.status}). Open ${fix}.` };
+  const { token } = await tok.json();
+  const list = await fetchImpl("https://api.github.com/installation/repositories", { headers: { ...h, authorization: `Bearer ${token}` } });
+  if (!list.ok) return { ok: false, message: `Could not list the install's repositories (${list.status}). Open ${fix}.` };
+  const names = ((await list.json()).repositories ?? []).map((r) => r.full_name.toLowerCase());
+  if (!names.includes(repo.toLowerCase())) {
+    return { ok: false, message: `The App is installed, but not on ${repo}. Open ${fix} and add ${repo} under "Repository access".` };
+  }
+  return { ok: true };
 }
 
 /* ---------------------------------------------------------------------- main */
@@ -359,54 +412,45 @@ async function main() {
     log("");
   }
 
-  // The App exists; it is not installed on the repository yet, and nothing
-  // works until it is. This used to be where the user was handed a URL and
-  // left: they pressed Install on GitHub, landed on GitHub's own "all set"
-  // page, and had no way of knowing that anything was still waiting on them.
-  const installUrl = `${app.html_url}/installations/new`;
-  log(`  One step left: install it on ${args.repo}.`);
-  if (openBrowser(installUrl)) log("  Opening your browser. Pick the repository, then press Install.");
-  else log(`  Open this and pick ${args.repo}:\n    ${installUrl}`);
+  // The App exists; it is not installed on the repository yet. The browser is
+  // already on its way to the install page (the callback redirected there), so
+  // the person never sees an intermediate page.
+  log(`  One step left: install it on ${args.repo}. Your browser is already on the page.`);
   log("");
   log("  Waiting for the install… (this continues by itself)");
 
-  const confirmed = await waitForInstall({ repo: args.repo, installedAt: result.installedAt });
+  const installationId = await waitForInstall({ installedAt: result.installedAt });
   result.close();
 
-  if (!confirmed) {
+  if (installationId === null) {
     fail(
       `the App was created and its credentials stored, but it is not installed on ${args.repo} yet. ` +
-        `Install it at ${installUrl}, then run this command again — it will see the existing App.`,
+        `Install it at ${result.installUrl}, then run this command again — it will see the existing App.`,
     );
   }
+  const check = await confirmInstallation({
+    installationId,
+    repo: args.repo,
+    jwt: appJwt({ pem: result.app.pem, clientId: result.app.client_id }),
+  });
+  if (!check.ok) fail(check.message);
   log("");
-  log(`✓ installed on ${args.repo}. Nothing else here needs you.`);
+  log(`✓ installed on ${args.repo}, and only on ${args.repo}. Nothing else here needs you.`);
 }
 
 /**
- * Wait until the App is installed on the repository.
- *
- * Two routes, because either one alone has a hole: GitHub's setup_url redirect
- * only arrives if the user finishes in this browser, and polling alone would
- * make a user who did everything right wait out a poll interval. Whichever
- * answers first wins.
+ * Wait for the installation id. GitHub's setup_url redirect carries it, so
+ * there is nothing to poll: the local /installed page resolves this promise.
+ * Resolves null if nothing arrives in the time allowed.
  */
-async function waitForInstall({ repo, installedAt, everyMs = 4000, forMs = 15 * 60 * 1000 }) {
-  const deadline = Date.now() + forMs;
-  let redirected = false;
-  void installedAt.then(() => {
-    redirected = true;
+async function waitForInstall({ installedAt, forMs = 15 * 60 * 1000 }) {
+  let timer;
+  const timeout = new Promise((r) => {
+    timer = setTimeout(() => r(null), forMs);
   });
-  while (Date.now() < deadline) {
-    if (gh(["api", `repos/${repo}/installation`, "--jq", ".id"], { allowFail: true })) return true;
-    if (redirected) {
-      // The redirect landed but the API has not caught up; give it a moment.
-      await new Promise((r) => setTimeout(r, everyMs));
-      if (gh(["api", `repos/${repo}/installation`, "--jq", ".id"], { allowFail: true })) return true;
-    }
-    await new Promise((r) => setTimeout(r, everyMs));
-  }
-  return false;
+  const id = await Promise.race([installedAt, timeout]);
+  clearTimeout(timer);
+  return id ?? null;
 }
 
 function runFlow({ manifest, state, args, kind }) {
@@ -433,9 +477,15 @@ function runFlow({ manifest, state, args, kind }) {
 
       if (url.pathname === "/installed") {
         // GitHub's setup_url redirect, after the user pressed Install.
+        const id = url.searchParams.get("installation_id");
+        if (!id || !/^\d+$/.test(id)) {
+          res.writeHead(400, { "content-type": "text/html; charset=utf-8" });
+          res.end(errorPage("GitHub did not say which installation this was."));
+          return;
+        }
         res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
         res.end(installedPage());
-        installed();
+        installed(id);
         return;
       }
 
@@ -492,14 +542,16 @@ function runFlow({ manifest, state, args, kind }) {
         return;
       }
 
-      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-      res.end(donePage({ appName: app.name, installUrl: `${app.html_url}/installations/new` }));
+      const ids = JSON.parse(gh(["api", `repos/${args.repo}`, "--jq", "{repo: .id, owner: .owner.id}"], { allowFail: true }) || "{}");
+      const installUrl = installUrlFor({ htmlUrl: app.html_url, ownerId: ids.owner, repoId: ids.repo });
+      res.writeHead(302, { location: installUrl });
+      res.end();
 
       settled = true;
       // The server stays up: the App exists, but it is not installed on the
       // repository yet, and the install is the step the user was previously
       // left stranded on. It closes in `main`, once the install is confirmed.
-      resolve({ app, installedAt, close: () => server.close() });
+      resolve({ app, installUrl, installedAt, close: () => server.close() });
     });
 
     server.listen(args.port, "127.0.0.1", () => {

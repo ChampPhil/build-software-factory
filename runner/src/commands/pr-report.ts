@@ -1,3 +1,4 @@
+import { matchesAny } from "../lib/ui-paths.js";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { extname, join, normalize } from "node:path";
 import type { GitHub } from "../lib/github.js";
@@ -296,6 +297,8 @@ export interface RenderInput {
   readonly lead?: readonly string[];
   /** The change touches what a person can see, so the PR must carry a video of it working. */
   readonly needsVideo?: boolean;
+  /** What to show when the builder wrote no summary: the spec's opening lines, then the changed files. */
+  readonly fallbackSummary?: readonly string[];
 }
 
 export interface Rendered {
@@ -363,7 +366,11 @@ export function renderReport(input: RenderInput): Rendered {
     degraded.push(...(r.degraded ?? []));
   }
 
-  const summary = builder?.report.summary ?? [];
+  const written = builder?.report.summary ?? [];
+  // The Summary is the first thing a reviewer reads: never empty. If both the
+  // builder's and the fallback are empty, the report fails and the PR stays a draft.
+  const summary = written.length > 0 ? written : [...(input.fallbackSummary ?? [])];
+  if (summary.length === 0) problems.push("no summary: the builder wrote none and nothing else could stand in for it");
   const head: string[] = [MARKER, ""];
   if (input.lead !== undefined && input.lead.length > 0) {
     head.push("### Why this stopped", "", ...input.lead.map((l) => `> ${l}`), "");
@@ -464,8 +471,10 @@ interface SpecDoc {
  * the UI. Gardening and hardening change no behavior on purpose, so their
  * proof is the gates' before-and-after, not a recording.
  */
-export function needsVideo(item: SpecDoc | null): boolean {
-  return item?.pipeline === "product_work" && item.spec?.["ui_change"] === true;
+export function needsVideo(item: SpecDoc | null, changedPaths: readonly string[] = [], uiPaths: readonly string[] = []): boolean {
+  // The paths decide, not the spec agent's judgement of whether it is a UI
+  // change: a server-only change was refused for "touching the UI" on that.
+  return item?.pipeline === "product_work" && changedPaths.some((p) => matchesAny(p, uiPaths));
 }
 
 /** The spec, as markdown a person reads. */
@@ -507,12 +516,15 @@ export async function publishReport(opts: {
     const commit = await media.data.commit([{ path, content: specMarkdown(item) }], `spec for ${opts.workItem}`);
     links.push({ label: "Full spec", url: `https://github.com/${opts.gh.repo}/blob/${commit}/${path}` });
   }
+  const changedPaths = (await opts.gh.pullFiles(opts.pr).catch(() => [])).map((f) => f.filename);
+  const uiPaths = await uiPathsOf(opts.gh);
   const rendered = renderReport({
     repo: opts.gh.repo,
     kind: "change",
     reports,
     links,
-    needsVideo: needsVideo(item),
+    needsVideo: needsVideo(item, changedPaths, uiPaths),
+    fallbackSummary: fallbackSummaryFor(item, changedPaths),
     footer: opts.footer ?? `Work item ${opts.workItem}`,
   });
   await opts.gh.send("PATCH", `repos/${opts.gh.repo}/pulls/${opts.pr}`, { body: rendered.body });
@@ -679,4 +691,34 @@ export async function reportCheck(
         ? "Summary, proof, key things to focus on and the longer breakdowns are all on the PR."
         : `What is missing:\n\n${problems.map((p) => `- ${p}`).join("\n")}`) + notes,
   });
+}
+
+
+/** `ui_paths` from the default branch's sandbox manifest; none when setup has not recorded any. */
+async function uiPathsOf(gh: GitHub): Promise<string[]> {
+  try {
+    const f = await gh.get<{ content?: string }>(`repos/${gh.repo}/contents/.factory/sandbox/manifest.json`);
+    const m = JSON.parse(Buffer.from(f.content ?? "", "base64").toString("utf8")) as { ui_paths?: string[] };
+    return m.ui_paths ?? [];
+  } catch {
+    return [];
+  }
+}
+
+/** The first 12 lines of the spec, then the changed files: what stands in for a missing summary. */
+export function fallbackSummaryFor(item: SpecDoc | null, changedPaths: readonly string[]): string[] {
+  const out: string[] = [];
+  if (item?.spec != null) {
+    out.push(
+      ...specMarkdown(item)
+        .split("\n")
+        .map((l) => l.trim())
+        .filter((l) => l !== "" && !l.startsWith("#"))
+        .slice(0, 12),
+    );
+  }
+  if (changedPaths.length > 0) {
+    out.push(`Changed ${changedPaths.length} file${changedPaths.length === 1 ? "" : "s"}: ${changedPaths.slice(0, 12).join(", ")}${changedPaths.length > 12 ? ", …" : ""}`);
+  }
+  return out;
 }
