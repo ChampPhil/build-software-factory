@@ -6,7 +6,7 @@ import { conversationLive, useBrainstorm, useCheckRuns, useIssueComments, usePul
 import { questionFrom } from "@/lib/questions";
 import { isFrameTurn, plain, questionOf, sentence } from "@/lib/frame";
 import type { Need } from "@/lib/view";
-import { ago, pipeName, summaryOf, usd } from "@/lib/view";
+import { ago, pipeName, statusLabel, summaryOf, usd } from "@/lib/view";
 import { evidenceOf } from "@/lib/evidence";
 import type { IssueSummary } from "@/lib/github";
 import { useApp } from "@/components/app";
@@ -103,7 +103,7 @@ function QuestionCard({ id, issue, title, since }: { id: string; issue: number |
             ) : (
               <>
                 <span className="cold-dot" aria-hidden="true" />
-                Not listening right now. Your answer wakes it; the next question takes a few minutes.
+                Answer now. The factory replies within about 2 minutes.
               </>
             )}
           </span>
@@ -129,7 +129,7 @@ function ReviewCard({ number, workItem, title, sha, opened, cost }: { number: nu
     <article className="item proof">
       <div className="head">
         <div className="where">
-          <span className="tag">Ready to merge</span>
+          <span className="tag">{statusLabel({ status: "in_review" }, pr.state === "ready" ? pr.data : null, checks.state === "ready" ? checks.data : null)}</span>
           <span>PR #{number}{issueOf !== undefined ? ` for #${issueOf}` : ""}</span>
           <span>opened {ago(opened)}</span>
         </div>

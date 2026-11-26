@@ -138,9 +138,8 @@ export async function applySettingsChange(
         pr: pr.number,
         url,
         reason:
-          "Saved as a pull request. This repository is on GitHub Free and private, " +
-          "so required checks are unavailable and the factory cannot merge this for you — " +
-          "merge the pull request and the setting takes effect.",
+          "Saved as a pull request. On this repository GitHub does not offer required checks (free private plan), " +
+          "so the factory cannot merge it by itself: you merge it. GitHub Pro or a public repository lets the factory merge by itself.",
       };
     }
 

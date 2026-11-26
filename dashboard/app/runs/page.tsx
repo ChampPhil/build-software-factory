@@ -105,7 +105,7 @@ function AllRuns() {
                   </small>
                 </span>
                 <span role="cell">
-                  <OutcomeBadge outcome={r.outcome} />
+                  <OutcomeBadge outcome={r.outcome === "failed" && r.pr !== null ? "draft_pr" : r.outcome} />
                 </span>
                 <span role="cell">{pipeName(r.pipeline)}</span>
                 <span role="cell">{ago(r.started_at)}</span>

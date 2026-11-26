@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { useRunFiles, useWorkItems } from "@/lib/data";
+import { useRunFiles, useStepRecords, useWorkItems } from "@/lib/data";
+import { medianRequestToPr, minutesFromSteps, spendFromSteps } from "@/lib/spend";
 import { projectToMonthEnd, shareUse } from "@/lib/metrics";
 import { readSettings } from "@/lib/settings";
 import { day, dur, outcomeName, pct, pipeName, plural, titleOf, usd } from "@/lib/view";
@@ -19,6 +20,7 @@ export default function Spend() {
   const ids = index.state === "ready" ? (index.data?.recent_runs ?? []) : [];
   const runs = useRunFiles(client, ids.slice(0, 40));
   const top = runs.state === "ready" ? [...runs.data].sort((a, b) => b.cost_usd - a.cost_usd).slice(0, 6) : [];
+  const steps = useStepRecords(client, ids.slice(0, 60));
   const docs = useWorkItems(client, top.map((r) => r.work_item));
 
   if (index.state === "loading") return <Page><Loading what="the figures" /></Page>;
@@ -34,14 +36,19 @@ export default function Spend() {
   }
   const m = data.metrics;
   const budget = m.budget_usd ?? 0;
-  const spent = m.spend_usd ?? 0;
+  const month = new Date().toISOString().slice(0, 7);
+  // What was actually spent is the sum of the step records; the index total is only the fallback while they load.
+  const spent = steps.state === "ready" && steps.data.length > 0 ? spendFromSteps(steps.data, month) : (m.spend_usd ?? 0);
+  const billedMinutes = steps.state === "ready" ? minutesFromSteps(steps.data, month) : 0;
+  const cycle = runs.state === "ready" ? medianRequestToPr(runs.data) : (m.cycle_time_p50_sec ?? null);
   const now = new Date();
   const dayOfMonth = now.getUTCDate();
   const daysInMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0)).getUTCDate();
   const projected = projectToMonthEnd(spent, now);
   const read = settings.state === "ready" && settings.data !== null ? readSettings(settings.data) : null;
   const num = (k: string): number => (typeof read?.[k] === "number" ? read[k] : 0);
-  const shares = read === null ? [] : shareUse(data, { product_work: num("share_product_work"), gardening: num("share_gardening"), review_and_benchmarks: num("share_review") });
+  const monthly = typeof read?.["monthly_budget"] === "number" ? read["monthly_budget"] : budget;
+  const shares = read === null ? [] : shareUse({ ...data, metrics: { ...data.metrics, budget_usd: monthly } }, { product_work: num("share_product_work"), gardening: num("share_gardening"), review_and_benchmarks: num("share_review") });
   const merged = m.merged ?? 0;
   const clean = m.automation_rate === undefined ? null : Math.round(merged * m.automation_rate);
 
@@ -145,10 +152,16 @@ export default function Spend() {
           <section>
             <h2 className="part">Other numbers</h2>
             <dl className="kv">
-              {m.cycle_time_p50_sec !== undefined && (
+              {cycle !== null && (
                 <>
                   <dt>Typical request to PR</dt>
-                  <dd>{dur(m.cycle_time_p50_sec)}</dd>
+                  <dd>{dur(cycle)}</dd>
+                </>
+              )}
+              {billedMinutes > 0 && (
+                <>
+                  <dt>Actions minutes billed</dt>
+                  <dd>{Math.round(billedMinutes).toLocaleString("en-US")}</dd>
                 </>
               )}
               {m.cycle_time_p90_sec !== undefined && (

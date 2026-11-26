@@ -23,7 +23,9 @@ export const pipeName = (p: string | null | undefined): string => (p == null ? "
 export const STATUS: Readonly<Record<string, string>> = {
   queued: "Queued",
   running: "Running",
-  in_review: "Ready to merge",
+  in_review: "In review",
+  in_review_ready: "Ready to merge",
+  in_review_blocked: "In review",
   queued_to_merge: "Merging itself",
   merged: "Merged",
   escalated: "Stuck, needs you",
@@ -34,6 +36,37 @@ export const STATUS: Readonly<Record<string, string>> = {
   closed: "Closed",
 };
 export const statusName = (s: string): string => STATUS[s] ?? s.replace(/_/g, " ");
+
+/** The checks a pull request needs before it is ready to merge. */
+export const REQUIRED_CHECKS: readonly string[] = ["factory/gates", "factory/verification"];
+
+export interface CheckLike {
+  readonly name: string;
+  readonly status: string;
+  readonly conclusion: string | null;
+}
+
+/**
+ * The one place that decides what an in-review pull request is called.
+ * "Ready to merge" only when it is not a draft and both required checks
+ * succeeded; otherwise it names the check it is waiting on.
+ */
+export function statusLabel(
+  item: { readonly status: string },
+  pull: { readonly draft: boolean } | null | undefined,
+  checks: readonly CheckLike[] | null | undefined,
+): string {
+  if (item.status !== "in_review") return statusName(item.status);
+  if (pull == null || checks == null) return "In review";
+  if (pull.draft) return "In review: still a draft";
+  for (const name of REQUIRED_CHECKS) {
+    const c = checks.find((x) => x.name === name);
+    if (c === undefined) return `In review: waiting on ${name}`;
+    if (c.status !== "completed") return `In review: waiting on ${name}`;
+    if (c.conclusion !== "success") return `In review: waiting on ${name} (${(c.conclusion ?? "no result").replace(/_/g, " ")})`;
+  }
+  return "Ready to merge";
+}
 
 export type Tone = "you" | "stop" | "busy" | "done" | "";
 export function toneOf(status: string): Tone {

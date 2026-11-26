@@ -7,6 +7,7 @@ import { GOAL_LANES, liveGoals } from "@/lib/routing";
 import { day, hourLocal, pipeName } from "@/lib/view";
 import type { StandingGoalsFile } from "@/lib/types";
 import { useApp, explain } from "@/components/app";
+import { usePull, useCheckRuns } from "@/lib/data";
 import { Out } from "@/components/ui";
 
 const STAGE_TEXT: Readonly<Record<Stage, string>> = {
@@ -158,7 +159,7 @@ export function SettingsForm({ yaml, enforcement }: { yaml: string; enforcement:
       {ORDER.filter((id) => !SHARE_IDS.includes(id)).slice(1).map(row)}
       <div className="acts">
         <button className="btn go" type="submit" disabled={pending === 0 || problem !== null || busy}>
-          {pending === 0 ? "No changes" : `Save ${pending} ${pending === 1 ? "change" : "changes"}`}
+          {pending === 0 ? "No changes" : enforcement === "audit" ? "Open the pull request" : `Save ${pending} ${pending === 1 ? "change" : "changes"}`}
         </button>
         {pending > 0 && !busy && (
           <button className="btn quiet" type="button" onClick={() => setDraft({ ...current })}>
@@ -172,7 +173,9 @@ export function SettingsForm({ yaml, enforcement }: { yaml: string; enforcement:
               ? problem
               : demo
                 ? "In the demo, saving is refused like every change."
-                : "Saving opens a pull request that changes the factory's settings and merges it once the policy check passes, usually within a minute."}
+                : enforcement === "audit"
+                  ? "Saving opens a pull request. On this repository GitHub does not offer required checks (free private plan), so the factory cannot merge it by itself: you merge it. GitHub Pro or a public repository lets the factory merge by itself."
+                  : "Saving opens a pull request that changes the factory's settings and merges it once the policy check passes, usually within a minute."}
         </span>
       </div>
       {outcome !== null && (
@@ -185,6 +188,7 @@ export function SettingsForm({ yaml, enforcement }: { yaml: string; enforcement:
           {outcome.status === "open" && (
             <>
               {outcome.reason} <Out href={outcome.url}>Pull request #{outcome.pr}</Out>
+              <MergeIt pr={outcome.pr} onDone={() => { setOutcome(null); bump(); }} />
             </>
           )}
           {outcome.status === "unchanged" && "Nothing to change."}
@@ -193,6 +197,33 @@ export function SettingsForm({ yaml, enforcement }: { yaml: string; enforcement:
         </p>
       )}
     </form>
+  );
+}
+
+/** After saving on an audit repository: a Merge button once the pull request is a non-draft with factory/gates green, else the pending check. */
+function MergeIt({ pr, onDone }: { pr: number; onDone: () => void }) {
+  const { client, act, version } = useApp();
+  const pull = usePull(client, pr, version);
+  const sha = pull.state === "ready" && pull.data !== null ? pull.data.head.sha : null;
+  const checks = useCheckRuns(client, sha);
+  if (pull.state !== "ready" || pull.data === null || checks.state !== "ready") return null;
+  // A settings change has no verification step: factory/gates is the check that matters.
+  const gates = checks.data.find((c) => c.name === "factory/gates");
+  const label = pull.data.draft
+    ? "In review: still a draft"
+    : gates === undefined || gates.status !== "completed"
+      ? "In review: waiting on factory/gates"
+      : gates.conclusion === "success"
+        ? "Ready to merge"
+        : "In review: waiting on factory/gates (" + (gates.conclusion ?? "no result") + ")";
+  if (label !== "Ready to merge") return <> {label.replace("In review: ", "Not yet: ")}.</>;
+  return (
+    <>
+      {" "}
+      <button className="btn small go" type="button" onClick={() => void act(() => client.mergePull(pr, "squash"), "Merged. The setting takes effect now.").then((ok) => ok && onDone())}>
+        Merge it
+      </button>
+    </>
   );
 }
 

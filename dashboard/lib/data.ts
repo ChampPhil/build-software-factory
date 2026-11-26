@@ -1,5 +1,6 @@
 "use client";
 
+import type { StepRecord } from "./spend";
 import { routingCandidates } from "./routing";
 import { FACTORY_YAML } from "./settings";
 
@@ -415,6 +416,25 @@ export function useRunFiles(client: GitHubClient | null, ids: readonly string[])
       : async () => {
           const runs = await Promise.all(ids.map((id) => client.fileFromRef<RunFile>(`runs/${id}.json`).catch(() => null)));
           return runs.filter((r): r is RunFile => r !== null);
+        };
+  return usePolled(load, 60_000, [client?.repo, key]);
+}
+
+/** Every step record for the given runs (`steps/<run>/*.json`), the ledger of what was actually spent. */
+export function useStepRecords(client: GitHubClient | null, runIds: readonly string[]): Loaded<readonly StepRecord[]> {
+  const key = runIds.join(",");
+  const load =
+    client === null
+      ? null
+      : async () => {
+          const perRun = await Promise.all(
+            runIds.map(async (id) => {
+              const names = await client.listFromRef(`steps/${id}`).catch(() => [] as readonly string[]);
+              const docs = await Promise.all(names.map((n) => client.fileFromRef<StepRecord>(`steps/${id}/${n}`).catch(() => null)));
+              return docs.filter((d): d is StepRecord => d !== null);
+            }),
+          );
+          return perRun.flat();
         };
   return usePolled(load, 60_000, [client?.repo, key]);
 }

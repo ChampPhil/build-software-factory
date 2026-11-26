@@ -143,3 +143,27 @@ describe("a diff", () => {
     ]);
   });
 });
+
+import { statusLabel as statusLabelFor } from "../lib/view";
+
+describe("statusLabel", () => {
+  const ok = (name: string) => ({ name, status: "completed", conclusion: "success" });
+  it("never says Ready to merge for a draft with a failed gate", () => {
+    const label = statusLabelFor({ status: "in_review" }, { draft: true }, [{ name: "factory/gates", status: "completed", conclusion: "failure" }]);
+    expect(label).not.toContain("Ready to merge");
+    expect(label).toContain("In review");
+  });
+  it("names the failing gate on a non-draft", () => {
+    const label = statusLabelFor({ status: "in_review" }, { draft: false }, [
+      { name: "factory/gates", status: "completed", conclusion: "failure" },
+      ok("factory/verification"),
+    ]);
+    expect(label).toBe("In review: waiting on factory/gates (failure)");
+  });
+  it("waits on a check that has not reported", () => {
+    expect(statusLabelFor({ status: "in_review" }, { draft: false }, [ok("factory/gates")])).toBe("In review: waiting on factory/verification");
+  });
+  it("is ready only when both checks succeeded and it is not a draft", () => {
+    expect(statusLabelFor({ status: "in_review" }, { draft: false }, [ok("factory/gates"), ok("factory/verification")])).toBe("Ready to merge");
+  });
+});
