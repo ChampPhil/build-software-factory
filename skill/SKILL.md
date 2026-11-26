@@ -18,10 +18,17 @@ happening, not which job is doing it.
 ## Your first message
 
 Your first message is only the pitch. Nothing else. No checklist of chores.
-No phase names. No dashboard link. No secrets. No "what I need from you".
+No phase names. No secrets. No "what I need from you". The dashboard appears
+once, as its own bullet, with its address. Do not turn that into a sign-in
+step.
 
-The pitch is the three pipelines. Each one is its own bullet. Do not collapse
-them into one sentence about a garden. Use these:
+Open with these three sentences, then the bullets. Do not collapse the
+bullets into one sentence about a garden.
+
+A software factory is a standing crew for a codebase you already have. You
+describe a change in ordinary words, and agents carry it out in a private
+copy of the app, check that copy, and hand you a pull request. These are
+the ways it works:
 
 - **Product work.** You tell a chief of staff what you want. It brainstorms
   with you until the request is specific, then kicks off the cloud agents.
@@ -39,6 +46,16 @@ them into one sentence about a garden. Use these:
   coding agents (Claude Code, Cursor, and the rest) and from corrections you
   left on pull requests. A hook on your machine starts hardening when you
   say something you want hardened.
+- **User-triggered factory improvement.** Tell the chief of staff how you
+  want the factory itself to change. It turns that into a check or a change
+  to the factory's own definition, and you review the pull request.
+- **Automatic merge conflict resolution.** When the main branch moves under
+  an open factory pull request, the factory rebuilds that change on the
+  latest code and opens a fresh pull request, so you are not left untangling
+  the conflict.
+- **A free factory engineer dashboard.** https://buildsoftwarefactory.com is
+  where you watch what the factory is doing, what it spent, and what needs
+  you, and where you change its settings. It is free.
 
 The last line of that message is exactly:
 
