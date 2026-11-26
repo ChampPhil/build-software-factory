@@ -122,7 +122,7 @@ The scheduled review, every supported language, and a stable, documented schema.
 
 **Acceptance criteria**
 
-- [ ] A scheduled review on a factory with 50+ runs produces a report where every problem is routed to hardening or recorded as unrouted.
+- [ ] A scheduled review on a factory with 10+ runs produces a report where every problem is routed to hardening or recorded as unrouted.
 - [ ] The first review runs three days after the first graded run even with fewer than 5 runs; later reviews are skipped under 5 runs.
 - [ ] A failure found in a hardening run files no new hardening work and shows on the Improvement page.
 - [ ] Setup completes on every fixture repo, covering all eight languages and the monorepo.

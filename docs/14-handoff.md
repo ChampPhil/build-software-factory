@@ -170,10 +170,12 @@ Be straight with Philip about these.
    open leftovers from the failed runs. On `bsf-fixtures/ts-webapp`, PRs #53
    and #55 are duplicates from the hardening bug (since fixed); one should be
    closed.
-8. **Cost reality.** A sandbox setup round can cost up to ~$12 and a repair up
-   to three rounds. Trinsports' monthly budget was raised ($35 to $50, then
-   again by Philip). Documentation about cost in the README ("What it costs")
-   should be checked against what these runs actually cost before launch.
+8. **Cost reality.** Measured on `ChampPhil/bakesale-test` (Nov 25, private
+   Free repo, seven hours): setup $4.58 over four rounds and 158 Actions
+   minutes, not the ~$12 once estimated; about $1-2 a draft PR; 1,292 Actions
+   minutes in all, which is the limit that binds on Free. The README's "What
+   it costs" now carries these numbers. The dashboard's Spend page and the run
+   files under-report against `budget.json` (see the live-test findings).
 9. **Not done at all:** the website, distribution, public launch, a demo/video,
    onboarding docs for strangers, a feedback channel, a security-review
    refresh for the new sign-in session minting (see `13-security-review.md`).

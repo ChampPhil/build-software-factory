@@ -126,10 +126,33 @@ anything it could not measure is charged at the full reservation. When even
 the largest step of a pipeline no longer fits, that pipeline's work waits in
 the queue until next month or until you raise the budget.
 
-Measured on the fixtures with the default models: triage (Haiku 5.5) about
-$0.01, a spec (Opus 5.5) about $0.50–0.70, a build (Sonnet 5.5) about
-$0.50–3, verification (Haiku 5.5) a few cents. With the $35 default and one
-gardening PR a night, that is roughly a dozen small product changes a month.
+Measured on the first live run: a private GitHub Free repository holding a
+realistic, messy app (about 100 files: Node, React, Python, Postgres, Redis),
+seven hours, a dozen requests of every kind, default models. In dollars, as
+the budget ledger counts them:
+
+| What | Cost |
+| --- | --- |
+| Setup (four sandbox rounds) | $4.58 |
+| A product request that reached a draft PR | about $1–2 (spec on Opus 5.5 about $0.85, build on Sonnet 5.5 about $0.15, triage on Haiku 5.5 about $0.01; the rest is retries and steps the ledger charges at their reserved cost) |
+| A nightly gardening PR | about $0.10–0.15 a try |
+| A hardening PR | about $0.20–0.25 a try |
+| A scheduled review of three runs | about $0.40 |
+| The whole seven hours | $14.37, or about $9.80 without setup |
+
+Verification (the step that starts the app and records proof) never ran in
+this test, so its cost is not measured here. The dashboard's Spend page
+under-reported the month at $2.77 while the ledger said $13.18 at that moment:
+trust `refs/factory/data/budget.json`, which is what the budget enforces.
+
+**On GitHub Free, Actions minutes run out before dollars do.** The same seven
+hours billed about 1,290 Actions minutes (setup 158, the work pipelines about
+660, the gates, merge and intake checks the rest), which is two thirds of the
+2,000 a private Free repository gets in a month. That is 100 to 130 minutes for
+each draft PR, counting retries, cancelled runs and duplicates. At that rate
+the free minutes cover roughly 15 to 20 small changes a month, so the $35
+default budget is the looser limit. These figures come from a first run with
+known defects, and fixing them should lower both numbers.
 
 As a second line of defence, make the key in its own
 [Anthropic Console](https://console.anthropic.com) workspace with a monthly
