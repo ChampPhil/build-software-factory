@@ -152,6 +152,36 @@ with their own token. No server sees it. `bsf dashboard` serves it on the
 loopback interface only — a page holding a repository-writing token, served on
 a network, hands anyone on that network the ability to act as its owner.
 
+**The hosted dashboard's policy.** The page is served with a
+Content-Security-Policy that lets it connect only to itself and `api.github.com`
+(so a bug cannot send the token anywhere else), forbids framing, forms,
+`<base>` and plugins, and allows scripts only by hash: every inline script in
+the built pages is hashed at build time (`dashboard/scripts/csp-hashes.mjs`),
+and a page that gained an injected `<script>` or an `onclick=` would not run it.
+Styles are the exception, see below.
+
+## Accepted risks
+
+Each of these was weighed and left, on purpose. They are written down so that a
+later reader does not have to rediscover them or mistake them for oversights.
+
+- **Inline styles are allowed (`style-src 'unsafe-inline'`).** React writes
+  style attributes, which cannot be hashed, and the dashboard sets many. A style
+  is not a way to run code, and with `connect-src` limited to GitHub's API an
+  injected style could not send a token out either. The cost is that an
+  attacker who could inject markup could restyle the page, for example to dress
+  up a button. Scripts, which are the dangerous half, are hash-only.
+- **`/api/auth/exchange` and `/refresh` trust the `Origin` header.** They refuse
+  a request whose `Origin` is not the site itself. A non-browser caller (a
+  script, `curl`) can send any `Origin`, so the check does not stop one. It does
+  not need to: it exists to stop another website's script in a victim's browser
+  from calling the function, and browsers do not let a page choose its own
+  `Origin`. A direct caller still has to present a valid GitHub authorization
+  code or refresh token, which only someone already signed in to GitHub as that
+  person holds, and the function stores nothing and returns no GitHub error
+  text. Forging the header therefore gets an attacker nothing they could not
+  get from GitHub directly.
+
 ## Known gaps
 
 Said plainly, because a review that lists only what it found is not a review.
