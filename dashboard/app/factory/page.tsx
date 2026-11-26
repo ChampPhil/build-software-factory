@@ -1,6 +1,6 @@
 "use client";
 
-import { useActions, useStandingGoals, useWriters } from "@/lib/data";
+import { useActions, useHealthIssues, useStandingGoals, useWriters } from "@/lib/data";
 import { ago, clock, day } from "@/lib/view";
 import { useApp } from "@/components/app";
 import { AskFactory, Goals, SettingsForm } from "@/components/settings";
@@ -44,6 +44,7 @@ export default function Factory() {
   const goals = useStandingGoals(client);
   const writers = useWriters(client);
   const actions = useActions(client, version);
+  const healthIssues = useHealthIssues(client, version);
   const data = index.state === "ready" ? index.data : null;
   const health = data?.health;
   const name = repo.split("/")[1] ?? repo;
@@ -148,6 +149,21 @@ export default function Factory() {
 
           <section id="health">
             <h2 className="sect">Health</h2>
+            {healthIssues.state === "ready" && healthIssues.data.length > 0 && (
+              <div className="health-issues">
+                <h3>Problems the factory reported about itself</h3>
+                <ul className="plain-list">
+                  {healthIssues.data.map((i) => (
+                    <li key={i.number}>
+                      <Cross /> <Out href={i.html_url}>#{i.number} {i.title}</Out>{" "}
+                      <button className="btn small" type="button" onClick={() => void act(() => client!.setIssueState(i.number, "closed"), "Closed. It comes back only if the problem does.")}>
+                        Close
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
             {health === undefined ? (
               <p className="muted">Nothing recorded yet. The first run writes it.</p>
             ) : (

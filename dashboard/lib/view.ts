@@ -68,6 +68,20 @@ export function statusLabel(
   return "Ready to merge";
 }
 
+/**
+ * An issue the workflow tooling (gh-aw) files about its own failures. It is
+ * the factory's health, not a request: it must not appear among requests or
+ * questions, and a person must never be offered "Let the factory start it".
+ */
+export function isGhAwIssue(i: { readonly title: string; readonly labels: readonly { readonly name: string }[] }): boolean {
+  return i.labels.some((l) => l.name === "agentic-workflows") || i.title.startsWith("[aw] ");
+}
+
+/** Issues the factory itself raised about its own health: gh-aw failures and factory_health items. */
+export function isFactoryHealthIssue(i: { readonly title: string; readonly labels: readonly { readonly name: string }[] }): boolean {
+  return isGhAwIssue(i) || i.labels.some((l) => l.name === "factory:health");
+}
+
 export type Tone = "you" | "stop" | "busy" | "done" | "";
 export function toneOf(status: string): Tone {
   switch (status) {

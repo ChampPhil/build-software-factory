@@ -167,3 +167,15 @@ describe("statusLabel", () => {
     expect(statusLabelFor({ status: "in_review" }, { draft: false }, [ok("factory/gates"), ok("factory/verification")])).toBe("Ready to merge");
   });
 });
+
+import { isFactoryHealthIssue, isGhAwIssue } from "../lib/view";
+describe("factory health issues", () => {
+  it("recognises gh-aw reports by label or title", () => {
+    expect(isGhAwIssue({ title: "x", labels: [{ name: "agentic-workflows" }] })).toBe(true);
+    expect(isGhAwIssue({ title: "[aw] Triage failed", labels: [] })).toBe(true);
+    expect(isGhAwIssue({ title: "Add CSV export", labels: [{ name: "factory:ask" }] })).toBe(false);
+  });
+  it("treats factory:health as health too", () => {
+    expect(isFactoryHealthIssue({ title: "Spend records disagree", labels: [{ name: "factory:health" }] })).toBe(true);
+  });
+});

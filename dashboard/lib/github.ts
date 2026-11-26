@@ -115,6 +115,17 @@ export class GitHubClient {
     return res;
   }
 
+  /**
+   * Whether the factory's data ref moved since `etag`. A 304 costs no rate limit,
+   * so this is cheap enough to ask every few seconds while the page is visible.
+   */
+  async dataRefChanged(etag: string | null): Promise<{ readonly changed: boolean; readonly etag: string | null }> {
+    const res = await this.request(`repos/${this.auth.repo}/git/ref/factory/data`, etag === null ? {} : { headers: { "if-none-match": etag } });
+    if (res.status === 304) return { changed: false, etag };
+    if (!res.ok) return { changed: false, etag };
+    return { changed: etag !== null, etag: res.headers.get("etag") };
+  }
+
   async get<T>(path: string): Promise<T> {
     const res = await this.request(path);
     if (!res.ok) throw new GitHubHttpError(res.status, path, await res.text(), "GET");

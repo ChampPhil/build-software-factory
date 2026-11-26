@@ -37,7 +37,7 @@ export interface App {
    * Run an action against GitHub and say how it went. Returns whether it worked.
    * A refusal (the demo, a missing permission) is said in words, never thrown.
    */
-  readonly act: (fn: () => Promise<unknown>, done: string) => Promise<boolean>;
+  readonly act: (fn: () => Promise<unknown>, done: string, optimistic?: import("@/lib/optimistic").Optimistic) => Promise<boolean>;
   /** Ask for a few words before an action: a reason, a note, a comment. Null when cancelled. */
   readonly ask: (q: Ask) => Promise<string | null>;
   readonly compose: (initial?: FirstRequest & { kind?: string }) => void;

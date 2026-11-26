@@ -115,6 +115,7 @@ function QuestionCard({ id, issue, title, since }: { id: string; issue: number |
 
 function ReviewCard({ number, workItem, title, sha, opened, cost }: { number: number; workItem: string | null; title: string; sha: string; opened: string; cost: number | null }) {
   const { client, act, ask, version } = useApp();
+  const [gone, setGone] = useState(false);
   const pr = usePull(client, number, version);
   const checks = useCheckRuns(client, sha);
   const report = useVerifierReport(client, workItem);
@@ -125,6 +126,7 @@ function ReviewCard({ number, workItem, title, sha, opened, cost }: { number: nu
   const detail = workItem === null ? null : requestHref(workItem, "pr");
   const issueOf = pr.state === "ready" && pr.data !== null ? /#(\d+)/.exec(pr.data.title)?.[1] : undefined;
 
+  if (gone) return null;
   return (
     <article className="item proof">
       <div className="head">
@@ -154,7 +156,7 @@ function ReviewCard({ number, workItem, title, sha, opened, cost }: { number: nu
           <button
             className="btn go"
             type="button"
-            onClick={() => void act(() => client.mergePull(number, "squash"), `Merged #${number}. The request closes and its branch goes.`)}
+            onClick={() => void act(() => client.mergePull(number, "squash"), `Merged #${number}. The request closes and its branch goes.`, { apply: () => setGone(true), rollback: () => setGone(false) })}
           >
             Merge #{number}
           </button>

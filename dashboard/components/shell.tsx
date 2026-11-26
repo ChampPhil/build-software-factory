@@ -11,6 +11,7 @@ import { isDemo } from "@/lib/demo";
 import { completeGithubLogin, needsRefresh, refreshSession, REFRESH_MARGIN_MS } from "@/lib/github-login";
 import { GitHubClient } from "@/lib/github";
 import { useClient, useFactorySettings, useGuardrails, useIndex, useIssues, useLedger, useLive, usePulls, useWorkItems } from "@/lib/data";
+import { runAction, type Optimistic } from "@/lib/optimistic";
 import { needsFrom, requestsFrom, requestIds, statusName } from "@/lib/view";
 import type { FirstRequest } from "@/lib/request";
 import { SignIn } from "@/components/sign-in";
@@ -259,19 +260,33 @@ function SignedIn({
   const [palette, setPalette] = useState(false);
 
   const act = useCallback(
-    async (fn: () => Promise<unknown>, done: string): Promise<boolean> => {
-      try {
-        await fn();
-        toast(done);
-        bump();
-        return true;
-      } catch (e) {
-        toast(explain(e));
-        return false;
-      }
-    },
+    (fn: () => Promise<unknown>, done: string, optimistic?: Optimistic): Promise<boolean> =>
+      runAction(fn, done, { say: toast, refresh: bump }, optimistic, explain),
     [toast, bump],
   );
+
+  // Every 15 seconds while the page is visible, ask whether the factory's records moved. A 304 costs nothing.
+  useEffect(() => {
+    if (client === null || demo) return;
+    let etag: string | null = null;
+    let stopped = false;
+    const tick = async (): Promise<void> => {
+      if (stopped || document.visibilityState !== "visible") return;
+      try {
+        const r = await client.dataRefChanged(etag);
+        etag = r.etag;
+        if (r.changed) bump();
+      } catch {
+        /* a failed poll is not worth a message; the next one tries again */
+      }
+    };
+    void tick();
+    const id = window.setInterval(() => void tick(), 15_000);
+    return () => {
+      stopped = true;
+      window.clearInterval(id);
+    };
+  }, [client, demo, bump]);
 
   // "/" or Ctrl-K opens the palette from anywhere that is not a text field.
   useEffect(() => {
