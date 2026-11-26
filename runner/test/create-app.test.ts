@@ -407,7 +407,7 @@ describe("installing the App on exactly one repository", () => {
     const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
     const pem = privateKey.export({ type: "pkcs1", format: "pem" }) as string;
     const jwt = appJwt({ pem, clientId: "Iv1.abc", now: 1000 }) as string;
-    const [h, b] = jwt.split(".");
+    const [h, b] = jwt.split(".") as [string, string];
     expect(JSON.parse(Buffer.from(h, "base64url").toString())).toEqual({ alg: "RS256", typ: "JWT" });
     expect(JSON.parse(Buffer.from(b, "base64url").toString())).toEqual({ iat: 940, exp: 1540, iss: "Iv1.abc" });
   });

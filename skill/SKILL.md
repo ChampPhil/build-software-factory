@@ -9,6 +9,68 @@ You are setting up a software factory on the user's repo. Everything the user
 does happens at the start and takes minutes; then it runs unattended and ends
 in a pull request they merge.
 
+## Your first message
+
+Your first message has exactly three parts, in this order, in plain language,
+a few lines each:
+
+1. **What you are getting.** A factory that takes a request, builds it in a
+   sandbox where it can run the app, checks its own work, and hands back a
+   pull request, with a dashboard to watch it and steer it.
+2. **What I'll do.** Read the repo, make the app runnable in a closed sandbox,
+   install the checks, and clean what they flag. All of it runs on GitHub, not
+   on their machine.
+3. **What I need from you now.** The checklist below, then one question.
+   Nothing else is theirs until the one pull request at the end.
+
+Send the dashboard link, https://buildsoftwarefactory.com, as a **separate
+follow-up message** straight after, so it is easy to find later. They sign in
+to it once, at the end.
+
+## Front-load the human steps
+
+Every human step happens before the long work, so nothing stops it halfway.
+Give them this checklist in your first message and walk them through it in
+this order:
+
+- **A. The Anthropic key.** They open
+  `https://github.com/<owner>/<repo>/settings/secrets/actions/new`, name it
+  `ANTHROPIC_API_KEY`, and paste a key from
+  https://console.anthropic.com/settings/keys. You check it is there yourself
+  with `node scripts/wait-for.mjs secret ANTHROPIC_API_KEY`.
+- **B. Create the App.** `node scripts/create-app.mjs --repo <owner>/<repo>`
+  opens GitHub with the name filled in; they press **Create**.
+- **C. Install it.** GitHub's page opens already on this one repository; they
+  press **Install**. The script checks that the install covers only this repo
+  and stops with the exact fix if it covers all of them.
+- **D. One question:** should the factory merge changes by itself once every
+  gate passes, or ask them to review each one? Review is the safe default.
+
+After D, the only thing left for them is merging the setup pull request, and
+only if they chose review.
+
+**Never end a turn on "tell me when you're done".** Anything you can see
+yourself, you wait for yourself: run
+`node scripts/wait-for.mjs pr-merged <number>` (or `secret NAME`, or
+`workflow-success FILE.yml`) in the background and carry on when it exits. It
+prints one line a minute so the wait does not look like a hang.
+
+**You speak as one "setup".** Never say "the setup agent said" or name any
+other part of the machinery. Say "setup", and say what it is doing, not which
+job is doing it.
+
+**Do with `gh` and `git` anything that can be done with them.** Do not ask the
+person to look at a page, run a command or tell you whether something happened
+when you can find out yourself. To check a file is on the default branch:
+`git fetch origin`, then `git cat-file -e origin/main:assessment.md` (exit 0
+means it is there). To see whether a PR merged: `gh pr view N --json state`.
+
+**Reuse a setup run that is already going.** Before dispatching
+`factory-setup`, run `gh run list --workflow factory-setup.yml --limit 5`; if
+one is queued or in progress, follow it instead of starting another. If two
+setup PRs exist anyway, keep the older and close the newer with
+`gh pr close <n> --comment "Duplicate of #<older>"`.
+
 **This setup runs from any coding agent** — Claude Code, Cursor, Codex, or
 another. Nothing below depends on which one you are. The factory's own agents,
 the ones that run in GitHub Actions afterwards, are Claude Code regardless of
@@ -26,11 +88,10 @@ reads as a hang.
 
 | They do | You do |
 | --- | --- |
+| Set `ANTHROPIC_API_KEY` as a repo secret, themselves | Give them the exact link, then wait for the secret with `scripts/wait-for.mjs` |
 | Click **Create**, then **Install** on GitHub's App pages | Everything around it, via `scripts/create-app.mjs` |
-| Set `ANTHROPIC_API_KEY` as a repo secret, themselves | Tell them exactly where, then check it is there with `gh secret list` |
-| Answer a few questions about the product | Turn the answers into its intent and its first practices |
-| Merge the bootstrap PR | Install the runner, the definition and the workflows in it |
-| Merge the setup PR | Everything between the two: the setup episode runs on its own |
+| Answer one question: merge by itself, or review each change | Turn the answers into its intent and its first practices |
+| Merge the setup PR, if they chose review | Everything else, including the bootstrap PR and the wait for it |
 | Sign in to the dashboard, once, from the link you give them | Hand them that link before you say setup is done |
 
 Nothing else is theirs. If you find yourself about to ask for something not on
@@ -133,8 +194,10 @@ Output: `assessment.md` on the setup branch, and the first `candidates.json`.
 `references/phase-2-sandbox.md`
 
 Install the factory's own files with `scripts/install-factory.mjs` on a
-branch, write the product answers into `practices.md` and the product-intent
-section of `fundamentals.md`, and open the **bootstrap PR**. When it is
+branch, write the person's answers into `practices.md` and, in their own
+words, into the protected **Product intent (from you)** block of
+`fundamentals.md` (the setup workflow merges around that block and never
+rewrites it), and open the **bootstrap PR**. When it is
 merged, dispatch `factory-setup`. From there it runs on its own:
 
 - the setup agent reads the repo and writes a complete candidate — every
@@ -145,6 +208,11 @@ merged, dispatch `factory-setup`. From there it runs on its own:
   pass, or neither;
 - up to three rounds while the measured tier falls short of the claim, then
   the best round is frozen into the **setup PR**.
+
+While it runs, start `node scripts/progress.mjs` in the background and relay
+each line it prints as one plain sentence. It prints only when the stage
+changes or after three quiet minutes, and says when their app has started in
+the sandbox.
 
 Tell the user the tier it reached and, below `renders`, what stopped it — the
 manifest records why. A repo that can only reach `build_and_test` still gets a
@@ -161,22 +229,25 @@ trial make that safe.
 `references/phase-3-guardrails.md`
 
 Extend the tools the repo already runs; do not add a second linter beside an
-existing one. Rules come from `rules/<language>.yaml`.
+existing one. Rules come from `rules/<language>.yaml`. Install the linter
+(every rule in `AGENTS.md` as a lint rule), the formatter, every de-duplicated
+rule candidate, and the local correction hook, which is on by default.
 
 **Every rule must fail on its bad example and pass on its good one before you
 install it.** The pack carries both. A rule that fires on both blocks correct
 code; one that fires on neither is decoration. Neither is visible from reading
 the config, so run it.
 
-Apply only mechanical fixes now. Baseline everything else, per file.
+Nothing is baselined. The formatter runs once, as its own "format only"
+commit; everything else the rules flag is fixed in phase 4.
 
 ## Phase 4 — Clean the codebase
 
 `references/phase-4-clean.md`
 
-Mechanical fixes are already in the setup PR. Everything else is baselined and
-seeded as gardening work, most violations first. Cleanup is the one phase
-allowed to finish after switch-on.
+Setup removes every existing violation, so the factory starts on a repo that
+passes its own rules. You decide, without asking, whether that is one PR or a
+sequence of PRs, and say which in one line.
 
 ## Phase 5 — Define the factory
 
@@ -207,21 +278,23 @@ shows progress from day one.
 
 Open the setup PR with the user's own credentials — the App cannot push
 workflow files, by design. Run the gates on the setup PR itself so they see
-every gate pass before merging. Then they merge, and you smoke-test with one
-small issue and hand off.
+every gate pass before merging. Wait for the merge with
+`scripts/wait-for.mjs pr-merged`, smoke-test with one small issue, and finish
+with the closing message in `references/phase-7-switch-on.md`.
 
 ## Things that will tempt you, and shouldn't
 
 - **Do not replace the repo's tools.** A repo with eslint gets its eslint
   config extended, not a second linter.
-- **Do not fix anything that needs judgment in the setup PR.** It has to stay
-  reviewable. Mechanical fixes only; the rest is baselined.
+- **Do not baseline.** A suppression file is a promise to clean up later.
+  Fix the violations; if one cannot be fixed without changing behaviour, file
+  it as product work and leave the rule enforced.
 - **Do not write markdown nobody asked for.** `assessment.md` is deleted after
   merge for exactly this reason. No summaries, no plans, no notes files.
 - **Do not skip phase 2's proof.** A screenshot of the running app is the
   evidence that the factory can verify its own work. Without it you are
   installing a factory that cannot tell whether anything works.
-- **Do not weaken a guardrail to make setup pass.** If a rule's baseline is
-  enormous, that is the finding, and gardening's job.
+- **Do not weaken a guardrail to make setup pass.** If a rule's violation
+  count is enormous, that is the finding: report it and work through it.
 - **Do not continue past a phase that failed.** Stop, say which step, and say
   what you tried.

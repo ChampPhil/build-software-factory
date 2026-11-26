@@ -108,6 +108,7 @@ jobs:
           echo "BSF_TRUSTED_ROOT=$RUNNER_TEMP/bsf-trusted" >> "$GITHUB_ENV"
           rm -rf .factory-trusted
           echo "$RUNNER_TEMP/bsf" >> "$GITHUB_PATH"
+          chmod +x "$RUNNER_TEMP/bsf/"*
           "$RUNNER_TEMP/bsf/bsf" --version
       - name: Report factory/gates for an upgrade
         if: steps.trusted.outputs.upgrade == 'true'
@@ -172,6 +173,7 @@ jobs:
           echo "BSF_TRUSTED_ROOT=$RUNNER_TEMP/bsf-trusted" >> "$GITHUB_ENV"
           rm -rf .factory-trusted
           echo "$RUNNER_TEMP/bsf" >> "$GITHUB_PATH"
+          chmod +x "$RUNNER_TEMP/bsf/"*
           "$RUNNER_TEMP/bsf/bsf" --version
       # All static rules, the per-file ratchet across each linter's native
       # baseline and baselines.json, the weakening check and suppression control.
@@ -225,6 +227,7 @@ jobs:
           echo "BSF_TRUSTED_ROOT=$RUNNER_TEMP/bsf-trusted" >> "$GITHUB_ENV"
           rm -rf .factory-trusted
           echo "$RUNNER_TEMP/bsf" >> "$GITHUB_PATH"
+          chmod +x "$RUNNER_TEMP/bsf/"*
           "$RUNNER_TEMP/bsf/bsf" --version
       # The tests run where the app runs: the sandbox's services, its install
       # and its closed environment, from the default branch's manifest.
@@ -364,6 +367,7 @@ jobs:
           echo "BSF_TRUSTED_ROOT=$RUNNER_TEMP/bsf-trusted" >> "$GITHUB_ENV"
           rm -rf .factory-trusted
           echo "$RUNNER_TEMP/bsf" >> "$GITHUB_PATH"
+          chmod +x "$RUNNER_TEMP/bsf/"*
           "$RUNNER_TEMP/bsf/bsf" --version
       # Reports factory/gates, the one check branch protection requires: the
       # verdict over every gate the plan called for. Always runs, because a

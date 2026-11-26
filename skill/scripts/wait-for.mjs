@@ -113,6 +113,10 @@ function runningAsEntryPoint(moduleUrl, argv1 = process.argv[1]) {
 }
 
 if (runningAsEntryPoint(import.meta.url)) {
+  if (process.argv.includes("--help") || process.argv.includes("-h")) {
+    console.log("usage: node wait-for.mjs pr-merged N | secret NAME | workflow-success FILE.yml [--repo owner/name] [--interval S] [--timeout S]\nExits 0 when it happened, 1 on timeout.");
+    process.exit(0);
+  }
   const a = parse(process.argv.slice(2));
   const [kind, target] = a.positional;
   const spec = kind === undefined || target === undefined ? null : checkFor(kind, target, a.repo);

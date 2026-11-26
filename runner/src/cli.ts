@@ -293,6 +293,8 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
       Declare a practice every agent follows from now on. Opens a PR adding it to
       practices.md, and a rule where one can enforce it. Same as commenting
       /practice TEXT on any issue or PR.
+  bsf sandbox scrub [--file PATH]   (replace secret-shaped placeholder values)
+  bsf sandbox dry-run   (start the sandbox and serve the app, as the checker will)
   bsf sandbox start
       Bring up the frozen sandbox: its services, its closed environment, its install.
   bsf sandbox check [--file PATH]
@@ -327,7 +329,8 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
       It is a static export that talks to GitHub from your browser, so there
       is nothing else to run and no server sees your token.
 
-  bsf doctor [--root PATH] [--repo OWNER/REPO] [--json] [--quiet]
+  bsf context merge-intent --existing PATH --incoming PATH --out PATH
+  bsf doctor [--root PATH] [--repo OWNER/REPO] [--json] [--quiet] [--fix-modes]
       What is wrong with an installed factory: missing definition, role or
       context files, a guardrail file that no longer validates, a missing
       workflow, a lock file too stale for gh-aw to run, and — with --repo — a
@@ -539,6 +542,19 @@ async function main(argv: readonly string[]): Promise<number> {
 
     case "doctor":
       return doctorCommand(args);
+    case "context": {
+      // `bsf context merge-intent --existing PATH --incoming PATH --out PATH`:
+      // the person's "Product intent (from you)" block survives the setup
+      // workflow rewriting the rest of fundamentals.md.
+      if (second !== "merge-intent") die("usage: bsf context merge-intent --existing PATH --incoming PATH --out PATH");
+      const incoming = args["incoming"];
+      const out = args["out"];
+      if (typeof incoming !== "string" || typeof out !== "string") die("usage: bsf context merge-intent --existing PATH --incoming PATH --out PATH");
+      const existing = typeof args["existing"] === "string" && existsSync(args["existing"]) ? readFileSync(args["existing"], "utf8") : null;
+      const { mergeProductIntent } = await import("./lib/product-intent.js");
+      writeFileSync(out, mergeProductIntent(existing, readFileSync(incoming, "utf8")));
+      return 0;
+    }
 
     case "contribute-corrections":
       return contributeCorrectionsCommand(args);
@@ -2461,6 +2477,17 @@ async function sandboxCommandCli(second: string | undefined, args: Args): Promis
     }
     return 0;
   }
+  if (second === "scrub") {
+    // `bsf sandbox scrub [--file PATH]`: replace credential-shaped placeholder values
+    // in the manifest, so a secret scanner has nothing to refuse the PR over.
+    const file = typeof args["file"] === "string" ? args["file"] : ".factory/sandbox/manifest.json";
+    if (!existsSync(file)) die(`${file} does not exist`);
+    const { scrubPlaceholders } = await import("./lib/placeholders.js");
+    const out = scrubPlaceholders(readFileSync(file, "utf8"));
+    if (out.replaced > 0) writeFileSync(file, out.text);
+    process.stdout.write(`scrubbed ${out.replaced} secret-shaped value${out.replaced === 1 ? "" : "s"} in ${file}\n`);
+    return 0;
+  }
   if (second === "dry-run") {
     // `bsf sandbox dry-run`: do exactly what the checker does before its
     // agent starts (start the sandbox, serve the app on the host) and say
@@ -2790,6 +2817,7 @@ async function doctorCommand(args: Args): Promise<number> {
 
   const report = await runDoctor({
     root,
+    fixModes: args["fix-modes"] === true,
     ...(repo === undefined ? {} : { gh: new GitHub({ repo }) }),
   });
 

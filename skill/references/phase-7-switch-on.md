@@ -17,10 +17,11 @@ The factory goes live when the user merges the setup PR.
    in this skill and neither is verified anywhere:
 
    ```
-   gh api repos/OWNER/NAME/contents/assessment.md --jq .name
+   git fetch origin
+   git cat-file -e origin/main:assessment.md
    ```
 
-   That should be a 404. `assessment.md` is meant to be deleted by this merge —
+   That should fail (non-zero exit: the file is gone). `assessment.md` is meant to be deleted by this merge —
    it exists to be read in the PR, and the factory does not leave unrequested
    markdown in a repository. If it is still there, the delete did not make it
    into the setup PR; remove it on a `factory/fix-*` branch.
@@ -64,7 +65,24 @@ The factory goes live when the user merges the setup PR.
    produced and that `https://buildsoftwarefactory.com` is where it lives, and
    do not treat the hand-off as complete.
 
-## The hand-off message
+## The closing message
+
+End setup with one formal message, in this order, and nothing after it:
+
+1. **"Setup is done. Your factory is running."** as the first line.
+2. **The dashboard link, verified.** Only the address `bsf dashboard-link`
+   printed, after you have opened it or fetched it and seen it load. If you
+   could not verify it, say that instead of giving a link.
+3. **What runs on its own,** in two or three lines: gardening tonight, the
+   first review in three days, and every request they file from now on.
+4. **Two things they can say whenever they like:** `/practice <anything>` on an
+   issue or PR adds a standing instruction; `/retry` hands back anything the
+   factory stopped on once they have done what it needed.
+5. **No loose ends.** Say that nothing else is waiting on them. If something is
+   (an unmerged PR, a failed check), it is not the closing message yet: fix it
+   or say exactly what is left and why.
+
+## What to include in it
 
 Keep it to what they need to know:
 
@@ -84,7 +102,8 @@ Keep it to what they need to know:
 
 - **If the smoke test does not produce a draft PR, that is a failure.** Say so
   and diagnose it. Do not hand off a factory whose first run did not work.
-- **Do not describe the factory as finished.** It starts with a human approving
-  every draft PR in all three pipelines, which is the right place to start.
+- **Setup is done; the factory is not on autopilot.** It starts with a human
+  approving every draft PR in all three pipelines, which is the right place to
+  start. Say that, and do not claim more.
 - **Say nothing about the dashboard you have not checked.** If it has not
   loaded, say that instead.

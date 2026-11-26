@@ -68,6 +68,10 @@ function runningAsEntryPoint(moduleUrl, argv1 = process.argv[1]) {
 
 if (runningAsEntryPoint(import.meta.url)) {
   const argv = process.argv.slice(2);
+  if (argv.includes("--help") || argv.includes("-h")) {
+    console.log("usage: node progress.mjs [--repo owner/name] [--every 60]\nPrints one plain sentence as the setup workflow moves between stages. Exits 0 when the run succeeds, 1 if it fails.");
+    process.exit(0);
+  }
   const at = (flag) => (argv.includes(flag) ? argv[argv.indexOf(flag) + 1] : undefined);
   const repo = at("--repo");
   const r = repo ? ["--repo", repo] : [];
