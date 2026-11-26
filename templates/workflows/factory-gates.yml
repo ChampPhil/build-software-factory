@@ -393,3 +393,50 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: gh workflow run factory-merge.yml --repo "$GITHUB_REPOSITORY" --ref "$DEFAULT_BRANCH"
+
+  # The run that built this change does not wait for its gates: it parks and
+  # leaves. When the verdict is recorded, this finishes it: clear, retry or
+  # escalate. Nothing parked for this PR (a person's own PR) is a no-op (fix 6).
+  decide:
+    needs: [record]
+    if: always() && needs.record.result == 'success' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: factory-decide-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Put the trusted runner on PATH
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/bsf"
+          cp -R .factory/bin/. "$RUNNER_TEMP/bsf/"
+          chmod +x "$RUNNER_TEMP/bsf/"*
+          mkdir -p "$RUNNER_TEMP/bsf-trusted/.factory"
+          for d in definition sandbox; do
+            if [ -d ".factory/$d" ]; then cp -R ".factory/$d" "$RUNNER_TEMP/bsf-trusted/.factory/"; fi
+          done
+          echo "BSF_TRUSTED_ROOT=$RUNNER_TEMP/bsf-trusted" >> "$GITHUB_ENV"
+          echo "$RUNNER_TEMP/bsf" >> "$GITHUB_PATH"
+      - name: Mint a repo-scoped token
+        id: token
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1
+        with:
+          app-id: ${{ vars.FACTORY_APP_CLIENT_ID }}
+          private-key: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-issues: write
+          permission-pull-requests: write
+          permission-actions: write
+          permission-checks: read
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+      - name: Finish the run that is waiting on these gates
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: bsf run decide "$PR"

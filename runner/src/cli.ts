@@ -117,7 +117,12 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
   bsf run start WORK_ITEM [--attempt N] [--escalate true] [--first-step ROLE]
   bsf run after-gates WORK_ITEM --run-id R [--attempt N] [--pr N] [--build-result R] [--wait-min M] [--steps-dir DIR]
   bsf run after-gates --static S --verification V [--attempt N]
-      What happens after the gates: verify, retry, escalate or clear.
+      What happens after the gates: verify, retry, escalate or clear. With
+      --wait-min 0 (the default) a run whose gates have not reported parks its
+      item in review and returns awaiting_gates.
+  bsf run decide PR
+      Finish the run parked on PR's gates: factory-gates calls this once the
+      verdict is recorded. Nothing parked is a no-op.
 
   bsf rollup [--squash-media] [--plan]
       Rebuild index.json and ledger.json from the run files, and dispatch
@@ -1445,6 +1450,50 @@ async function runCommand(second: string | undefined, args: Args, third?: string
     return 0;
   }
 
+  if (second === "decide") {
+    // `bsf run decide PR`: the gates for PR have finished (factory-gates calls
+    // this), so finish the run that handed off to them: clear, retry or
+    // escalate. Nothing parked for the PR means nothing to do (fix 6).
+    const prNumber = Number(third);
+    if (!Number.isInteger(prNumber) || prNumber <= 0) die("usage: bsf run decide PR_NUMBER");
+    const { finishRun } = await import("./commands/run-lifecycle.js");
+    const { FactoryStore } = await import("./lib/store.js");
+    type Handoff = import("./commands/run-lifecycle.js").Handoff;
+    const gh = new GitHub({ repo: requireRepo() });
+    const store = new FactoryStore(gh);
+    await store.data.pin();
+    const parked = (await store.data.list("handoff/")).filter((p: string) => p.endsWith(".json"));
+    let handoff: Handoff | null = null;
+    for (const path of parked) {
+      const h = await store.data.readJson<Handoff>(path);
+      if (h !== null && h.pr === prNumber) handoff = h;
+    }
+    if (handoff === null) {
+      process.stdout.write(`nothing is waiting on the gates for PR #${prNumber}\n`);
+      setOutput("next", "none");
+      return 0;
+    }
+    store.data.unpin();
+    const cfg: FactoryConfig = await factoryConfig().catch((): FactoryConfig => ({}));
+    const r = await finishRun({
+      gh,
+      workItem: handoff.work_item,
+      runId: handoff.run,
+      attempt: handoff.attempt,
+      maxAttempts: cfg.limits?.retry_cap ?? 3,
+      pr: handoff.pr,
+      buildResult: handoff.build_result,
+      now: nowIso,
+      // One look: the gates have just reported, or this was called too early.
+      waitMs: 0,
+      pollMs: 60_000,
+    });
+    process.stdout.write(`${r.next}: ${r.reason}${r.pr === null ? "" : ` (PR #${r.pr})`}\n`);
+    setOutput("next", r.next);
+    await reportApiCalls(gh, nowIso(), (t) => process.stdout.write(t));
+    return 0;
+  }
+
   if (second === "after-gates" && third !== undefined && args["static"] === undefined) {
     // `bsf run after-gates WORK_ITEM --run-id R --attempt N [--pr N] [--build-result R] [--wait-min M]`
     const { finishRun } = await import("./commands/run-lifecycle.js");
@@ -1453,7 +1502,8 @@ async function runCommand(second: string | undefined, args: Args, third?: string
     const cfg: FactoryConfig = await factoryConfig().catch((): FactoryConfig => ({}));
     const attempt = typeof args["attempt"] === "string" ? Number(args["attempt"]) : 1;
     const pr = typeof args["pr"] === "string" ? Number(args["pr"]) : 0;
-    const waitMin = typeof args["wait-min"] === "string" ? Number(args["wait-min"]) : 90;
+    // 0 hands the run to the gates' own workflow instead of waiting here (fix 6).
+    const waitMin = typeof args["wait-min"] === "string" ? Number(args["wait-min"]) : 0;
     // The roles' StepReports, downloaded from this run's artifacts.
     const steps: import("./commands/run-lifecycle.js").StepReportDoc[] = [];
     const stepsDir = typeof args["steps-dir"] === "string" ? args["steps-dir"] : undefined;
@@ -1507,7 +1557,7 @@ async function runCommand(second: string | undefined, args: Args, third?: string
     return 0;
   }
 
-  die("usage: bsf run plan|start|after-gates");
+  die("usage: bsf run plan|start|decide|after-gates");
 }
 
 async function rollupCommand(args: Args): Promise<number> {

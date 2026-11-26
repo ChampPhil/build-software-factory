@@ -497,10 +497,12 @@ jobs:
     # for the rule, its proof and the violations fixed); spec and build are
     # then skipped, and the run finishes with the hardener's PR.
     needs: [plan, hardener, build, build-host, hardener-budget, build-budget, build-host-budget]
-    # Runs whatever the build did, so the item always leaves "running".
+    # Runs whatever the build did, so the item always leaves "running". It no
+    # longer waits for the gates: it hands the run over and factory-gates'
+    # decide job finishes it when they report (fix 6).
     if: always() && needs.plan.outputs.proceed == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 15
     # actions: read for this run's StepReport artifacts.
     permissions:
       actions: read
@@ -576,7 +578,7 @@ jobs:
           WORK_ITEM: ${{ inputs.work_item }}
           PR: ${{ needs.build.outputs.created_pr_number || needs.build-host.outputs.created_pr_number || needs.hardener.outputs.created_pr_number || inputs.pr_number }}
         run: bsf report publish --work-item "$WORK_ITEM" --pr "$PR"
-      - name: Wait for the gates and decide what happens next
+      - name: Hand the run to the gates, or decide now if they are already in
         env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
           WORK_ITEM: ${{ inputs.work_item }}
@@ -586,7 +588,7 @@ jobs:
           BUILD_RESULT: ${{ needs.build.result != 'skipped' && needs.build.result || needs.build-host.result }}
         run: >-
           bsf run after-gates "$WORK_ITEM" --run-id "$RUN_ID" --attempt "$ATTEMPT" --pr "$PR"
-          --build-result "$BUILD_RESULT" --steps-dir "$RUNNER_TEMP/step-reports"
+          --build-result "$BUILD_RESULT" --steps-dir "$RUNNER_TEMP/step-reports" --wait-min 0
       - name: Show the verifier's evidence on the PR
         if: always() && (needs.build.outputs.created_pr_number != '' || needs.build-host.outputs.created_pr_number != '' || needs.hardener.outputs.created_pr_number != '' || inputs.pr_number != '0')
         continue-on-error: true

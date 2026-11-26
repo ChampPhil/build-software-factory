@@ -155,6 +155,33 @@ describe("finishRun", () => {
     expect(sent.some((x) => x.path.endsWith("/issues/9/comments"))).toBe(true);
   });
 
+  it("with no wait, parks the item in review and returns awaiting_gates without polling (fix 6)", async () => {
+    const { gh, sent } = fakeGh([[]]);
+    const r = await finishRun({ ...base, gh, attempt: 1, pr: 5, waitMs: 0 });
+    expect(r.next).toBe("awaiting_gates");
+    expect(JSON.parse(files.get(`work-items/${WI}.json`)!).status).toBe("in_review");
+    expect(files.has(`live/${RUN}.json`)).toBe(true);
+    expect(JSON.parse(files.get(`handoff/${RUN}.json`)!)).toMatchObject({ pr: 5, attempt: 1, work_item: WI });
+    expect(sent.some((x) => x.method === "READY")).toBe(false);
+  });
+
+  it("when the gates have reported, the parked run is finished and the handoff is removed (fix 6)", async () => {
+    const parked = fakeGh([[]]);
+    await finishRun({ ...base, gh: parked.gh, attempt: 1, pr: 5, waitMs: 0 });
+    const { gh, sent } = fakeGh([
+      [
+        { name: "factory/gate-static", status: "completed", conclusion: "success" },
+        { name: "factory/gates", status: "completed", conclusion: "success" },
+      ],
+    ]);
+    const r = await finishRun({ ...base, gh, attempt: 1, pr: 5, waitMs: 0 });
+    expect(r.next).toBe("clear");
+    expect(JSON.parse(files.get(`work-items/${WI}.json`)!).status).toBe("in_review");
+    expect(files.has(`handoff/${RUN}.json`)).toBe(false);
+    expect(files.has(`live/${RUN}.json`)).toBe(false);
+    expect(sent.some((x) => x.method === "READY")).toBe(true);
+  });
+
   it("waits for factory/gates, then clears: PR ready, labelled, item in review, live record gone", async () => {
     const { gh, sent } = fakeGh([
       [],

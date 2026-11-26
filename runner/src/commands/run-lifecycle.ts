@@ -32,6 +32,18 @@ interface WorkItemDoc {
   readonly [k: string]: unknown;
 }
 
+/** Where a run parks what the gates' own workflow needs to finish it (fix 6). */
+export const handoffPath = (runId: string): string => `handoff/${runId}.json`;
+
+export interface Handoff {
+  readonly run: string;
+  readonly work_item: string;
+  readonly pr: number;
+  readonly attempt: number;
+  readonly build_result: string;
+  readonly steps: readonly StepReportDoc[];
+}
+
 /** The ledger's open list with one item's status (and PR) changed. */
 export function withStatus(ledger: Ledger, item: WorkItemDoc, status: Status, pr: number | null, now: string): Ledger {
   const open = ledger.open.some((o) => o.work_item === item.id)
@@ -205,7 +217,7 @@ async function gateChecks(gh: GitHub, sha: string): Promise<readonly GateCheck[]
 }
 
 export interface AfterGatesReport {
-  readonly next: AfterGates["next"] | "no_pr" | "timed_out" | "stood_down" | "wait_sandbox" | "requeued";
+  readonly next: AfterGates["next"] | "no_pr" | "timed_out" | "stood_down" | "wait_sandbox" | "requeued" | "awaiting_gates";
   readonly reason: string;
   readonly pr: number | null;
   readonly attempt: number;
@@ -242,13 +254,17 @@ export async function finishRun(opts: FinishRunOptions): Promise<AfterGatesRepor
   const pr = opts.pr !== null && opts.pr > 0 ? opts.pr : null;
 
   const live = await store.data.readJson<{ started_at?: string }>(livePath(opts.runId)).catch(() => null);
+  // A run that handed off to the gates' workflow comes back here once they
+  // finish. Its item waits in review, not running.
+  const handed = await store.data.readJson<Handoff>(handoffPath(opts.runId)).catch(() => null);
+  const steps = opts.steps ?? handed?.steps ?? [];
   const record = (report: AfterGatesReport, checks: readonly GateCheck[], commit: string | null, status: string) => ({
     path: runPath(opts.runId),
     content: json(
       runRecord({
         runId: opts.runId, workItem: item.id, pipeline: item.pipeline,
         startedAt: live?.started_at ?? opts.now(), endedAt: opts.now(), attempt: opts.attempt,
-        report, itemStatus: status, steps: opts.steps ?? [], checks, commit,
+        report, itemStatus: status, steps, checks, commit,
       }),
     ),
   });
@@ -256,7 +272,7 @@ export async function finishRun(opts: FinishRunOptions): Promise<AfterGatesRepor
   // Triage (or a person) already decided what became of the item: needs
   // info, out of scope, a duplicate. There is nothing to gate and nothing to
   // retry; the run only ends its live record.
-  if (item.status !== "running") {
+  if (item.status !== "running" && !(handed !== null && item.status === "in_review")) {
     const stood: AfterGatesReport = { next: "stood_down", reason: `${item.id} is ${item.status}`, pr, attempt: opts.attempt };
     await store.put(
       [{ path: livePath(opts.runId), content: null }, record(stood, [], null, item.status)],
@@ -334,7 +350,11 @@ export async function finishRun(opts: FinishRunOptions): Promise<AfterGatesRepor
     finalChecks = checks;
     finalHead = head;
     const agg = checks.find((c) => c.name === GATES_CHECK);
-    if (agg === undefined || agg.status !== "completed") {
+    if ((agg === undefined || agg.status !== "completed") && opts.waitMs <= 0) {
+      // Hand off: the gates' own workflow finishes this run when they report,
+      // so no job here sits billing minutes while it waits (fix 6).
+      report = { next: "awaiting_gates", reason: `${GATES_CHECK} has not reported on ${head.slice(0, 7)} yet`, pr, attempt: opts.attempt };
+    } else if (agg === undefined || agg.status !== "completed") {
       report = { next: "timed_out", reason: `${GATES_CHECK} did not report on ${head.slice(0, 7)} in ${Math.round(opts.waitMs / 60000)} min`, pr, attempt: opts.attempt };
     } else {
       const d = afterGates({ ...gateVerdicts(checks), attempt: opts.attempt, maxAttempts: opts.maxAttempts });
@@ -361,6 +381,21 @@ export async function finishRun(opts: FinishRunOptions): Promise<AfterGatesRepor
     }
   }
 
+  if (report.next === "awaiting_gates" && pr !== null) {
+    const doc: Handoff = { run: opts.runId, work_item: item.id, pr, attempt: opts.attempt, build_result: opts.buildResult, steps };
+    const now = opts.now();
+    const ledger = await store.ledger(now);
+    await store.put(
+      [
+        { path: workItemPath(item.id), content: json({ ...item, status: "in_review", pr }) },
+        { path: LEDGER, content: json(withStatus(ledger, item, "in_review", pr, now)) },
+        { path: handoffPath(opts.runId), content: json(doc) },
+      ],
+      `run ${opts.runId}: ${item.id} waits for the gates on PR #${pr}`,
+    );
+    return report;
+  }
+
   // Where the item goes. A run that timed out waiting is left in review with
   // its PR: the gates may still report, and merge reads them directly.
   const status: Status =
@@ -384,6 +419,7 @@ export async function finishRun(opts: FinishRunOptions): Promise<AfterGatesRepor
       { path: workItemPath(item.id), content: json(next) },
       { path: LEDGER, content: json(withStatus(ledger, item, status, pr, now)) },
       { path: livePath(opts.runId), content: null },
+      ...(handed === null ? [] : [{ path: handoffPath(opts.runId), content: null }]),
       record(report, finalChecks, finalHead, status),
       ...(failures === null ? [] : [{ path: gateFailuresPath(item.id), content: json(failures) }]),
     ],
