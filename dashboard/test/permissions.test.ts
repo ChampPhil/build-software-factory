@@ -156,3 +156,16 @@ describe("where the token goes", () => {
     expect(urls).toEqual(["https://api.github.com/repositories/1/pulls?page=2"]);
   });
 });
+
+import { missingPermissionSentence, tokenSteps } from "../lib/permissions";
+import { PERMISSIONS as ALL_PERMISSIONS } from "../lib/permissions";
+describe("token steps", () => {
+  it("name every permission", () => {
+    const text = tokenSteps("o/r").join("\n");
+    for (const p of ALL_PERMISSIONS.filter((x) => x.key !== "metadata")) expect(text).toContain(p.label);
+    expect(text).toContain("o/r");
+  });
+  it("names the first missing permission", () => {
+    expect(missingPermissionSentence([{ label: "Checks" }, { label: "Issues" }])).toContain("Checks");
+  });
+});

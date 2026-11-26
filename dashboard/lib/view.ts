@@ -306,6 +306,7 @@ export type Need =
   | { readonly kind: "escalated"; readonly item: LedgerOpenItem; readonly pull: PullSummary | null }
   | { readonly kind: "trust"; readonly item: LedgerOpenItem; readonly issue: number | null }
   | { readonly kind: "outside"; readonly issue: IssueSummary }
+  | { readonly kind: "ask"; readonly issue: IssueSummary }
   | { readonly kind: "candidate"; readonly candidate: CandidatesFile["candidates"][number] };
 
 /**
@@ -352,6 +353,13 @@ export function needsFrom(input: {
     if (isTrusted(issue.author_association) || has(issue.labels, "factory:accept")) continue;
     if (trustIssues.has(issue.number) || known.has(issue.number)) continue;
     out.push({ kind: "outside", issue });
+  }
+  // A question to the factory (factory:ask) that nobody has answered yet is waiting on the factory, but the person
+  // who asked it should see it is still open rather than assume it was handled.
+  for (const issue of input.issues) {
+    if (issue.pull_request !== undefined || !has(issue.labels, "factory:ask")) continue;
+    if ((issue.comments ?? 0) > 0) continue;
+    out.push({ kind: "ask", issue });
   }
   for (const candidate of input.candidates.filter((c) => c.status === "pending")) out.push({ kind: "candidate", candidate });
   return out;
@@ -430,6 +438,12 @@ export function day(iso: string | null | undefined): string {
 export function hourLocal(utcHour: number, ref: Date = new Date()): string {
   const d = new Date(Date.UTC(ref.getUTCFullYear(), ref.getUTCMonth(), ref.getUTCDate(), utcHour));
   return d.toLocaleTimeString("en-US", { hour: "numeric" }).replace(" ", " ").toLowerCase();
+}
+
+/** "1:00 am (06:00 UTC)": the local time first, the UTC hour in the style the workflow file uses. */
+export function hourLabel(utcHour: number, ref: Date = new Date()): string {
+  const local = hourLocal(utcHour, ref).replace(/^(\d+)/, "$1:00");
+  return `${local} (${String(utcHour).padStart(2, "0")}:00 UTC)`;
 }
 
 export const plural = (n: number, one: string, many = `${one}s`): string => `${n.toLocaleString("en-US")} ${n === 1 ? one : many}`;

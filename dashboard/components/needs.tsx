@@ -33,6 +33,22 @@ export function NeedCard({ need, title, cost, issues }: { need: Need; title: Tit
     }
     case "outside":
       return <TrustCard id={null} number={need.issue.number} title={need.issue.title} who={need.issue.user?.login ?? "someone"} since={need.issue.created_at} />;
+    case "ask":
+      return (
+        <article className="item">
+          <div className="head">
+            <div className="where">
+              <span className="tag">Asked, no reply yet</span>
+              <span>#{need.issue.number}</span>
+              <span>opened {ago(need.issue.created_at)}</span>
+            </div>
+            <h3>{need.issue.title}</h3>
+          </div>
+          <div className="body">
+            <p className="muted">The factory has not answered this yet. <Out href={need.issue.html_url}>Open it on GitHub</Out></p>
+          </div>
+        </article>
+      );
     case "candidate":
       return <CandidateCard c={need.candidate} />;
   }

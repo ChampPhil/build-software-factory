@@ -360,6 +360,7 @@ function SignedIn({
       <div id="content">{children}</div>
       <footer className="foot">
         <BrandCredit />
+        <small className="muted" title="The build this page is running">Build {(process.env["NEXT_PUBLIC_BUILD_SHA"] ?? "dev").slice(0, 7)}</small>
       </footer>
       {composing !== false && (
         <Dialog title="New request" onClose={() => setComposing(false)} size="sheet">

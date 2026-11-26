@@ -53,7 +53,12 @@ export default function Briefing() {
     issues: issueList,
     candidates: guardrails.state === "ready" ? (guardrails.data.candidates?.candidates ?? []) : [],
   });
-  const going = live.state === "ready" ? live.data : [];
+  const liveNow = live.state === "ready" ? live.data : [];
+  // Running is what the live records say plus what the ledger says is running that has no live record, counted once each.
+  const liveItems = new Set(liveNow.map((g) => g.work_item));
+  const ledgerRunning = (L?.open ?? []).filter((o) => o.status === "running" && !liveItems.has(o.work_item));
+  const going = liveNow;
+  const runningCount = liveNow.length + ledgerRunning.length;
   const day1 = Date.now() - 36 * 3_600_000;
   const landed = (L?.recent ?? []).filter((r) => r.status === "merged" && r.merged_at !== undefined).slice(0, 6);
   const overnight = landed.filter((r) => Date.parse(r.merged_at ?? "") > day1).length;
@@ -128,7 +133,7 @@ export default function Briefing() {
         <p className="when">{whenLine()}</p>
         <h1>{head}</h1>
         <p className="rest">
-          {going.length === 0 ? "Nothing is running." : `${countWord(going.length)} ${going.length === 1 ? "run is" : "runs are"} going.`}{" "}
+          {runningCount === 0 ? "Nothing is running." : `${countWord(runningCount)} ${runningCount === 1 ? "run is" : "runs are"} going.`}{" "}
           {overnight > 0 ? (
             <>
               <a href="#landed">{countWord(overnight)} {overnight === 1 ? "change" : "changes"} landed</a> in the last day.
@@ -138,7 +143,7 @@ export default function Briefing() {
               The last change <a href="#landed">landed {ago(landed[0]?.merged_at)}</a>.
             </>
           ) : (
-            "Nothing has landed yet."
+            "No merges yet."
           )}
         </p>
       </section>

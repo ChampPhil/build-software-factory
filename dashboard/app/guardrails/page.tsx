@@ -132,6 +132,9 @@ export default function Guardrails() {
             <h2 className="sect">The factory&rsquo;s self-review</h2>
             {improvement.state === "loading" && <Loading what="the reviews" />}
             {latest === undefined && improvement.state === "ready" && <p className="muted">No review yet. The factory grades its own recent work every few days.</p>}
+            {latest !== undefined && Date.now() - Date.parse(latest.window.to) < 3 * 86_400_000 && (
+              <p className="muted small">The last review is from {day(latest.window.to)}. The factory skips a scheduled review that is not due yet; Run a review now always starts one.</p>
+            )}
             {latest !== undefined && <Review review={latest} onAsk={(title) => compose({ title, details: "", goal: "", kind: "harden" })} />}
             <div className="acts">
               <button className="btn small" type="button" onClick={() => void act(() => client.runWorkflowNow("factory-review.yml"), "The review is running. It shows here when it finishes.")}>

@@ -49,6 +49,30 @@ export function tokenLink(repo: string, days = 90): string {
   return `https://github.com/settings/personal-access-tokens/new?${params.toString()}`;
 }
 
+/**
+ * The steps to make a token by hand, one per thing to set, generated from
+ * PERMISSIONS so a permission added there appears here too.
+ */
+export function tokenSteps(repo: string): readonly string[] {
+  const where = repo.trim() === "" ? "your repository" : repo.trim();
+  return [
+    `Open GitHub's token form (the button below fills in the name and lifetime).`,
+    `Under Repository access choose Only select repositories, then pick ${where}.`,
+    ...PERMISSIONS.filter((p) => p.key !== "metadata").map((p) => `Under Repository permissions set ${p.label} to "${levelWords(p.level)}" (${p.why}).`),
+    `Metadata is read-only and GitHub adds it by itself.`,
+    `Press Generate token, copy it, and paste it below.`,
+  ];
+}
+
+/** The sentence that names the first permission a token lacks, from the labels checkAccess reports. */
+export function missingPermissionSentence(missing: readonly { readonly label: string }[]): string {
+  const first = missing[0];
+  if (first === undefined) return "";
+  const p = PERMISSIONS.find((x) => x.label === first.label);
+  const level = p === undefined ? "" : ` to "${levelWords(p.level)}"`;
+  return `This token is missing the ${first.label} permission. Make a new token with ${first.label} set${level || ""}.`;
+}
+
 function need(key: string): PermissionNeed {
   const found = PERMISSIONS.find((p) => p.key === key);
   if (found === undefined) throw new Error(`unknown permission ${key}`);

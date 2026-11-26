@@ -1,5 +1,7 @@
 "use client";
 
+import { useEffect, useState } from "react";
+import type { WorkflowRunSummary } from "@/lib/github";
 import { useActions, useHealthIssues, useStandingGoals, useWriters } from "@/lib/data";
 import { ago, clock, day } from "@/lib/view";
 import { useApp } from "@/components/app";
@@ -45,6 +47,16 @@ export default function Factory() {
   const writers = useWriters(client);
   const actions = useActions(client, version);
   const healthIssues = useHealthIssues(client, version);
+  // The shared list holds the newest runs of everything; a quiet workflow can fall off it, so ask for its own last run.
+  const [fetched, setFetched] = useState<Record<number, WorkflowRunSummary | null>>({});
+  useEffect(() => {
+    const list = actions.state === "ready" ? actions.data : null;
+    if (list === null) return;
+    for (const w of list.workflows) {
+      if (list.runs.some((r) => r.workflow_id === w.id) || w.id in fetched) continue;
+      void client.lastRunOf(w.id).then((r) => setFetched((f) => ({ ...f, [w.id]: r }))).catch(() => setFetched((f) => ({ ...f, [w.id]: null })));
+    }
+  }, [actions, client, fetched]);
   const data = index.state === "ready" ? index.data : null;
   const health = data?.health;
   const name = repo.split("/")[1] ?? repo;
@@ -89,7 +101,7 @@ export default function Factory() {
               <div className="table wf-t" role="table" aria-label="Workflows">
                 {actions.data.workflows.map((w) => {
                   const file = w.path.split("/").pop() ?? w.path;
-                  const last = actions.data!.runs.find((r) => r.workflow_id === w.id);
+                  const last = actions.data!.runs.find((r) => r.workflow_id === w.id) ?? fetched[w.id] ?? undefined;
                   return (
                     <div className="tr" role="row" key={w.id}>
                       <span role="cell" className="t">
