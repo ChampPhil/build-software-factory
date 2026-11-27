@@ -2,6 +2,7 @@ import { effectiveAssociation } from "../lib/github.js";
 import { GitHub, type PullFile, type ReviewResponse } from "../lib/github.js";
 import { loadPolicy, type Loader } from "../lib/config.js";
 import { FactoryStore } from "../lib/store.js";
+import { detectEnforcement } from "../lib/enforcement.js";
 import { runPolicy, type PolicyResult } from "./policy.js";
 import { FACTORY_YAML, GARDEN_WORKFLOW, SETTINGS_LABEL, diffSettings, onlyCronLineChanged } from "../lib/settings.js";
 import type { Association, Pipeline, PullRequestFacts } from "../lib/types.js";
@@ -287,16 +288,76 @@ export async function runPolicyCommand(opts: PolicyRunOptions): Promise<PolicyRe
   const result = runPolicy({ policy, pr, appLogins: opts.appLogins });
 
   if (opts.report) {
-    const waiting = awaitingApproval(result);
+    const report = policyCheckReport(result, await checksCanBeRequired(opts.gh));
     await opts.gh.reportCheck({
       name: opts.checkName,
       headSha: pr.head_sha,
-      conclusion: result.conclusion === "success" ? "success" : waiting ? "pending" : "failure",
-      title: result.conclusion === "success" ? "Policy passed" : waiting ? "Awaiting your approval" : "Policy failed",
-      summary: summarize(result),
+      conclusion: report.conclusion,
+      title: report.title,
+      summary: report.summary,
     });
   }
   return result;
+}
+
+/**
+ * Whether this repository can make a check required.
+ *
+ * A private repository on the free plan cannot. There the policy check used
+ * to stay yellow forever ("awaiting approval") even though GitHub would never
+ * block a merge on it, and setup waited on that yellow. "off" from enforcement
+ * detection means the check should finish. Any error keeps the yellow: a
+ * required check must not be completed as optional because a read failed.
+ *
+ * gh: the repository the pull request is in.
+ */
+async function checksCanBeRequired(gh: GitHub): Promise<boolean> {
+  try {
+    const branch = await gh.defaultBranch();
+    return (await detectEnforcement(gh, branch)) === "on";
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * The check run to post for a policy verdict.
+ *
+ * Purpose:
+ *   A pass is green. A wrong pull request is red. A pull request that only
+ *   needs a trusted person's approval stays yellow where checks can be
+ *   required, because that yellow is what branch protection waits on.
+ *   Where checks cannot be required, that same pull request finishes as
+ *   neutral. The words say it is not required here, so a setup run does not
+ *   sit on a yellow check that will never turn green by itself.
+ *
+ * result: the policy verdict for this pull request.
+ * checksRequired: true when this repository can require status checks.
+ */
+export function policyCheckReport(
+  result: PolicyResult,
+  checksRequired: boolean,
+): { readonly conclusion: "success" | "failure" | "neutral" | "pending"; readonly title: string; readonly summary: string } {
+  if (result.conclusion === "success") {
+    return { conclusion: "success", title: "Policy passed", summary: summarize(result) };
+  }
+  if (awaitingApproval(result) && !checksRequired) {
+    const files = result.failures.flatMap((f) => f.files).slice(0, 50);
+    const listed = files.map((f) => `- \`${f}\``).join("\n");
+    return {
+      conclusion: "neutral",
+      title: "Not required on this repository",
+      summary:
+        "This repository cannot require checks, so factory/policy is not a merge blocker. " +
+        "Nothing is wrong with this pull request. It changes files that need a trusted person's approval " +
+        "on a repository where checks can be required. Merge when factory/gates passes.\n\n" +
+        listed,
+    };
+  }
+  if (awaitingApproval(result)) {
+    return { conclusion: "pending", title: "Awaiting your approval", summary: summarize(result) };
+  }
+  return { conclusion: "failure", title: "Policy failed", summary: summarize(result) };
 }
 
 /** Failures a trusted person's approval clears: the PR is fine, it is waiting on them. */

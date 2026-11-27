@@ -15,6 +15,12 @@ on:
       key:
         required: true
         type: string
+      # "false" when the step's job was skipped, so the hold is released
+      # instead of charged. Anything else, including omitted, charges the measure.
+      ran:
+        required: false
+        type: string
+        default: "true"
     secrets:
       FACTORY_APP_PRIVATE_KEY:
         required: true
@@ -72,6 +78,11 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
           KEY: ${{ inputs.key }}
+          RAN: ${{ inputs.ran }}
         run: |
-          bsf budget settle --key "$KEY" --measured /tmp/bsf-budget/measure/measure.json --detection-dir /tmp/bsf-budget/detection
+          if [ "$RAN" = "false" ]; then
+            bsf budget settle --key "$KEY" --not-run
+          else
+            bsf budget settle --key "$KEY" --measured /tmp/bsf-budget/measure/measure.json --detection-dir /tmp/bsf-budget/detection
+          fi
           bsf budget status

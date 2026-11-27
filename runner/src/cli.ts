@@ -1840,7 +1840,8 @@ async function budgetMeasureCommand(args: Args): Promise<number> {
 async function budgetSettleCommand(args: Args): Promise<number> {
   const str = (k: string): string | undefined => (typeof args[k] === "string" ? (args[k]) : undefined);
   const key = str("key");
-  if (key === undefined) die("usage: bsf budget settle --key K [--measured PATH] [--detection-dir DIR]");
+  if (key === undefined) die("usage: bsf budget settle --key K [--measured PATH] [--detection-dir DIR] [--not-run]");
+  const release = args["not-run"] === true;
   let agentUsd = creditsToUsd(str("agent-aic"));
   let pipeline = str("pipeline");
   const measuredPath = str("measured");
@@ -1866,7 +1867,7 @@ async function budgetSettleCommand(args: Args): Promise<number> {
     (current) => {
       const base = current !== null && current.schema === "budget/2" ? current : null;
       heldSince = base?.inflight.find((f) => f.key === key)?.started_at ?? null;
-      const out = settleBudget(base, { key, agentUsd, detectionUsd: detUsd, ...(pipeline === undefined ? {} : { pipeline }) }, now);
+      const out = settleBudget(base, { key, agentUsd, detectionUsd: detUsd, ...(pipeline === undefined ? {} : { pipeline }), ...(release ? { release: true } : {}) }, now);
       return { next: out.doc === base || (base !== null && base.settled.includes(key)) ? null : out.doc, result: out };
     },
     `budget: settle ${key}`,
@@ -3748,13 +3749,16 @@ async function gatesTests(args: Args): Promise<number> {
     return 1;
   }
   if (test.kind === "no_manifest" && existingCheck === null) {
-    const summary =
-      "The factory does not know how to run this repo's tests: there is no .factory/sandbox/manifest.json, " +
-      "which setup writes once it has run them. Finish setup, or use Ask the factory on the dashboard's Factory page to name the check.";
-    process.stdout.write(`${summary}\n`);
-    await maybeReportCheck(args, "failure", "Tests could not run", summary, "factory/gate-tests");
-    setOutput("tests_source", "unknown");
-    return 1;
+    // Before the manifest is on the default branch, failing here blocks the
+    // pull request that lets setup write the manifest. After that, a missing
+    // manifest is a real failure: a change would merge with no tests run.
+    const { missingManifestTests } = await import("./commands/tests-gate.js");
+    const setupDone = await gh.setupFinished().catch(() => false);
+    const verdict = missingManifestTests(setupDone);
+    process.stdout.write(`${verdict.summary}\n`);
+    await maybeReportCheck(args, verdict.conclusion, verdict.title, verdict.summary, "factory/gate-tests");
+    setOutput("tests_source", verdict.source);
+    return verdict.exitCode;
   }
 
   let env: Record<string, string> | undefined;

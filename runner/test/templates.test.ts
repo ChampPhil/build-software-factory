@@ -666,6 +666,14 @@ describe("the budget in the workflows", () => {
     }
   });
 
+  it("the setup agent's daily credit cap is above the default that skipped computers on a zero spend", () => {
+    const doc = fm("factory-setup-agent.md");
+    expect(doc["max-daily-ai-credits"]).toBe(50000);
+    const lock = readFileSync(join(ROOT, "templates/compiled/factory-setup-agent.lock.yml"), "utf8");
+    expect(lock).toContain('GH_AW_MAX_DAILY_AI_CREDITS: "50000"');
+    expect(lock).not.toContain("|| '5000'");
+  });
+
   it("the budget's table of caps matches every role workflow", async () => {
     const { ROLE_CAPS, DETECTION } = await import("../src/commands/budget.js");
     for (const f of AGENT_FILES) {

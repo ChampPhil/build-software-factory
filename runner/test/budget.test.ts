@@ -159,6 +159,15 @@ describe("settle", () => {
     expect(twice.doc.spent_usd["product_work"]).toBe(1);
   });
 
+  it("releases a skipped step's hold and charges nothing", () => {
+    const held = okDoc(reserve(null, step(), LIMITS, NOW));
+    const r = settle(held, { key: step().key, agentUsd: null, detectionUsd: null, release: true }, NOW);
+    expect(r.chargedUsd).toBe(0);
+    expect(r.doc.inflight).toEqual([]);
+    expect(r.doc.spent_usd).toEqual({});
+    expect(r.reason).toMatch(/did not run/);
+  });
+
   it("reads gh-aw's credits as dollars, and an empty output as missing", () => {
     expect(creditsToUsd("6.07815")).toBeCloseTo(0.0607815, 7);
     expect(creditsToUsd("")).toBeNull();

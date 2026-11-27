@@ -245,3 +245,48 @@ export function tail(text: string, lines = 80, maxChars = 60_000): string {
   const kept = text.split("\n").slice(-lines).join("\n");
   return kept.length <= maxChars ? kept : kept.slice(kept.length - maxChars);
 }
+
+/**
+ * What the tests gate says when this checkout has no sandbox manifest.
+ *
+ * Purpose:
+ *   Setup writes `.factory/sandbox/manifest.json` when it has learned how to
+ *   run the repo's tests. Until that file is on the default branch, a pull
+ *   request that exists only to let setup continue (a credit cap, a prose
+ *   trim) would fail this gate for the very file the skipped run was going
+ *   to write. That is a circle: the pull request cannot merge until setup
+ *   finishes, and setup cannot finish until the pull request merges.
+ *
+ *   Once the manifest is on the default branch, a checkout without one is a
+ *   real gap and the gate fails, the same as before. A product pull request
+ *   is already paused until that file exists, so a pass here does not let
+ *   product work through untested.
+ *
+ * setupFinished: true when the default branch already has the manifest.
+ */
+export function missingManifestTests(setupFinished: boolean): {
+  readonly conclusion: "neutral" | "failure";
+  readonly title: string;
+  readonly summary: string;
+  readonly source: "setup_not_finished" | "unknown";
+  readonly exitCode: 0 | 1;
+} {
+  if (!setupFinished) {
+    const summary =
+      "The factory does not know how to run this repo's tests yet: there is no .factory/sandbox/manifest.json " +
+      "on the default branch. Setup writes that file once it has run the tests. This pull request is not failed " +
+      "for a command setup has not had a chance to write. After that file is on the default branch, a pull request " +
+      "with no way to run the tests fails this gate.";
+    return {
+      conclusion: "neutral",
+      title: "Setup has not written the test command yet",
+      summary,
+      source: "setup_not_finished",
+      exitCode: 0,
+    };
+  }
+  const summary =
+    "The factory does not know how to run this repo's tests: there is no .factory/sandbox/manifest.json, " +
+    "which setup writes once it has run them. Finish setup, or use Ask the factory on the dashboard's Factory page to name the check.";
+  return { conclusion: "failure", title: "Tests could not run", summary, source: "unknown", exitCode: 1 };
+}

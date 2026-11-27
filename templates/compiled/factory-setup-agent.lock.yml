@@ -137,7 +137,7 @@ jobs:
       id-token: write # Request an OIDC token for authenticated services.
       issues: write # Create or update issues and comments.
     env:
-      GH_AW_MAX_DAILY_AI_CREDITS: ${{ vars.GH_AW_DEFAULT_MAX_DAILY_AI_CREDITS || '5000' }}
+      GH_AW_MAX_DAILY_AI_CREDITS: "50000"
       GH_AW_RUNTIME_FEATURES: ${{ vars.GH_AW_RUNTIME_FEATURES }}
     outputs:
       activation_app_token_minting_failed: ${{ steps.activation-app-token.outcome == 'failure' }}
@@ -277,7 +277,7 @@ jobs:
           GH_AW_HAS_SLASH_COMMAND: "false"
           GH_AW_HAS_LABEL_COMMAND: "false"
           GH_AW_GITHUB_TOKEN: ${{ steps.activation-app-token.outputs.token }}
-          GH_AW_MAX_DAILY_AI_CREDITS: ${{ vars.GH_AW_DEFAULT_MAX_DAILY_AI_CREDITS || '5000' }}
+          GH_AW_MAX_DAILY_AI_CREDITS: "50000"
           GH_AW_MAX_AI_CREDITS: "1000"
         with:
           github-token: ${{ steps.activation-app-token.outputs.token }}
