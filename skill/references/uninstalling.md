@@ -9,6 +9,18 @@ goes, once they merge the uninstall pull request, is the machinery: the
 workflows that run agents, `.factory/`, the issue forms, the labels, and
 the required checks the factory added.
 
+The `.factory/` folder on this computer is part of that machinery. It goes
+when uninstall is applied, including files that were never committed. So do
+the local branches named `factory/` (`factory/setup`, `factory/fix-*`, and
+any other), and the bookmarks git keeps for those branches
+(`origin/factory/...`). Deleting a bookmark does not delete the branch on
+GitHub and does not close a pull request. None of that is one of the
+questions below, and none of it is something they have to ask for
+afterwards. After the pull request merges, pull the default branch in
+this checkout. If `.factory/` came back from the old commit, delete the
+folder again. If a `factory/` branch is still checked out, or still listed
+by `git branch`, delete it. You do that. You do not ask.
+
 ## Ask before you delete anything else
 
 Before you delete anything beyond that machinery, ask these three questions.
@@ -19,13 +31,17 @@ Say, with the questions, that commits already on the default branch stay
 either way.
 
 1. **Does this include all factory run history?** The history is the record
-   of every run, what it cost, and what was decided. It is not part of the
-   machinery. Default: no.
-2. **Delete the factory's branches?** These are branches the factory opened.
-   Not the default branch. Not a branch the person opened. If you are not
-   sure who opened a branch, do not delete it. Deleting a branch closes a
-   pull request that is still open on it. Say that in the question.
-   Default: no.
+   of every run, what it cost, and what was decided, including screenshots
+   and recordings, and the same refs on the private data repository if
+   setup created one. It is not part of the machinery. Default: no. The
+   private repository itself is not deleted. Tell them it is still there
+   and that they can delete it on GitHub if it was only for the factory.
+2. **Delete the factory's branches on GitHub?** These are branches the
+   factory opened on GitHub, not the copies on this computer. The copies on
+   this computer are deleted with the machinery. Not the default branch.
+   Not a branch the person opened. If you are not sure who opened a branch,
+   do not delete it. Deleting a branch on GitHub closes a pull request that
+   is still open on it. Say that in the question. Default: no.
 3. **Delete the factory's issues?** These are issues the factory filed. Not
    issues the person filed. If you are not sure who filed an issue, do not
    delete it. Default: no.
@@ -67,20 +83,34 @@ themselves. Do not print the command as an optional follow-up.
    .factory/bin/bsf uninstall --apply --purge-data
    ```
 
-   That deletes the machinery files in the checkout and does the API work
-   for labels and branch protection. It does not commit. If the history
+   That deletes the machinery files in the checkout, including issue forms
+   whose name and description are still the factory's, and the factory's
+   entry in `.github/dependabot.yml` (the file goes only when that entry
+   was the whole of it). It deletes the whole `.factory/` folder on this
+   computer, including files git never tracked, and removes the correction
+   hook from `.claude/settings.local.json` when that hook is installed. It
+   deletes every local branch named `factory/`, except the one checked out,
+   and every local bookmark such as `origin/factory/setup`. It
+   deletes the factory's Actions secrets and variables, including
+   `ANTHROPIC_API_KEY` on the repository. It does the API work for labels
+   and branch protection. It does not commit. If the history
    ref is still there after a yes, you delete it yourself:
 
    ```
    git push origin :refs/factory/data
+   git push origin :refs/factory/media
    ```
 
-   You run that. You do not hand it to them. When the answer was no, that
-   command is absent. Do not mention it.
+   And the same two pushes against the private data repository, when
+   factory.yaml names one. Any `refs/factory/live/<id>` that is still
+   there goes the same way. You run those. You do not hand them to the
+   person. When the answer was no, those commands are absent. Do not
+   mention them.
 
-3. **Branches, only on a yes.** Delete each branch the factory opened.
-   Never the default branch. Never a branch the person opened. Deleting the
-   branch closes a pull request still open on it. You run the delete:
+3. **Branches on GitHub, only on a yes.** Delete each branch the factory
+   opened on GitHub. The local copies are already gone. Never the default
+   branch. Never a branch the person opened. Deleting the branch closes a
+   pull request still open on it. You run the delete:
 
    ```
    git push origin --delete <branch>
@@ -105,7 +135,20 @@ themselves. Do not print the command as an optional follow-up.
    `node scripts/wait-for.mjs pr-merged <number>` when you ask them to
    merge it. Do not tell them to come back and say they merged.
 
-6. **Tell them the two things only they can do**, which the uninstall
+6. **After they merge, clear this checkout.** Switch to the default branch
+   and pull. Merging removed `.factory/` on GitHub. This computer still has
+   the folder if the checkout was on the old commit. If `.factory/` is here
+   after the pull, delete the folder. Delete every local branch `git branch`
+   still lists under `factory/`, including `factory/uninstall` if that is
+   the one you were on:
+
+   ```
+   git branch -D factory/uninstall
+   ```
+
+   Do not ask them to.
+
+7. **Tell them the two things only they can do**, which the uninstall
    command also prints:
    - **Uninstall the GitHub App.** Only a repository admin can, at the
      settings page the command names. Until they do, the App is installed

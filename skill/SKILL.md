@@ -256,7 +256,11 @@ new one.
 "Uninstall the software factory", "remove this", "get rid of it" — read
 `references/uninstalling.md` and do it. Do not try to talk them out of it
 and do not ask why first. Ask the three questions in that file before you
-delete anything beyond the factory machinery. Each defaults to no.
+delete anything beyond the factory machinery. Each defaults to no. The
+`.factory/` folder on this computer is part of the machinery, and so is
+every local branch named `factory/`. Delete them, including files that
+were never committed. Do not wait to be asked. Deleting a branch on GitHub
+is a separate question, because that closes an open pull request.
 
 ## Running commands on their machine
 
