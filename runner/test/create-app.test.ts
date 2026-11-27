@@ -54,8 +54,10 @@ async function startServer(): Promise<void> {
   for (let i = 0; i < 40; i++) {
     await new Promise((r) => setTimeout(r, 150));
     try {
-      await fetch(`http://localhost:${PORT}/start`, { redirect: "manual" });
-      return;
+      // /nope, not /start. The start page is served once; this probe must
+      // not use up that one response before the assertions read it.
+      const res = await fetch(`http://localhost:${PORT}/nope`, { redirect: "manual" });
+      if (res.status === 404) return;
     } catch { /* not up yet */ }
   }
   throw new Error(`server never came up. output:\n${stdout}`);
@@ -151,26 +153,37 @@ describe("create-app.mjs --dry-run", () => {
 });
 
 describe("create-app.mjs local server", () => {
+  // The first /start is the only one that carries the manifest. Later tests
+  // read this copy so they do not spend that one response.
+  let formBody = "";
+
   it("starts and serves the page that posts the manifest", async () => {
     await startServer();
     const res = await get("/start");
+    formBody = res.body;
     expect(res.status).toBe(200);
     expect(res.body).toContain('action="https://github.com/settings/apps/new"');
     expect(res.body).toContain('name="manifest"');
   });
 
-  it("sends a state value, so a forged redirect can be told apart", async () => {
-    const res = await get("/start");
-    expect(/name="state" value="[0-9a-f]{32}"/.test(res.body)).toBe(true);
+  it("sends a state value, so a forged redirect can be told apart", () => {
+    expect(/name="state" value="[0-9a-f]{32}"/.test(formBody)).toBe(true);
   });
 
-  it("works without JavaScript", async () => {
-    expect((await get("/start")).body).toContain("<noscript>");
+  it("works without JavaScript", () => {
+    expect(formBody).toContain("<noscript>");
   });
 
-  it("the posted manifest does not request workflows", async () => {
+  it("the posted manifest does not request workflows", () => {
+    expect(formBody).not.toContain("&quot;workflows&quot;");
+  });
+
+  it("a second visit does not send another manifest", async () => {
     const res = await get("/start");
-    expect(res.body).not.toContain("&quot;workflows&quot;");
+    expect(res.status).toBe(200);
+    expect(res.body).not.toContain('name="manifest"');
+    expect(res.body).toContain("Use the tab already open");
+    expect(res.body).toContain("does not send another manifest");
   });
 
   it("404s an unknown path", async () => {
@@ -189,14 +202,13 @@ describe("create-app.mjs local server", () => {
   });
 
   it("refuses the right state with no code", async () => {
-    const start = await get("/start");
-    const state = /name="state" value="([0-9a-f]{32})"/.exec(start.body)?.[1];
+    const state = /name="state" value="([0-9a-f]{32})"/.exec(formBody)?.[1];
     expect(state).toBeDefined();
     const res = await get(`/callback?state=${state}`);
     expect(res.status).toBe(400);
   });
 
-  it("tells the user what permissions it will ask for before opening the browser", () => {
+  it("tells the user what permissions it will ask for before printing the link", () => {
     expect(stdout).toContain("contents: write");
     expect(stdout).toContain("workflows: not requested");
   });
@@ -227,8 +239,7 @@ describe("create-app.mjs local server", () => {
   it("in preview, does not exchange a code even when the state is right", async () => {
     // The code is single-use, so exchanging it would spend it and create a
     // real App. This is the one thing a preview must not do.
-    const start = await get("/start");
-    const state = /name="state" value="([0-9a-f]{32})"/.exec(start.body)?.[1];
+    const state = /name="state" value="([0-9a-f]{32})"/.exec(formBody)?.[1];
     expect(state).toBeDefined();
     const res = await get(`/callback?state=${state}&code=not-a-real-code`);
     expect(res.status).toBe(200);
