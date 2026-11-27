@@ -2,7 +2,8 @@ import { describe, it, expect, afterAll } from "vitest";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { needsHost, serveOnHost, stopServing, agentEnv, HOST_APP_PORT, type SandboxManifest } from "../src/commands/sandbox.js";
+import { needsHost, serveOnHost, stopServing, agentEnv, hostAppCommand, httpStatus, HOST_APP_PORT, type SandboxManifest } from "../src/commands/sandbox.js";
+import { createServer } from "node:http";
 
 const base: SandboxManifest = {
   schema: "sandbox/1", tier: "renders",
@@ -45,6 +46,27 @@ describe("a sandbox that needs the runner", () => {
     }
     expect(after).toBe("hello from the sandbox, restarted");
   }, 90_000);
+
+  it("runs the build and the server as two shells that each start at the workspace", () => {
+    const command = hostAppCommand("cd frontend && npx tsc --noEmit", "npx next dev -H 127.0.0.1 -p 3000");
+    expect(command).toBe("bash -c 'cd frontend && npx tsc --noEmit' && bash -c 'npx next dev -H 127.0.0.1 -p 3000'");
+    expect(hostAppCommand(null, "npm start")).toBe("npm start");
+  });
+
+  it("treats a 500 on 127.0.0.1 as an answer when the check asked localhost", async () => {
+    const server = createServer((_q, s) => {
+      s.writeHead(500);
+      s.end("no");
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+    try {
+      expect(await httpStatus(`http://localhost:${port}/`)).toBe(500);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
 
   it("gives the agent's shell the services where its container reaches them", () => {
     const m = { ...base, services: [{ name: "db", image: "postgres", port: 5432, why: "w" }] };

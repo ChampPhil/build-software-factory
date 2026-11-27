@@ -374,13 +374,76 @@ function tailOf(buf: Buffer | string | null | undefined, lines = 40): string {
   return text.split("\n").slice(-lines).join("\n").slice(-6000);
 }
 
-async function httpStatus(url: string): Promise<number | null> {
+/**
+ * The other loopback host for a localhost or 127.0.0.1 URL, or null when the
+ * host is neither. On the GitHub runner those two names are different sockets:
+ * localhost is ::1, and a server bound with -H 127.0.0.1 does not answer ::1.
+ *
+ * url: an absolute http(s) URL, usually the manifest's app_url.
+ */
+function loopbackAlternate(url: string): string | null {
+  let parsed: URL;
   try {
-    const r = await fetch(url, { redirect: "manual", signal: AbortSignal.timeout(5000) });
-    return r.status;
+    parsed = new URL(url);
   } catch {
     return null;
   }
+  if (parsed.hostname === "localhost") parsed.hostname = "127.0.0.1";
+  else if (parsed.hostname === "127.0.0.1") parsed.hostname = "localhost";
+  else return null;
+  return parsed.toString();
+}
+
+/**
+ * The HTTP status at `url`, or null when nothing accepted the connection.
+ *
+ * A status of 500 or higher still counts: a process is listening and the page
+ * failed. Null is the only "did not answer". When the host is localhost or
+ * 127.0.0.1 and the first attempt throws, the other host is tried on the same
+ * port and path.
+ *
+ * url: the manifest's app_url, or the same URL with the other loopback host.
+ */
+export async function httpStatus(url: string): Promise<number | null> {
+  const once = async (target: string): Promise<number | null> => {
+    try {
+      const r = await fetch(target, { redirect: "manual", signal: AbortSignal.timeout(5000) });
+      return r.status;
+    } catch {
+      return null;
+    }
+  };
+  const first = await once(url);
+  if (first !== null) return first;
+  const alt = loopbackAlternate(url);
+  if (alt === null) return null;
+  return once(alt);
+}
+
+/**
+ * Quote a string for a single-quoted bash word. A quote inside the command
+ * is closed, inserted, and reopened, which is the POSIX form that needs no
+ * backslash rules.
+ *
+ * command: one shell command from the sandbox manifest.
+ */
+function shellSingleQuote(command: string): string {
+  return `'${command.replace(/'/g, `'"'"'`)}'`;
+}
+
+/**
+ * The command the runner's supervisor starts, rebuilt from the repository
+ * root after every file change.
+ *
+ * build: the manifest's commands.build, or null when the app has no build step.
+ * run: the manifest's commands.run, the process that listens.
+ *
+ * Each half runs in its own shell that starts at the workspace. A `cd` inside
+ * the build cannot leave the server in that directory.
+ */
+export function hostAppCommand(build: string | null, run: string): string {
+  if (build === null || build.trim() === "") return run;
+  return `bash -c ${shellSingleQuote(build)} && bash -c ${shellSingleQuote(run)}`;
 }
 
 export async function trialSandbox(opts: {
@@ -518,13 +581,15 @@ export async function trialSandbox(opts: {
     }
   }
 
-  // Start the app and see whether it answers.
+  // Start the app even when an earlier step failed. A red test used to
+  // skip the listen, so the next round could not tell a broken server from
+  // a test that was already wrong. Any HTTP status means a process answered.
   let appStatus: number | null = null;
   let shot: string | null = null;
   let signIn: { ok: boolean; detail: string } | undefined;
   let probes: readonly ProbeOutcome[] | undefined;
   const url = m.app_url ?? null;
-  if (steps.every((s) => s.ok) && m.commands.run !== null && url !== null) {
+  if (m.commands.run !== null && url !== null) {
     log(`trial run: ${m.commands.run}`);
     const child = spawn("bash", ["-c", m.commands.run], { cwd: opts.workspace, env: runEnv, detached: true });
     let output = "";
@@ -534,14 +599,15 @@ export async function trialSandbox(opts: {
     const deadline = t0 + (opts.appWaitMs ?? 180_000);
     while (Date.now() < deadline) {
       appStatus = await httpStatus(url);
-      if (appStatus !== null && appStatus < 500) break;
+      if (appStatus !== null) break;
       if (child.exitCode !== null) break;
       await new Promise((res) => setTimeout(res, 2000));
     }
-    const answered = appStatus !== null && appStatus < 500;
+    const answered = appStatus !== null;
+    const listenNote = answered ? `the app answered ${appStatus}` : `${url} did not answer`;
     steps.push({ step: "run", command: m.commands.run, ok: answered, exit: child.exitCode,
       seconds: Math.round((Date.now() - t0) / 1000),
-      tail: tailOf(answered ? output : `${output}\n${url} answered ${appStatus ?? "nothing"}`) });
+      tail: tailOf(`${output}\n${listenNote}`) });
     if (answered) {
       const file = join(dirname(opts.out), "screenshot.png");
       const took = (opts.screenshot ?? defaultScreenshot)(url, file);
@@ -570,12 +636,21 @@ export async function trialSandbox(opts: {
     probes = (m.dependencies ?? []).map((d) => ({ dependency: d.name, path: d.probe?.path ?? "", signed_in: d.probe?.signed_in ?? false, ok: false, detail: "the app did not answer, so nothing was probed" }));
   }
 
+  // renders still needs a page under 500 plus a screenshot. A 500 means the
+  // process answered and the page failed, which is not a rendered screen.
   const reached = reachedTier(steps, appStatus !== null && appStatus < 500, shot !== null);
-  const failedStep = steps.find((s) => !s.ok);
-  const summary =
-    failedStep === undefined
+  const failedSteps = steps.filter((s) => !s.ok);
+  const summaryBody =
+    failedSteps.length === 0
       ? `reached ${reached}${reached === m.tier ? ", as claimed" : `; the manifest claimed ${m.tier}`}`
-      : `reached ${reached}: ${failedStep.step} failed${failedStep.command === null ? "" : ` (${failedStep.command})`}`;
+      : `reached ${reached}: ${failedSteps.map((s) => `${s.step} failed${s.command === null ? "" : ` (${s.command})`}`).join("; ")}`;
+  const listen =
+    m.commands.run === null || url === null
+      ? ""
+      : appStatus === null
+        ? `; the app did not answer at ${url}`
+        : `; the app answered ${appStatus}`;
+  const summary = summaryBody + listen;
   const failedChecks = checks.filter((c) => !c.ok);
   const unproven = [
     ...(signIn !== undefined && !signIn.ok ? ["sign-in"] : []),
@@ -829,9 +904,9 @@ export async function serveOnHost(opts: {
     const target = new URL(m.app_url);
     const appPort = Number(target.port || (target.protocol === "https:" ? 443 : 80));
     // An app whose run command serves a build (`next start`, a compiled
-    // server) needs the build first, and again after every change: the
-    // supervisor runs both, in order, each time it starts the app.
-    const command = m.commands.build === null ? m.commands.run : `${m.commands.build} && ${m.commands.run}`;
+    // server) needs the build first, and again after every change. Each
+    // half starts in the workspace, so a cd in the build cannot move the server.
+    const command = hostAppCommand(m.commands.build, m.commands.run);
     opts.log(`running the app on the runner, rebuilt and restarted on every change: ${command}`);
     const out = openSync(join(logDir, "app.log"), "a");
     const sup = spawn(process.execPath, ["--input-type=module", "-e", SUPERVISOR_SOURCE, command, opts.workspace, SUPERVISOR_MARK], {
@@ -848,12 +923,13 @@ export async function serveOnHost(opts: {
     let status: number | null = null;
     while (Date.now() < deadline) {
       status = await httpStatus(m.app_url);
-      if (status !== null && status < 500) break;
+      // Any status, including 500, means a process accepted the connection.
+      if (status !== null) break;
       // The supervisor gave up (a restart loop): waiting longer changes nothing.
       if (supervisorExit !== null) break;
       await new Promise((r) => setTimeout(r, 2000));
     }
-    if (status === null || status >= 500) {
+    if (status === null) {
       failure =
         supervisorExit === 3
           ? "the app restarted itself in a loop (see the log tail)"
@@ -870,7 +946,11 @@ export async function serveOnHost(opts: {
     } else {
       forward(HOST_APP_PORT, appPort);
       url = `${target.protocol}//host.docker.internal:${HOST_APP_PORT}${target.pathname}${target.search}`;
-      opts.log(`the app answers at ${m.app_url}; the agent reaches it at ${url}`);
+      opts.log(
+        status >= 500
+          ? `the app answered ${status} at ${m.app_url}; the agent reaches it at ${url}`
+          : `the app answers at ${m.app_url}; the agent reaches it at ${url}`,
+      );
       // A signed-in session, minted here in the sandbox's environment, so
       // the agent's browser never goes to the identity provider, whose
       // pages it cannot reach. Loaded with `playwright-cli state-load`.

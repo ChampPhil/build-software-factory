@@ -51,6 +51,40 @@ describe("a trial measures the tier; it does not take the manifest's word", () =
     expect(JSON.parse(readFileSync(out, "utf8")).reached).toBe("renders");
   });
 
+  it("starts the app when a test already failed, and names both", async () => {
+    const port = 44901;
+    const server = `node -e "require('http').createServer((q,r)=>{r.writeHead(200);r.end('ok')}).listen(${port},'127.0.0.1')"`;
+    const { dir, path, out } = setup(
+      manifest({
+        commands: { install: "true", build: OWN, run: server, test: "echo boom; exit 1" },
+        app_url: `http://127.0.0.1:${port}/`,
+      }),
+    );
+    const r = await trialSandbox({ manifestPath: path, workspace: dir, out, appWaitMs: 8000, screenshot: () => true, log: () => {} });
+    expect(r.steps.find((s) => s.step === "test")?.ok).toBe(false);
+    expect(r.steps.find((s) => s.step === "run")?.ok).toBe(true);
+    expect(r.app_status).toBe(200);
+    expect(r.reached).toBe("static");
+    expect(r.summary).toContain("test failed");
+    expect(r.summary).toContain("answered 200");
+  });
+
+  it("counts an HTTP 500 as the process answering, and does not call that renders", async () => {
+    const port = 44902;
+    const server = `node -e "require('http').createServer((q,r)=>{r.writeHead(500);r.end('x')}).listen(${port},'127.0.0.1')"`;
+    const { dir, path, out } = setup(
+      manifest({
+        commands: { install: "true", build: OWN, run: server, test: OWN },
+        app_url: `http://localhost:${port}/`,
+      }),
+    );
+    const r = await trialSandbox({ manifestPath: path, workspace: dir, out, appWaitMs: 8000, screenshot: () => true, log: () => {} });
+    expect(r.steps.find((s) => s.step === "run")?.ok).toBe(true);
+    expect(r.app_status).toBe(500);
+    expect(r.reached).toBe("build_and_test");
+    expect(r.summary).toContain("answered 500");
+  });
+
   it("falls to static when the tests fail, and says which step", async () => {
     const { dir, path, out } = setup(manifest({ commands: { install: "true", build: "true", run: null, test: "echo boom; exit 1" } }));
     const r = await trialSandbox({ manifestPath: path, workspace: dir, out, log: () => {} });
