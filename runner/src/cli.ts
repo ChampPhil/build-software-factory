@@ -19,7 +19,7 @@ import { runSyncCommand } from "./commands/sync-settings.js";
 import { runAuditCommand, blockingFindings } from "./commands/audit.js";
 import { scanAssetHosts } from "./commands/asset-hosts.js";
 import { scanProse, renderProse, budgetVerdict, budgetBytes, alwaysLoaded } from "./commands/repo-prose.js";
-import { planUninstall, applyUninstall, formatPlan } from "./commands/uninstall.js";
+import { planUninstall, applyUninstall, formatPlan, removeLocalFactory, removeLocalFactoryBranches, LOCAL_FACTORY_DIR } from "./commands/uninstall.js";
 import { readBrainstorm, render as renderBrainstorm } from "./commands/brainstorm.js";
 import { byFileOf } from "./commands/gates.js";
 import { parseYaml } from "./lib/yaml.js";
@@ -191,6 +191,8 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
       already there rather than being appended.
   bsf uninstall [--apply] [--purge-data] [--root DIR]
       Take the factory out of operation. Keeps everything it built.
+      --apply also deletes the .factory/ folder on this computer, including
+      files that were never committed.
   bsf brainstorm WORK_ITEM [--out PATH]
       The conversation held with the author so far, for a role to read.
   bsf brainstorm say WORK_ITEM --issue N --text TEXT [--understood TEXT]
@@ -2347,9 +2349,13 @@ function scanAssetHostsCommand(args: Args): number {
  * `bsf uninstall` — stop the factory running, keep everything it made.
  *
  * Prints the plan by default and changes nothing. `--apply` removes the files
- * from the checkout and does the API work; the caller commits the deletions on
- * a branch and opens a pull request, because the workflows sit under protected
- * paths and taking them out is a change a person should see.
+ * from the checkout, deletes the whole `.factory/` folder on this computer
+ * (tracked files and anything git never stored), and does the API work. The
+ * caller commits the tracked deletions on a branch and opens a pull request,
+ * because the workflows sit under protected paths and taking them out is a
+ * change a person should see. After that pull request merges, this checkout
+ * can get the folder back by switching to the old commit; pull, and delete
+ * the folder again if it is there.
  */
 /**
  * `bsf brainstorm WORK_ITEM` — the conversation so far, as prose.
@@ -2519,17 +2525,48 @@ async function uninstallCommand(args: Args): Promise<number> {
   const tracked = execFileSync("git", ["-C", root, "ls-files"], { encoding: "utf8" })
     .split("\n")
     .filter((l: string) => l !== "");
+  // Read the hook before anything is deleted. A broken settings file is left
+  // alone: uninstall still has the rest of the factory to remove.
+  const lh = await import("./commands/local-hook.js");
+  const hookFile = lh.settingsPath(root);
+  let hookNext: Record<string, unknown> | null = null;
+  try {
+    hookNext = lh.withoutHook(lh.readSettings(hookFile));
+  } catch {
+    hookNext = null;
+  }
   const plan = await planUninstall({
     gh,
     branch,
     root,
     files: tracked,
+    localHook: hookNext !== null,
     ...(args["purge-data"] === true ? { purgeData: true } : {}),
   });
 
   const apply = args["apply"] === true;
   if (apply) {
-    for (const f of plan.files) rmSync(join(root, f), { force: true, recursive: true });
+    // Workflows, issue forms and the Dependabot file live outside the folder.
+    // The folder itself is removed as a directory so untracked files go with
+    // the tracked ones.
+    for (const f of plan.files) {
+      if (f === LOCAL_FACTORY_DIR || f.startsWith(`${LOCAL_FACTORY_DIR}/`)) continue;
+      rmSync(join(root, f), { force: true, recursive: true });
+    }
+    if (plan.dependabot.action === "delete") {
+      rmSync(join(root, ".github/dependabot.yml"), { force: true });
+    } else if (plan.dependabot.action === "edit") {
+      writeFileSync(join(root, ".github/dependabot.yml"), plan.dependabot.text);
+    }
+    const removed = removeLocalFactory(root);
+    if (removed !== null) process.stdout.write(`removed ${LOCAL_FACTORY_DIR}/ on this computer\n`);
+    if (hookNext !== null) {
+      writeFileSync(hookFile, `${JSON.stringify(hookNext, null, 2)}\n`);
+      process.stdout.write(`removed the correction hook from ${hookFile}\n`);
+    }
+    const branches = removeLocalFactoryBranches(root);
+    for (const name of branches.deletedLocal) process.stdout.write(`removed local branch ${name}\n`);
+    for (const name of branches.deletedTracking) process.stdout.write(`removed local bookmark ${name}\n`);
     const done = await applyUninstall(gh, branch, plan);
     for (const d of done) process.stdout.write(`${d}\n`);
   }
@@ -2538,8 +2575,11 @@ async function uninstallCommand(args: Args): Promise<number> {
     process.stdout.write("\nNothing was changed. Run again with --apply to do it.\n");
   } else {
     process.stdout.write(
-      "\nThe files are deleted in your checkout but not committed. Commit them on a branch and open a " +
-        "pull request: they are under protected paths, so removing them is a change someone should see.\n",
+      "\nThe .factory/ folder is deleted on this computer, including files that were never committed. " +
+        "The tracked deletions are not committed yet. Commit them on a branch and open a pull request: " +
+        "they are under protected paths, so removing them is a change someone should see. After that " +
+        "pull request merges, pull the default branch here. If .factory/ came back with the old commit, delete it again. " +
+        "If you are still on a factory/ branch, switch to the default branch and delete that branch with git branch -D.\n",
     );
   }
   return 0;
