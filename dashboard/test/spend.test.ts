@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { headlineSpend, medianRequestToPr, minutesFromSteps, outcomeLabel, shareFraction, sharesFromBudget, spendFromBudget, spendFromSteps } from "../lib/spend";
+import { headlineSpend, medianRequestToPr, minutesFromSteps, oneTimeSetupUsd, outcomeLabel, shareFraction, sharesFromBudget, spendAsideFromSetup, spendFromBudget, spendFromSteps } from "../lib/spend";
 
 const step = (at: string, cost: number, minutes?: number) => ({ role: "x", run_id: "r", at, cost_usd: cost, billed_minutes: minutes });
 
@@ -52,6 +52,13 @@ describe("budget.json", () => {
     expect(spendFromBudget(null)).toBeNull();
     expect(spendFromBudget({})).toBeNull();
     expect(spendFromBudget({ setup: Number.NaN })).toBeNull();
+  });
+
+  it("names the one-time setup charge and leaves a later sandbox update out of it", () => {
+    expect(oneTimeSetupUsd({ setup: 12.4, sandbox_upkeep: 1.5, product_work: 3 })).toBe(12.4);
+    expect(spendAsideFromSetup(16.9, 12.4)).toBe(4.5);
+    expect(oneTimeSetupUsd({ sandbox_upkeep: 1.5 })).toBe(0);
+    expect(oneTimeSetupUsd(null)).toBe(0);
   });
 
   it("fills the three share bars from those keys and leaves setup out of them", () => {

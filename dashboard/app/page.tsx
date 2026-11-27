@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useActions, useFirstRequest, useRunFiles, useStandingGoals, useWorkItems } from "@/lib/data";
+import { useActions, useBudget, useFirstRequest, useRunFiles, useSetupSentence, useStandingGoals, useWorkItems } from "@/lib/data";
+import { oneTimeSetupUsd, spendAsideFromSetup, spendFromBudget } from "@/lib/spend";
 import { failedFactoryAudit, type AuditWorkflowRun } from "@/lib/audit";
 import { liveGoals } from "@/lib/routing";
 import { readSettings } from "@/lib/settings";
@@ -46,6 +47,8 @@ export default function Briefing() {
   };
   const goals = useStandingGoals(client);
   const actions = useActions(client, app.version);
+  const setupRun = actions.state === "ready" ? (actions.data?.runs ?? []).find((r) => r.status !== "completed" && /factory-setup/.test(`${r.path ?? ""} ${r.name}`)) : undefined;
+  const setupSentence = useSetupSentence(client, actions.state === "ready" ? (actions.data?.runs ?? []) : null);
   const audit = actions.state === "ready" && actions.data !== null ? failedFactoryAudit(actions.data.runs) : null;
   const untouched = ledger.state === "ready" && (L === null || (L.open.length === 0 && L.recent.length === 0));
   const first = useFirstRequest(client, untouched);
@@ -128,6 +131,11 @@ export default function Briefing() {
   const queue = L?.merge_queue ?? [];
   const m = index.state === "ready" ? index.data?.metrics : undefined;
   const budget = m?.budget_usd ?? 0;
+  const budgetFile = useBudget(client);
+  const budgetSpent = budgetFile.state === "ready" ? spendFromBudget(budgetFile.data?.spent_usd) : null;
+  const setupUsd = oneTimeSetupUsd(budgetFile.state === "ready" ? budgetFile.data?.spent_usd : undefined);
+  const shownSpend = budgetSpent ?? m?.spend_usd ?? 0;
+  const sinceSetup = spendAsideFromSetup(shownSpend, setupUsd);
   const goalList = liveGoals(goals.state === "ready" ? goals.data : null);
   const read = app.settings.state === "ready" && app.settings.data !== null ? readSettings(app.settings.data) : null;
   const hour = typeof read?.["gardening_hour"] === "number" ? read["gardening_hour"] : null;
@@ -199,10 +207,17 @@ export default function Briefing() {
         <aside className="rail" aria-label="The factory right now">
           <section>
             <h2 className="part">Going now</h2>
-            {going.length === 0 ? (
+            {going.length === 0 && setupRun === undefined ? (
               <p className="muted">Nothing is running.</p>
             ) : (
-              going.map((g) => <RunLine key={g.run} live={g} title={title(g.work_item, g.work_item)} href={`/request/?id=${encodeURIComponent(g.work_item)}&tab=runs`} />)
+              <>
+                {setupRun !== undefined && (
+                  <p>
+                    <a href={setupRun.html_url}>{setupSentence.state === "ready" && setupSentence.data !== null ? setupSentence.data : "Setup is running."}</a>
+                  </p>
+                )}
+                {going.map((g) => <RunLine key={g.run} live={g} title={title(g.work_item, g.work_item)} href={`/request/?id=${encodeURIComponent(g.work_item)}&tab=runs`} />)}
+              </>
             )}
           </section>
           {(queued.length > 0 || queue.length > 0) && (
@@ -233,10 +248,11 @@ export default function Briefing() {
             <section>
               <h2 className="part">This month</h2>
               <div className="meter">
-                {budget > 0 && <Bar fraction={(m.spend_usd ?? 0) / budget} label={`${pct((m.spend_usd ?? 0) / budget)} of the budget`} />}
+                {budget > 0 && <Bar fraction={shownSpend / budget} label={`${pct(shownSpend / budget)} of the budget`} />}
                 <p>
-                  <b>{usd(m.spend_usd)}</b>
+                  <b>{usd(shownSpend)}</b>
                   {budget > 0 ? ` of your ${usd(budget)} budget.` : " spent."}
+                  {setupUsd > 0 && ` ${usd(setupUsd)} of that was one-time setup. ${usd(sinceSetup)} is the factory working since then.`}
                   {m.automation_rate !== undefined && ` ${pct(m.automation_rate)} of merges needed no edits.`} <Link href="/spend/">Spend</Link>
                 </p>
               </div>

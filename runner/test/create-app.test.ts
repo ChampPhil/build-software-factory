@@ -494,6 +494,16 @@ describe("progress.mjs", () => {
     expect(nextLine(jobs, first.state, 60 * 1000).line).toBe(`${JOB_LINES.plan}.`);
   });
 
+  it("names Computer A while the private copy is being written", () => {
+    const jobs = [
+      { name: "ready", status: "completed", conclusion: "success" },
+      { name: "plan", status: "completed", conclusion: "success" },
+      { name: "design-1", status: "in_progress", conclusion: null },
+    ];
+    const r = nextLine(jobs, { job: null, at: 0 }, 0);
+    expect(r.line).toContain("Computer A");
+  });
+
   it("celebrates the sandbox starting once freeze succeeds", () => {
     const jobs = [job("freeze", "completed", "success"), job("release", "in_progress")];
     const r = nextLine(jobs, { job: "freeze", at: 0 }, 1000);

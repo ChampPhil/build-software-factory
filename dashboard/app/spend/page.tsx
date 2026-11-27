@@ -3,7 +3,7 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { useBudget, useRunFiles, useStepRecords, useWorkItems } from "@/lib/data";
-import { headlineSpend, medianRequestToPr, minutesFromSteps, sharesFromBudget, spendFromBudget, spendFromSteps, spentByShare } from "@/lib/spend";
+import { headlineSpend, medianRequestToPr, minutesFromSteps, oneTimeSetupUsd, sharesFromBudget, spendAsideFromSetup, spendFromBudget, spendFromSteps, spentByShare } from "@/lib/spend";
 import { projectToMonthEnd, shareUse } from "@/lib/metrics";
 import { readSettings } from "@/lib/settings";
 import { day, dur, outcomeName, pct, pipeName, plural, titleOf, usd } from "@/lib/view";
@@ -58,7 +58,9 @@ export default function Spend() {
   const now = new Date();
   const dayOfMonth = now.getUTCDate();
   const daysInMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0)).getUTCDate();
-  const projected = choice === null ? null : projectToMonthEnd(spent, now);
+  const setupUsd = oneTimeSetupUsd(budgetDoc?.spent_usd);
+  const sinceSetup = choice === null ? 0 : spendAsideFromSetup(spent, setupUsd);
+  const projected = choice === null ? null : projectToMonthEnd(setupUsd > 0 ? sinceSetup : spent, now);
   const read = settings.state === "ready" && settings.data !== null ? readSettings(settings.data) : null;
   const num = (k: string): number => (typeof read?.[k] === "number" ? read[k] : 0);
   const monthly = typeof read?.["monthly_budget"] === "number" ? read["monthly_budget"] : budget;
@@ -80,8 +82,16 @@ export default function Spend() {
           </div>
           <p>
             Spent on models this month.
-            {choice?.source === "budget" && <> The total is from budget.json.</>}
-            {projected !== null && projected.known && <> At this pace the month ends near <b>{usd(projected.value)}</b>.</>} The budget is a hard stop: runs end before they would pass it.
+            {setupUsd > 0 && (
+              <>
+                {" "}
+                <b>{usd(setupUsd)}</b> of that was one-time setup. It paid for building the private copy of the app. It will not repeat, and it does not come out of product work, gardening, or reviews. <b>{usd(sinceSetup)}</b> is the factory working since then.
+              </>
+            )}
+            {choice?.source === "budget" && setupUsd === 0 && <> The total is from budget.json.</>}
+            {projected !== null && projected.known && <> At this pace the month ends near <b>{usd(projected.value)}</b>.</>}
+            {setupUsd > 0 && projected !== null && projected.known && <> The pace uses the work since setup, not the setup charge.</>}
+            {" "}The budget is a hard stop: runs end before they would pass it.
           </p>
           {choice !== null && budget > 0 && (
             <div className="budget">
@@ -167,6 +177,13 @@ export default function Spend() {
                   {s.paused && <small className="warn">Paused until next month: its share is used.</small>}
                 </div>
               ))}
+              {setupUsd > 0 && (
+                <div className="lane-r">
+                  <span>One-time setup</span>
+                  <b>{usd(setupUsd)}</b>
+                  <small>Building the private copy. Not part of the three shares, and it will not repeat.</small>
+                </div>
+              )}
             </section>
           )}
           <section>

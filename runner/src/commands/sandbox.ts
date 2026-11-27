@@ -276,6 +276,19 @@ export async function startSandbox(opts: {
     if (r.status !== 0) throw new Error(`install failed (exit ${r.status ?? "signal"}): ${m.commands.install}`);
   }
 
+  // Every boot loads the seed into this run's private data. The recipe's
+  // seed command is what makes the next boot fresh. Scratch notes, if a
+  // later step adds them, are not applied here.
+  if (m.commands.seed) {
+    log(`seeding: ${m.commands.seed}`);
+    const seeded = spawnSync("bash", ["-c", m.commands.seed], {
+      cwd: opts.workspace,
+      env: { ...shellBase(), ...env },
+      stdio: "inherit",
+    });
+    if (seeded.status !== 0) throw new Error(`seed failed (exit ${seeded.status ?? "signal"}): ${m.commands.seed}`);
+  }
+
   return { tier: m.tier, services: m.services.map((s) => s.name), envNames: Object.keys(env).sort(), envFile: RUNTIME_ENV };
 }
 
@@ -292,7 +305,7 @@ export function tierAtLeast(a: Tier, b: Tier): boolean {
 }
 
 export interface StepOutcome {
-  readonly step: "install" | "build" | "test" | "run" | "screenshot" | "control";
+  readonly step: "install" | "build" | "test" | "seed" | "run" | "screenshot" | "control";
   readonly command: string | null;
   readonly ok: boolean;
   readonly exit: number | null;
@@ -335,7 +348,7 @@ export interface CheckOutcome {
 export function reachedTier(steps: readonly StepOutcome[], appOk: boolean, screenshot: boolean): Tier {
   const failed = (s: StepOutcome["step"]): boolean => steps.some((x) => x.step === s && !x.ok);
   const ran = (s: StepOutcome["step"]): boolean => steps.some((x) => x.step === s && x.command !== null);
-  if (failed("install") || failed("build") || failed("test")) return "static";
+  if (failed("install") || failed("build") || failed("test") || failed("seed")) return "static";
   // The control: the same build and test, run in an empty directory, also
   // passed. Commands that pass with no code under them test nothing here.
   if (failed("control")) return "static";
@@ -447,6 +460,9 @@ export async function trialSandbox(opts: {
     if (steps.every((s) => s.ok) && run("install", m.commands.install) && run("build", m.commands.build)) {
       run("test", m.commands.test);
     }
+    // The seed runs after the tests and before the app starts, so the click
+    // sees the private data directory the launch promised, not leftovers.
+    if (steps.every((s) => s.ok) && m.commands.seed) run("seed", m.commands.seed);
     // A command can pass without exercising anything — guarded on a file the
     // repo does not have, or an echo. The same build and test are run once
     // more in an empty directory: if they pass there too, they are not

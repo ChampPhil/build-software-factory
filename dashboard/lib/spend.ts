@@ -88,6 +88,38 @@ export function spentByShare(
 
 const SHARE_KEYS = ["product_work", "gardening", "review_and_benchmarks"] as const;
 
+/**
+ * The one-time setup charge, in dollars rounded to cents.
+ *
+ * This is the `setup` key only. A later sandbox update is a different key
+ * (`sandbox_upkeep`) and stays out of this number, so the one-time row does
+ * not grow every time a journey is added. A missing or non-numeric key is
+ * zero, which the page treats as "there is no setup charge to name."
+ *
+ * spent: the `spent_usd` object from budget.json, or null when the file has none.
+ */
+export function oneTimeSetupUsd(spent: Readonly<Record<string, unknown>> | null | undefined): number {
+  const value = spent?.["setup"];
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return 0;
+  return cents(value);
+}
+
+/**
+ * What the factory spent after the one-time setup charge.
+ *
+ * The pace line uses this. Setup is a single charge, so projecting the
+ * month from the headline would treat it as a burn rate. Never negative:
+ * a setup figure larger than the total (a partial read) contributes nothing
+ * further.
+ *
+ * total: the headline total, in dollars.
+ * setup: the one-time setup charge, in dollars.
+ */
+export function spendAsideFromSetup(total: number, setup: number): number {
+  if (!Number.isFinite(total) || !Number.isFinite(setup)) return 0;
+  return cents(Math.max(0, total - setup));
+}
+
 const cents = (n: number): number => Math.round(n * 100) / 100;
 
 /**

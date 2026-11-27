@@ -132,6 +132,15 @@ Start the job yourself only after both are true:
 gh workflow run factory-setup.yml
 ```
 
+Before it starts, say what the three computers will do: one lists the top
+journeys, one builds the private copy and clicks those journeys, one
+installs the standard rules. Say a line will arrive every minute.
+
+The watch follows that live run, not an older one. Relay every line it
+prints, including a line that repeats the same step. The long jobs are
+Computer 0, Computer A, and Computer B. A minute with no line means the
+watch is stuck. Start it again on the live run.
+
 Do not cancel a second factory-setup run that still has to commit the
 checkers. Cancel a second run only when it is a duplicate of a run that
 already produced the private copy, the checkers, and the switch-on. If two
@@ -151,9 +160,10 @@ Anything you can see yourself, you wait for yourself.
   requests merge on their own, you merge when the checks are green, and you
   still watch until the merge has happened so you can continue.
 - The long run: `node scripts/progress.mjs` in the background once that run
-  is the live one. Relay each line as one plain sentence. It prints a line
-  a minute for as long as the run is going, not only when the stage
-  changes. If the watch exits at once, or a minute passes with no line, it
+  is the live one. Relay each line as one plain sentence, including when
+  the sentence is the same as the last one. It prints a line a minute for
+  as long as the run is going. The sentence names the computer and the
+  step. If the watch exits at once, or a minute passes with no line, it
   is stuck on an old run. Start it again so it follows the live one.
 
 Do with `gh` and `git` anything that can be done with them. To see whether

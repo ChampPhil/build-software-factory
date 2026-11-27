@@ -9,41 +9,35 @@ does not cancel later checkers.
 
 ## Done
 
-Done when the pull request contains all of this, and the journeys in the
-feature map have been driven on the running app:
+Done when the pull request contains all of this, and every journey on the
+journey list has been driven on the running app. The journey list is the
+things a person does. It is not the folder map.
 
-- The app's database is rebuilt on every boot from a seed. That seed already
-  holds the records each journey needs: the users, workspaces, and sample
-  records the screen has to already have, or the screen never appears. A
-  missing precondition fails setup. Do not shorten a journey to make the boot
-  pass. Do not drop a journey to make the boot pass.
-- External integrations keep a standing test surface that survives from one
-  boot to the next. Stripe test mode holds the customers, products, and
-  subscriptions the journeys open. A Clerk dev instance holds the test users.
-  A local mail catcher, the Inngest dev server, and a local stand-in for a
-  cloud service keep their own fixture data. The seed reconnects each
-  workspace to those same accounts. A fake key that only lets the process
-  boot does not count. A stub that forgets the request does not count. A
-  journey whose integration has no standing surface is not clickable, so
-  setup is not finished. Ask once for a test-mode secret. They paste it on
-  GitHub, not in the chat.
-- While a run is going, the writer and the verifier may change the app
-  database and those dev integrations to arrange the case under test. They
-  may add a row, decline a Stripe test card, create a Clerk test user, or
-  point the mail catcher at a message. After the run, the app database is
-  rebuilt from the seed and the dev accounts are restored to the fixture
-  set. A leftover object from the previous agent is not the only way into
-  a screen.
-- The writer has one machine for the whole build, checked out to the branch
-  it is editing, with the app running and the browser signed in as the test
-  user. The writer checks every change on that running app before the next
-  change. A change that was not clicked there is not done. The writer can
-  sign in as the test user.
-- The verifier gets a fresh boot from the same saved disk, checked out to
-  the pull request, with the app database rebuilt from the seed. It signs
-  in as a test user and clicks the journeys the change touches, and the
-  other journeys the change could break. The writer's clicks do not replace
-  that pass.
+- The app's database is rebuilt on every boot from a seed, in a private data
+  directory. That seed already holds the records each journey needs: the
+  users, workspaces, and sample records the screen has to already have, or
+  the screen never appears. A missing precondition belongs in the seed. Do
+  not shorten a journey to make the boot pass. Do not drop a journey to make
+  the boot pass.
+- Prefer a vendor's test mode (Clerk dev, Stripe test) when a test-mode
+  secret exists. Use a local stub only when it does not. No production keys.
+  Ask once for a test-mode secret. They paste it on GitHub, not in the chat.
+  Objects this run created at a vendor are cleaned up as a best effort. If
+  that cleanup cannot finish, say so and continue. Do not stall setup, and
+  do not stall a later sandbox pull request, on a vendor leftover.
+- While a run is going, an agent may arrange the case under test: an extra
+  row, a declined Stripe test card, a Clerk test user. That arrangement is
+  scratch. It is for this run only. It is not written into the shared
+  launch. The proof of a scratched run says what was added. The shared
+  launch must perform every listed journey with no scratch. After the run,
+  the app database is rebuilt from the seed. A leftover vendor object is
+  not the only way into a screen.
+- The writer checks every change on the running app before the next change.
+  A change that was not clicked there is not done.
+- The verifier gets a fresh boot, checked out to the pull request, with the
+  app database rebuilt from the seed. It signs in as a test user and clicks
+  the journeys the change touches. The writer's clicks do not replace that
+  pass.
 - Proof on the pull request: a screenshot, the side effect (a row or a sent
   message), and at least one diagram. An on-screen "saved" is not that
   proof. A short video is encouraged. Its absence does not fail the gate.

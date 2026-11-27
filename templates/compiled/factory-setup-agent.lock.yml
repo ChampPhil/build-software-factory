@@ -807,7 +807,7 @@ jobs:
           BUDGET_KEY: ${{ inputs.budget_key || format('{0}-{1}-setup-{2}', github.run_id, github.run_attempt, inputs.round) }}
           GH_TOKEN: ${{ steps.budget-token.outputs.token }}
           MODEL: ${{ inputs.model }}
-          PIPELINE: setup
+          PIPELINE: ${{ contains(inputs.amend, 'one-journey') && 'sandbox_upkeep' || 'setup' }}
         name: Hold this step's budget
         run: bsf budget reserve --key "$BUDGET_KEY" --pipeline "$PIPELINE" --role setup --model "$MODEL" --cap 1000 --detection-model claude-haiku-5-5 --detection-cap 50
         shell: bash
@@ -1495,7 +1495,7 @@ jobs:
           BUDGET_KEY: ${{ inputs.budget_key || format('{0}-{1}-setup-{2}', github.run_id, github.run_attempt, inputs.round) }}
           DETECTION_ARTIFACT: ${{ needs.activation.outputs.artifact_prefix }}detection
           MODEL: ${{ inputs.model }}
-          PIPELINE: setup
+          PIPELINE: ${{ contains(inputs.amend, 'one-journey') && 'sandbox_upkeep' || 'setup' }}
         if: always()
         name: Measure this step's cost for the budget
         run: bsf budget measure --key "$BUDGET_KEY" --pipeline "$PIPELINE" --model "$MODEL" --detection-artifact "$DETECTION_ARTIFACT" --out /tmp/gh-aw/bsf-budget/measure.json

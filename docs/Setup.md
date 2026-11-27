@@ -105,20 +105,19 @@ The skill builds static rules and verification from the assessment, extending wh
 3. **Structure rules:** one folder per feature with dependency-graph checks between feature folders, where the codebase already leans that way.
 4. **Accepted correction candidates**, each turned into what the ordered check chose: an API change (queued as a cleanup PR), a static rule, a verification scenario added to the runbook and test suite, or a context line in `fundamentals.md` or `history.md`. Critical logic (money, permissions, concurrency) flagged in candidates gets a targeted formal check.
 5. **Coverage:** record the current total as the high mark and set the floor one point below it, set the diff-coverage minimum to 80% (the main check), and count existing skips.
-6. **Baselines:** apply only mechanical fixes now. The formatter runs over the whole repo as one separate commit in the setup PR (exempt from the 20-file cap, and listed in `.git-blame-ignore-revs` so blame stays useful); linters' own autofixes run too. Every rule that still has violations gets a per-file baseline: in the linter's own baseline file where it has one (for example `eslint --suppress-all` writes `eslint-suppressions.json`), otherwise in `baselines.json`. Gardening clears them in small verified PRs.
+6. **Clean to zero:** apply the mechanical fixes, then fix what remains until every installed rule's count is zero. The formatter runs over the whole repo as one separate commit in the setup PR (exempt from the 20-file cap, and listed in `.git-blame-ignore-revs` so blame stays useful); linters' own autofixes run too. Setup is not finished while a count is above zero. Do not hide a violation in a baseline and leave it for later.
 7. **Verify every rule:** each rule must fail on a known-bad example and pass on the dominant pattern before it's installed.
 
 **Output:** `.factory/guardrails/` plus any edits to existing tool configs, all inside the setup PR.
 
 ## Phase 4: Clean the codebase
 
-Phases run in order, with one exception: cleanup can finish after switch-on, as the factory's first gardening runs.
+The clean step is part of setup. It keeps going until every guardrail count is zero. Setup is not called done with a violation left in place.
 
-- **Mechanical fixes** (formatting, linter autofixes) were already applied in phase 3, inside the setup PR. Nothing that needs judgment is fixed there, so the setup PR stays reviewable.
-- **Everything else** is baselined, and the skill seeds gardening work items for it: one item per rule (or per feature folder for large rules), ordered by most violations first.
-- After switch-on, nightly gardening opens up to 5 cleanup PRs a night. Each must lower its rule's count and raise no count in any file; at zero, a rule's baseline is retired.
+- **Mechanical fixes** (formatting, linter autofixes) and the remaining fixes land in the setup PR, until the recorded count is zero.
+- After switch-on, nightly gardening is for new drift only. A pull request lowers a count and raises none. It does not inherit a setup backlog.
 - **Pristine target:** zero guardrail violations, one pattern per concern, every feature folder covered by tests above the floor.
-- The dashboard shows cleanup progress per rule (count now vs. at setup) until every baseline is retired.
+- The dashboard shows cleanup progress per rule when a count moves after setup.
 
 ## Phase 5: Define the factory
 
@@ -129,7 +128,7 @@ The skill writes the factory definition and installs the workflows.
 3. **Seven role files** from templates, with the repo name, languages and conventions filled in.
 4. **Context files:** `feature-map.md` generated from the folder structure, `runbook.md` from phase 2, `fundamentals.md` from the dominant patterns and accepted context candidates, `history.md` seeded from mined corrections.
 5. **Rubrics** from templates (one per pipeline plus shared).
-6. **The workflows:** one gh-aw workflow per role (`factory-role-<role>.md`), compiled with `gh aw compile` into `.lock.yml` files (the skill installs the `gh aw` CLI extension locally if it's missing), and the eleven trigger workflows under `.github/workflows/factory-*.yml`, pinned to the runner's commit SHA with the version in a trailing comment (`runner@<sha> # v0.1.0`). None of them runs on a polling timer except nightly gardening, the daily review check and the daily rollup sweep.
+6. **The workflows:** one gh-aw workflow per role (`factory-role-<role>.md`), compiled with `gh aw compile` into `.lock.yml` files (the skill installs the `gh aw` CLI extension locally if it's missing), and the trigger workflows under `.github/workflows/factory-*.yml`, pinned to the runner's commit SHA with the version in a trailing comment (`runner@<sha> # v0.1.0`). None of them runs on a polling timer except nightly gardening, the daily review check and the daily rollup sweep. The journey look runs on a merge, and again on that daily sweep. It does not add a timer of its own.
 7. **Runner upgrades:** a `.github/dependabot.yml` entry for the `github-actions` ecosystem, limited to `build-software-factory/runner` and with a 3-day cooldown after each release, plus the `factory-runner-pin.yml` workflow it watches. `install-factory.mjs` writes both, from `skill/RUNNER_PIN` (`<owner/repo> <sha> <version>`, cut by `scripts/pin-release.mjs` when a release is tagged). From then on GitHub's Dependabot opens an upgrade PR whenever a new runner is released; the user approves it with one click, and a second PR brings the vendored runner up to it ([Architecture](Architecture.md)). If the repo already has a `dependabot.yml`, the entry is appended without touching the others; if `updates:` is not its last section the file is left alone and the user is told. Before a release is pinned (`unreleased`), neither file is installed.
 8. **Local session hooks** for Claude Code (and any other agent CLI its developers use, detected in the repo, for correction mining only). Each hook asks its developer once, on first run on their machine, whether to capture their sessions, and stores the answer locally; no answer means no capture. The setup user answers for themselves during setup. On a public repo without the private data repo, the hooks are installed but capture stays off.
 9. **Trigger sources:** if the GitHub app for Slack or Linear's GitHub integration is already installed, the skill notes it; otherwise it prints the two-minute steps to connect them (both free).
