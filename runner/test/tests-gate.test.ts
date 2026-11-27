@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runTestsGate, testCommandDropsTests, manifestDropsTests } from "../src/commands/tests-gate.js";
+import { runTestsGate, testCommandDropsTests, manifestDropsTests, missingManifestTests } from "../src/commands/tests-gate.js";
 import { closedEnv, RUNTIME_ENV } from "../src/commands/sandbox.js";
 
 const gh = { repo: "o/r" } as never;
@@ -49,5 +49,15 @@ describe("the tests gate", () => {
     expect(testCommandDropsTests("pytest --ignore tests/unit")).toMatch(/tests\/unit/);
     expect(manifestDropsTests({ test: "npm test", coverage: "pytest -k smoke" })).toMatch(/-k/);
     expect(manifestDropsTests({ test: "npm test", coverage: "npm test" })).toBeNull();
+  });
+
+  it("does not fail a pull request for a missing manifest until setup has written one", () => {
+    const waiting = missingManifestTests(false);
+    expect(waiting.conclusion).toBe("neutral");
+    expect(waiting.exitCode).toBe(0);
+    expect(waiting.summary).toMatch(/default branch/);
+    const after = missingManifestTests(true);
+    expect(after.conclusion).toBe("failure");
+    expect(after.exitCode).toBe(1);
   });
 });

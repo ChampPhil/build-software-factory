@@ -112,6 +112,14 @@ timeout-minutes: 60
 # the builder's model. On Opus a round on a real app (trinsports) ran past
 # $10; on Sonnet it should not come near.
 max-ai-credits: 1000
+# gh-aw's default daily cap is 5000 credits. A computer that is skipped, or
+# whose usage was never recorded, is counted at this workflow's per-run
+# maximum until a usage artifact shows up. A few of those estimates, with a
+# recorded spend of zero, fill 5000 and the next computer is skipped before
+# it starts. Setup is several of those computers in one day. The factory's
+# monthly budget is the ceiling that stops a step. This daily number is only
+# high enough that zero-spend estimates do not block the rest of setup.
+max-daily-ai-credits: 50000
 
 tools:
   bash: [":*"]

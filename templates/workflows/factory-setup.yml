@@ -194,12 +194,13 @@ jobs:
 
   computer-0-budget:
     needs: computer-0
-    if: always() && needs.computer-0.result != 'skipped'
+    if: always()
     permissions:
       contents: read
     uses: ./.github/workflows/factory-budget-settle.yml
     with:
       key: ${{ github.run_id }}-${{ github.run_attempt }}-computer-0
+      ran: ${{ needs.computer-0.result == 'skipped' && 'false' || 'true' }}
     secrets:
       FACTORY_APP_PRIVATE_KEY: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
 
@@ -225,12 +226,13 @@ jobs:
 
   computer-b-budget:
     needs: computer-b
-    if: always() && needs.computer-b.result != 'skipped'
+    if: always()
     permissions:
       contents: read
     uses: ./.github/workflows/factory-budget-settle.yml
     with:
       key: ${{ github.run_id }}-${{ github.run_attempt }}-computer-b
+      ran: ${{ needs.computer-b.result == 'skipped' && 'false' || 'true' }}
     secrets:
       FACTORY_APP_PRIVATE_KEY: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
 
@@ -286,12 +288,13 @@ jobs:
   # agent step can start.
   design-1-budget:
     needs: design-1
-    if: always() && needs.design-1.result != 'skipped'
+    if: always()
     permissions:
       contents: read
     uses: ./.github/workflows/factory-budget-settle.yml
     with:
       key: ${{ github.run_id }}-${{ github.run_attempt }}-design-1
+      ran: ${{ needs.design-1.result == 'skipped' && 'false' || 'true' }}
     secrets:
       FACTORY_APP_PRIVATE_KEY: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
 
@@ -327,12 +330,13 @@ jobs:
   # agent step can start.
   design-2-budget:
     needs: design-2
-    if: always() && needs.design-2.result != 'skipped'
+    if: always()
     permissions:
       contents: read
     uses: ./.github/workflows/factory-budget-settle.yml
     with:
       key: ${{ github.run_id }}-${{ github.run_attempt }}-design-2
+      ran: ${{ needs.design-2.result == 'skipped' && 'false' || 'true' }}
     secrets:
       FACTORY_APP_PRIVATE_KEY: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
 
@@ -368,12 +372,13 @@ jobs:
   # agent step can start.
   design-3-budget:
     needs: design-3
-    if: always() && needs.design-3.result != 'skipped'
+    if: always()
     permissions:
       contents: read
     uses: ./.github/workflows/factory-budget-settle.yml
     with:
       key: ${{ github.run_id }}-${{ github.run_attempt }}-design-3
+      ran: ${{ needs.design-3.result == 'skipped' && 'false' || 'true' }}
     secrets:
       FACTORY_APP_PRIVATE_KEY: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
 

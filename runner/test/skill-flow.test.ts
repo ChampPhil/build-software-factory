@@ -32,6 +32,9 @@ describe("the skill's first message and human steps (fixes 9, 10, 11)", () => {
   it("never ends a turn waiting for the person to say something it can see itself", () => {
     expect(skill).toContain("Never end a turn on \"tell me when you're done\"");
     expect(skill).toContain("scripts/wait-for.mjs");
+    expect(skill).toContain("## Setup does not stop");
+    expect(skill).toContain("fix it in the same turn");
+    expect(skill).not.toContain("Computer 0, Computer A, and Computer B");
   });
 });
 

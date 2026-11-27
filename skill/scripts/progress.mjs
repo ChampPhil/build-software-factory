@@ -44,27 +44,33 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 /**
  * The setup workflow's jobs, in words a person wants to read.
  *
- * The long jobs are Computer 0, Computer A (the design and trial rounds),
- * and Computer B. A job whose name is already the sentence is repeated as
- * that sentence. Order is the order the watch considers them; every job
- * that is still going is spoken, so two computers running together are both
- * named.
+ * The workflow's own job names say Computer 0, Computer A, and Computer B.
+ * Those names stay inside the workflow. The sentence a person hears is the
+ * work: listing journeys, checking rules, building a private copy. Order is
+ * the order the watch considers them; every job that is still going is
+ * spoken, so two of those jobs running together are both named.
  */
 export const JOB_LINES = {
   ready: "Checking your repository is ready",
-  plan: "Reading which model the setup computers will use",
-  "seed-round": "Getting the setup computers ready to start",
-  "computer-0": "Computer 0. Reading the product for the top journeys",
-  "Computer 0. Reading the product for the top journeys": "Computer 0. Reading the product for the top journeys",
-  "computer-b": "Computer B. Proving the standard rules",
-  "Computer B. Proving the standard rules": "Computer B. Proving the standard rules",
-  "publish-journeys": "Computer 0. Handing the journey list to the private-copy computer",
-  "design-1": "Computer A. Writing the launch and how each journey is tested",
-  "trial-1": "Computer A. Booting the private copy and clicking the listed journeys",
-  "design-2": "Computer A. Fixing the one journey the last try could not click",
-  "trial-2": "Computer A. Booting the private copy and clicking again",
-  "design-3": "Computer A. One last try at the journey that did not click",
-  "trial-3": "Computer A. Booting the private copy and clicking the last try",
+  plan: "Reading which model the setup work will use",
+  "seed-round": "Getting setup ready to start",
+  "computer-0": "Reading the product to list the top journeys",
+  "Computer 0. Reading the product for the top journeys": "Reading the product to list the top journeys",
+  "computer-b": "Checking the standard rules against the code",
+  "Computer B. Proving the standard rules": "Checking the standard rules against the code",
+  "publish-journeys": "Passing the journey list on so the private copy can be built",
+  "design-1": "Writing how the app starts and how each journey is tested",
+  "Computer A. Writing the launch and how each journey is tested": "Writing how the app starts and how each journey is tested",
+  "trial-1": "Starting a private copy and clicking through the journeys",
+  "Computer A. Booting the private copy and clicking the listed journeys": "Starting a private copy and clicking through the journeys",
+  "design-2": "Fixing the one journey the last try could not click",
+  "Computer A. Fixing the one journey the last try could not click": "Fixing the one journey the last try could not click",
+  "trial-2": "Starting the private copy and clicking through again",
+  "Computer A. Booting the private copy and clicking again": "Starting the private copy and clicking through again",
+  "design-3": "One last try at the journey that did not click",
+  "Computer A. One last try at the journey that did not click": "One last try at the journey that did not click",
+  "trial-3": "Starting the private copy for the last try",
+  "Computer A. Booting the private copy and clicking the last try": "Starting the private copy for the last try",
   clean: "Cleaning until every guardrail count is zero",
   freeze: "Opening the setup pull request with the launch, the notes, and the proof",
   release: "Switching the factory on",
@@ -73,8 +79,9 @@ export const JOB_LINES = {
 /**
  * The sentence key for a GitHub job name.
  *
- * Reusable workflows show up as "computer-0 / agent". That is still Computer
- * 0. A name that is already a sentence (it starts with "Computer") is itself.
+ * Reusable workflows show up as "computer-0 / agent". That is still the
+ * journey-list job. A name that is already one of the sentences below is
+ * itself. The spoken line never includes Computer 0, Computer A, or Computer B.
  *
  * name: the job name from `gh run view`.
  */

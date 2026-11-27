@@ -505,14 +505,15 @@ describe("progress.mjs", () => {
     expect(nextLine(jobs, first.state, 60 * 1000).line).toBe(`${JOB_LINES.plan}.`);
   });
 
-  it("names Computer A while the private copy is being written", () => {
+  it("speaks the work while the private copy is being written, not the machine name", () => {
     const jobs = [
       { name: "ready", status: "completed", conclusion: "success" },
       { name: "plan", status: "completed", conclusion: "success" },
-      { name: "design-1", status: "in_progress", conclusion: null },
+      { name: "Computer A. Writing the launch and how each journey is tested", status: "in_progress", conclusion: null },
     ];
     const r = nextLine(jobs, { job: null, at: 0 }, 0);
-    expect(r.line).toContain("Computer A");
+    expect(r.line).toContain("Writing how the app starts and how each journey is tested");
+    expect(r.line).not.toContain("Computer");
   });
 
   it("celebrates the sandbox starting once freeze succeeds", () => {

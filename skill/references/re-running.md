@@ -50,6 +50,10 @@ be able to see exactly what an update changed.
 
 ## Repair mode
 
+This section is for a factory that is already set up. While setup is still
+going, the setup skill owns the repair: diagnose it and fix it in the same
+turn, and do not stop to agree a fix.
+
 Use this when something is broken rather than out of date — a lock file too
 stale for gh-aw to run, a missing secret, a ref that was deleted.
 
@@ -66,14 +70,15 @@ stale for gh-aw to run, a missing secret, a ref that was deleted.
 
 ## What looks broken but is not
 
-A first run throws up several things that look like failures and are not. Say
-so when the user asks, rather than investigating them as bugs.
+A first run throws up several things that look like failures and are not. During
+setup, say so in the same turn and keep going. On a later visit, say so when
+the user asks, rather than investigating them as bugs.
 
-- **`factory/policy` stays pending, for ever.** A private repository on GitHub
-  Free cannot have required checks, so this check is reported and never
-  required, and it never concludes. Merge when **`factory/gates`** passes;
-  that is the check that means something here. `bsf doctor` reports the
-  repository's enforcement mode, and `audit` is this one.
+- **`factory/policy` on a private free repository.** That plan cannot require
+  checks, so the check finishes as not required instead of staying yellow.
+  Merge when **`factory/gates`** passes; that is the check that means something
+  here. Do not wait on `factory/policy`. `bsf doctor` reports the repository's
+  enforcement mode, and `audit` is this one.
 - **`factory-audit` runs on every push and may report `gate_pending` or
   `unconfirmed`.** Both are informational and neither fails the run. The audit
   is the fallback for repositories that cannot require checks: it reads what

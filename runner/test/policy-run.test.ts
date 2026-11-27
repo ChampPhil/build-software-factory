@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { gatherPullFacts, pipelineFromLabels, summarize } from "../src/commands/policy-run.js";
+import { gatherPullFacts, pipelineFromLabels, summarize, policyCheckReport } from "../src/commands/policy-run.js";
 import type { GitHub, PullResponse, PullFile, ReviewResponse } from "../src/lib/github.js";
 import { runPolicy } from "../src/commands/policy.js";
 import { loadPolicy, type Loader } from "../src/lib/config.js";
@@ -263,5 +263,24 @@ describe("the bsf CLI", () => {
       code = (e as { status: number }).status;
     }
     expect(code).toBe(2);
+  });
+});
+
+describe("factory/policy on a repository that cannot require checks", () => {
+  const waiting = {
+    conclusion: "failure" as const,
+    failures: [{ kind: "definition_without_approval" as const, files: [".factory/definition/factory.yaml"], message: "needs a person" }],
+    notes: [],
+  };
+
+  it("finishes as not required instead of staying yellow", () => {
+    const r = policyCheckReport(waiting, false);
+    expect(r.conclusion).toBe("neutral");
+    expect(r.title).toBe("Not required on this repository");
+    expect(r.summary).toMatch(/factory\/gates/);
+  });
+
+  it("stays yellow where checks can be required", () => {
+    expect(policyCheckReport(waiting, true).conclusion).toBe("pending");
   });
 });

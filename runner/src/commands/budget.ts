@@ -205,11 +205,29 @@ export interface SettleInput {
   readonly detectionUsd: number | null;
   /** Used only when the key was never reserved, so the charge has a home. */
   readonly pipeline?: string;
+  /**
+   * The step did not run. The job was skipped, so the measured spend is
+   * zero. Drop the hold and charge nothing. A missing measurement is still
+   * the ceiling; this flag is the one case that is known to have spent zero.
+   */
+  readonly release?: boolean;
 }
 
 export function settle(current: BudgetDoc | null, input: SettleInput, now: string): { doc: BudgetDoc; chargedUsd: number; reason: string } {
   const doc = rollMonth(current ?? emptyBudget(now), now);
   if (doc.settled.includes(input.key)) return { doc, chargedUsd: 0, reason: `${input.key} was already charged` };
+  if (input.release === true) {
+    return {
+      doc: {
+        ...doc,
+        inflight: doc.inflight.filter((f) => f.key !== input.key),
+        settled: [...doc.settled, input.key].slice(-SETTLED_KEEP),
+        updated_at: now,
+      },
+      chargedUsd: 0,
+      reason: `${input.key} did not run; its hold is released and nothing is charged`,
+    };
+  }
   const held = doc.inflight.find((f) => f.key === input.key);
   // A step whose hold was refused never started: there is nothing to charge
   // and nothing to record, unless something was measured after all.
