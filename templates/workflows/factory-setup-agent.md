@@ -41,6 +41,18 @@ on:
       FACTORY_APP_PRIVATE_KEY:
         required: true
 
+# One setup run calls this workflow once per computer. gh-aw's default group
+# is only the parent run id, so those calls share one queue and Computer A's
+# activation waits until Computer B's activation leaves it. budget_key is
+# already different for each computer. The group covers the whole call,
+# activation included. job-discriminator is appended to the agent and
+# conclusion groups, which gh-aw writes without the caller. It is a compiler
+# field and is not copied into the lock.
+concurrency:
+  group: gh-aw-factory-setup-agent-${{ github.run_id }}-${{ inputs.budget_key }}
+  queue: max
+  job-discriminator: ${{ inputs.budget_key }}
+
 github-app:
   client-id: ${{ vars.FACTORY_APP_CLIENT_ID }}
   private-key: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}

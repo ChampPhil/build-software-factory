@@ -672,6 +672,12 @@ describe("the budget in the workflows", () => {
     const lock = readFileSync(join(ROOT, "templates/compiled/factory-setup-agent.lock.yml"), "utf8");
     expect(lock).toContain('GH_AW_MAX_DAILY_AI_CREDITS: "50000"');
     expect(lock).not.toContain("|| '5000'");
+    // Each computer in one setup run calls this workflow. A group that is only
+    // the parent run id makes them wait on each other.
+    expect(lock).toContain("gh-aw-factory-setup-agent-${{ github.run_id }}-${{ inputs.budget_key }}");
+    expect(lock).toContain("gh-aw-claude-factory-setup-agent-${{ inputs.budget_key }}");
+    expect(lock).toContain("gh-aw-conclusion-factory-setup-agent-${{ inputs.budget_key }}");
+    expect(lock).not.toContain('group: "gh-aw-factory-setup-agent-${{ github.run_id }}"');
   });
 
   it("the budget's table of caps matches every role workflow", async () => {
