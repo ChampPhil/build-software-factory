@@ -109,7 +109,7 @@ on:
 permissions: {}
 
 concurrency:
-  group: "gh-aw-factory-setup-agent-${{ github.run_id }}-${{ inputs.budget_key }}"
+  group: gh-aw-factory-setup-agent-${{ github.run_id }}-${{ inputs.budget_key }}
   queue: max
 
 run-name: "Setup"
