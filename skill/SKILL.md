@@ -91,20 +91,26 @@ The chores, in this order:
    again. When it exits 0, name the next chore.
 2. **Create the GitHub App.** Run
    `node scripts/create-app.mjs --repo <owner>/<repo>`
-   in the background. It prints a link. Put that link in the message so
-   they can open it. They press **Create**. You do not.
-3. **Install it on this repository only.** The same script then prints the
-   install link. That page is already on **Only select repositories**, with
-   this repository selected. Put that link in the message. They press
-   **Install**. The script is the background loop: when the install is in
-   place it exits and you continue. Do not ask them to come back and say
-   they installed it. If the install covers every repository, the script
-   stops with the exact fix.
+   in the background. It prints one link and does not open a browser. Put
+   that link in the message once. They open it and press **Create**. You
+   do not. Do not send the link again while the script is still waiting. A
+   reminder says to use the tab already open, and does not include the
+   link. A second open is the page that says the manifest could not be
+   found.
+3. **Install it on this repository only.** After they press **Create**,
+   that same tab moves to the install page. The page is already on **Only
+   select repositories**, with this repository selected. They press
+   **Install**. Do not put the install link in the message, and do not
+   open another tab. If they say that tab was closed, then paste the
+   install link the script printed. The script is the background loop:
+   when the install is in place it exits and you continue. Do not ask
+   them to come back and say they installed it. If the install covers
+   every repository, the script stops with the exact fix.
 
 **Do not control their browser.** Do not click, type, or fill the GitHub
 page. Do not use browser tools, computer use, or any automation on their
-desktop for this chore. Opening the link is the whole of the help. They
-click. The background loop resumes when the app is installed.
+desktop for this chore. They open the one link. The background loop
+resumes when the app is installed.
 4. **One question.** Do the pull requests setup itself opens merge on their
    own? Ask it in everyday words, after the app is installed. If they only
    said yes to setup, the answer is yes: those pull requests merge on their
@@ -417,4 +423,6 @@ switches are on.
   private copy, the checkers, the zero counts, the green audit, and the
   green smoke-test pull request are all true.
 - **Do not drive their browser to create or install the GitHub App.** Give
-  them the link. They click. A background watch resumes when it is done.
+  them the create link once. They click. The same tab moves to Install.
+  Do not send either link again unless they say the tab was closed. A
+  background watch resumes when it is done.

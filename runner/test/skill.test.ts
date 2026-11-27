@@ -331,23 +331,18 @@ describe("preflight's prerequisite checks", () => {
   });
 });
 
-describe("the App script across platforms", () => {
+describe("the App script does not open a browser", () => {
   const src = readFileSync(join(ROOT, "skill/scripts/create-app.mjs"), "utf8");
 
-  it("opens a browser on Windows through cmd, not by spawning `start`", () => {
-    // `start` is a cmd builtin, not an executable: spawning it directly fails,
-    // and fails asynchronously, so the script would claim success.
-    expect(src).toContain('"cmd", ["/c", "start", ""');
-    expect(src).not.toMatch(/spawn\(\s*"start"/);
-  });
-
-  it("handles spawn's error event, so a headless machine is told the truth", () => {
-    expect(src).toMatch(/child\.on\("error"/);
-  });
-
-  it("covers all three platforms", () => {
-    for (const p of ["darwin", "win32"]) expect(src).toContain(p);
-    expect(src).toContain("xdg-open");
+  it("prints the link and leaves the tab to the person", () => {
+    // Opening the start page from the script and from the chat at once is
+    // what produced the extra tab. GitHub answers the second submit with
+    // "could not find the manifest."
+    expect(src).not.toContain("openBrowser");
+    expect(src).not.toContain("xdg-open");
+    expect(src).not.toMatch(/spawn\(\s*"cmd"/);
+    expect(src).not.toMatch(/spawn\(\s*"open"/);
+    expect(src).toContain("This script does not open a tab");
   });
 });
 

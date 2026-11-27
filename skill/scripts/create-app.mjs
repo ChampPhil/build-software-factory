@@ -13,8 +13,14 @@
  *   3. Exchange that code for the app id, client id and private key.
  *   4. Store them on the repo, and send the user to install the App.
  *
- * Step 2 needs something listening, so this starts a local server and opens
- * the browser at it. All three steps must finish within an hour.
+ * Step 2 needs something listening, so this starts a local server and prints
+ * one localhost link. It does not open a browser. The person opens that link
+ * once, and the page posts the manifest to GitHub. A second request for the
+ * same link gets a page that posts nothing: a second post is what makes
+ * GitHub say it could not find the manifest. After Create, GitHub redirects
+ * the same tab back here, and this server redirects that same tab to the
+ * install page. It does not open the install page in a new tab. All three
+ * steps must finish within an hour.
  *
  * The App's name is chosen before that page opens. It is "Factory" plus a
  * short label for the repository only. Hyphens and underscores become
@@ -32,7 +38,7 @@ import { readFileSync, realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { randomBytes, createSign } from "node:crypto";
-import { spawn, execFileSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const MANIFESTS = join(HERE, "..", "manifests");
@@ -93,36 +99,6 @@ function gh(args, { input, allowFail = false } = {}) {
     fail(`\`gh ${args.join(" ")}\` failed:\n${detail}`);
   }
 }
-
-function openBrowser(url) {
-  // On Windows `start` is a cmd builtin, not an executable, so spawning it
-  // directly fails — and fails *asynchronously*, which would leave the script
-  // saying "opening your browser" while nothing opened. The empty string is
-  // the window title `start` expects before the URL; without it, a URL
-  // containing `&` is read as the title and nothing loads.
-  const [cmd, args] =
-    process.platform === "darwin"
-      ? ["open", [url]]
-      : process.platform === "win32"
-        ? ["cmd", ["/c", "start", "", url]]
-        : ["xdg-open", [url]];
-
-  try {
-    const child = spawn(cmd, args, { detached: true, stdio: "ignore", windowsHide: true });
-    // spawn reports a missing binary on the error event, not by throwing, so
-    // without this a headless machine looks like a successful launch.
-    let failed = false;
-    child.on("error", () => {
-      failed = true;
-      log(`  Could not open a browser. Open this yourself:\n    ${url}`);
-    });
-    child.unref();
-    return !failed;
-  } catch {
-    return false;
-  }
-}
-
 
 /** GitHub's hard limit on a GitHub App's name. */
 export const APP_NAME_MAX = 34;
@@ -285,12 +261,15 @@ main{background:var(--sheet);border:1px solid var(--rule);border-radius:10px;pad
 .ok .chip{background:var(--done-wash);color:var(--done)}.bad .chip{background:var(--stop-wash);color:var(--stop)}
 h1{font-size:1.4rem;margin:.9rem 0 .4rem}p{margin:.4rem 0;color:#3d4147}`;
 
-function statusPage({ ok, heading, body, closeAfterMs }) {
+function statusPage({ ok, heading, body, closeAfterMs, chip }) {
   const script = closeAfterMs ? `<script>setTimeout(function(){window.close()},${closeAfterMs})</script>` : "";
+  // "Connected" and "Stopped" are the two endings. A page in the middle, such
+  // as a second visit to the start link, passes its own chip.
+  const label = chip ?? (ok ? "Connected" : "Stopped");
   return `<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${escapeHtml(heading)}</title><style>${PAGE_CSS}</style></head>
-<body><main class="${ok ? "ok" : "bad"}"><span class="chip">${ok ? "Connected" : "Stopped"}</span>
+<body><main class="${ok ? "ok" : "bad"}"><span class="chip">${escapeHtml(label)}</span>
 <h1>${escapeHtml(heading)}</h1>${body}</main>${script}</body></html>`;
 }
 
@@ -308,6 +287,28 @@ function errorPage(message) {
     ok: false,
     heading: "Something went wrong",
     body: `<p>${escapeHtml(message)}</p><p>Nothing was stored. Run the script again.</p>`,
+  });
+}
+
+/**
+ * The page a second visit to the start address gets.
+ *
+ * GitHub accepts the app manifest only as the body of one form POST. A
+ * second tab that submits that form again, or that opens GitHub's create
+ * address without the body, is the tab that says the manifest could not be
+ * found. This page submits nothing, so the extra tab stays on this computer.
+ *
+ * @returns {string} HTML telling the person to use the tab already open.
+ */
+function alreadySentPage() {
+  return statusPage({
+    ok: true,
+    chip: "Already open",
+    heading: "Use the tab already open",
+    body:
+      "<p>This address was already opened. Opening it again does not send another manifest.</p>" +
+      "<p>Go back to the GitHub tab and press <strong>Create GitHub App</strong>. " +
+      "If you closed that tab, stop this script and run it again, then open the new link once.</p>",
   });
 }
 
@@ -450,13 +451,14 @@ async function main() {
     log("");
   }
 
-  // The App exists; it is not installed on the repository yet. The install
-  // page is already "Only select repositories" with this repository selected.
-  // The person clicks Install. This process does not drive their browser.
+  // The App exists; it is not installed on the repository yet. The callback
+  // already redirected the same tab to the install page, which is "Only
+  // select repositories" with this repository selected. Opening that address
+  // again would be a second tab appearing on its own.
   log(`  One step left: install it on ${args.repo} only.`);
-  log(`  Open this link and press Install. Nothing here will click it for you:`);
+  log(`  The same browser tab moves to the install page. Press Install there.`);
+  log(`  If that tab was closed, open this link. This script does not open a tab:`);
   log(`    ${result.installUrl}`);
-  openBrowser(result.installUrl);
   log("");
   log("  Waiting for the install… (this continues by itself)");
 
@@ -507,11 +509,22 @@ function runFlow({ manifest, state, args, kind }) {
       installed = r;
     });
 
+    // The manifest form is served once. A later GET of the same address is how
+    // a reminder click, or a second paste of the link, used to submit a second
+    // manifest and leave GitHub's "could not find the manifest" tab beside the
+    // real one.
+    let startServed = false;
+
     const server = createServer(async (req, res) => {
       const url = new URL(req.url, `http://localhost:${args.port}`);
 
       if (url.pathname === "/" || url.pathname === "/start") {
         res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+        if (startServed) {
+          res.end(alreadySentPage());
+          return;
+        }
+        startServed = true;
         res.end(postPage({ manifest, state, org: args.org }));
         return;
       }
@@ -604,10 +617,9 @@ function runFlow({ manifest, state, args, kind }) {
       for (const [k, v] of Object.entries(manifest.default_permissions)) log(`    ${k}: ${v}`);
       if (!args.recompiler) log("    workflows: not requested — so it can never edit your gates");
       log("");
-      // Print the link either way. Opening a tab is optional. Nothing in this
-      // script clicks, types, or drives the page. The person does that.
-      log(`  Open this link and press Create GitHub App. Nothing here will click it for you:\n    ${start}`);
-      openBrowser(start);
+      // Print the link. Do not open a tab: the person opens this once, and a
+      // second open is the manifest error page.
+      log(`  Open this link once and press Create GitHub App. This script does not open a tab:\n    ${start}`);
       log("");
       log("  Waiting… (GitHub's manifest flow expires after an hour)");
     });

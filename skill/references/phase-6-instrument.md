@@ -40,6 +40,14 @@ not in that label.
 
 The notes below are how that script behaves, for when you do have to run it.
 
+The script prints one localhost link and does not open a browser. Put that
+link in the message once. They open it and press Create. Do not send the
+link again while the script is waiting; a reminder names the tab already
+open and does not include the link. After Create, the same tab moves to
+the install page. Paste the install link only if they say that tab was
+closed. A second open of the first link is the page that says the manifest
+could not be found.
+
 **One App per account that owns repositories.** A GitHub App can only be
 installed on repositories owned by whoever owns the App, so a user with repos
 under their own account *and* under an organization needs one App for each.
