@@ -608,10 +608,15 @@ async function main(argv: readonly string[]): Promise<number> {
       if (second !== "check") die("usage: bsf spec check --file PATH [--pipeline P]");
       return specCheckCommand(args);
 
+    case "journeys":
+      return journeysCommand(second);
     case "guardrails": {
       // `bsf guardrails record [--out PATH]`: baseline what the repo's own
       // checkers report today, per rule and per file, for setup's PR.
-      if (second !== "record") die("usage: bsf guardrails record [--out PATH]");
+      // `bsf guardrails require-zero [--file PATH]`: setup is not finished
+      // while any recorded count is above zero.
+      if (second === "require-zero") return guardrailsRequireZero(typeof args["file"] === "string" ? args["file"] : ".factory/guardrails/baselines.json");
+      if (second !== "record") die("usage: bsf guardrails record [--out PATH] | bsf guardrails require-zero [--file PATH]");
       const { runStaticTools, baselinesFrom, measuredCounts } = await import("./commands/gates-run.js");
       const out = typeof args["out"] === "string" ? args["out"] : ".factory/guardrails/baselines.json";
       // Setup records this from its own candidate sandbox, in the checkout:
@@ -2608,7 +2613,73 @@ async function practiceCommand(second: string | undefined, rest: readonly string
   return 0;
 }
 
+/**
+ * `bsf journeys look`: one uncovered page, or a line that says the list
+ * already reaches every page that was found.
+ *
+ * A missing journey file is not a gap. Setup writes that file. The look
+ * only notices a page that appeared after the list existed.
+ *
+ * second: the subcommand. Only `look` is accepted.
+ */
+async function journeysCommand(second: string | undefined): Promise<number> {
+  if (second !== "look") die("usage: bsf journeys look");
+  const { lookForGap, pagesSinceJourneyList, readJourneysFile } = await import("./commands/journeys.js");
+  const gap = lookForGap(readJourneysFile(process.cwd()), pagesSinceJourneyList(process.cwd()));
+  if (gap === null) {
+    process.stdout.write("no new journey\n");
+    setOutput("gap", "");
+    return 0;
+  }
+  process.stdout.write(`gap: ${gap}\n`);
+  setOutput("gap", gap);
+  return 0;
+}
+
+/**
+ * `bsf guardrails require-zero`: fail while any recorded count is above zero.
+ *
+ * file: the baselines file the clean step wrote. A missing file is a
+ * failure, because an uncounted tree is not a clean one.
+ */
+function guardrailsRequireZero(file: string): number {
+  if (!existsSync(file)) {
+    process.stdout.write(`guardrail counts were not recorded at ${file}\n`);
+    return 1;
+  }
+  const doc = JSON.parse(readFileSync(file, "utf8")) as { rules?: Record<string, { count?: number }> };
+  const total = Object.values(doc.rules ?? {}).reduce((sum, rule) => sum + (typeof rule.count === "number" ? rule.count : 0), 0);
+  if (total > 0) {
+    process.stdout.write(`${total} violation(s) remain. Setup is not finished until the count is zero.\n`);
+    return 1;
+  }
+  process.stdout.write("guardrail counts are zero\n");
+  return 0;
+}
+
+/**
+ * `bsf sandbox scratch --note TEXT` records an addition for this run only.
+ * `--clear` deletes that record and prints the proof line. The recipe is
+ * not opened.
+ *
+ * args: `--note` the sentence, or `--clear` to finish the run.
+ */
+async function scratchCommand(args: Args): Promise<number> {
+  const { clearScratch, noteScratch } = await import("./commands/scratch.js");
+  if (args["clear"] === true) {
+    const cleared = clearScratch(process.cwd());
+    process.stdout.write(`${cleared.proof}\n`);
+    return 0;
+  }
+  const note = typeof args["note"] === "string" ? args["note"] : "";
+  if (note === "") die('usage: bsf sandbox scratch --note "what this run added" | bsf sandbox scratch --clear');
+  noteScratch(process.cwd(), note, nowIso());
+  process.stdout.write("noted for this run only\n");
+  return 0;
+}
+
 async function sandboxCommandCli(second: string | undefined, args: Args): Promise<number> {
+  if (second === "scratch") return scratchCommand(args);
   if (second === "start") {
     // --if-present: the gates run on every PR, including those opened before
     // setup has frozen a sandbox. There the tests gate decides (the repo's

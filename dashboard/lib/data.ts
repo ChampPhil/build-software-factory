@@ -466,6 +466,34 @@ export function useStepRecords(client: GitHubClient | null, runIds: readonly str
  * the token cannot read Actions, which is a thing to say once on the Factory
  * page rather than an error on every page.
  */
+/**
+ * The sentence for a setup run that is still going, or null when setup is idle.
+ *
+ * The job name on the run is that sentence. Several computers at once are
+ * joined, so the briefing says the same thing the setup chat says. A run
+ * whose jobs cannot be read still says that setup is running.
+ *
+ * client: the signed-in GitHub client, or null before sign-in.
+ * runs: recent workflow runs, or null while those are still loading.
+ */
+export function useSetupSentence(client: GitHubClient | null, runs: readonly WorkflowRunSummary[] | null): Loaded<string | null> {
+  const setup = (runs ?? []).find((r) => r.status !== "completed" && /factory-setup/.test(`${r.path ?? ""} ${r.name}`));
+  const load =
+    client === null || runs === null
+      ? null
+      : async () => {
+          if (setup === undefined) return null;
+          try {
+            const jobs = await client.workflowJobs(setup.id);
+            const live = jobs.filter((j) => j.status !== "completed").map((j) => j.name);
+            return live.length > 0 ? live.join(" ") : "Setup is running.";
+          } catch {
+            return "Setup is running.";
+          }
+        };
+  return usePolled(load, 60_000, [client?.repo, setup?.id ?? 0, runs === null ? "loading" : "ready"]);
+}
+
 export function useActions(client: GitHubClient | null, version = 0): Loaded<{
   readonly workflows: readonly WorkflowSummary[];
   readonly runs: readonly WorkflowRunSummary[];

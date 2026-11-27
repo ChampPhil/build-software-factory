@@ -170,7 +170,7 @@ pre-agent-steps:
     env:
       GH_TOKEN: ${{ steps.budget-token.outputs.token }}
       BUDGET_KEY: ${{ inputs.budget_key || format('{0}-{1}-setup-{2}', github.run_id, github.run_attempt, inputs.round) }}
-      PIPELINE: setup
+      PIPELINE: ${{ contains(inputs.amend, 'one-journey') && 'sandbox_upkeep' || 'setup' }}
       MODEL: ${{ inputs.model }}
     run: bsf budget reserve --key "$BUDGET_KEY" --pipeline "$PIPELINE" --role setup --model "$MODEL" --cap 1000 --detection-model claude-haiku-5-5 --detection-cap 50
   - name: Make the output directory
@@ -204,7 +204,7 @@ post-steps:
       BUDGET_KEY: ${{ inputs.budget_key || format('{0}-{1}-setup-{2}', github.run_id, github.run_attempt, inputs.round) }}
       MODEL: ${{ inputs.model }}
       DETECTION_ARTIFACT: ${{ needs.activation.outputs.artifact_prefix }}detection
-      PIPELINE: setup
+      PIPELINE: ${{ contains(inputs.amend, 'one-journey') && 'sandbox_upkeep' || 'setup' }}
     run: bsf budget measure --key "$BUDGET_KEY" --pipeline "$PIPELINE" --model "$MODEL" --detection-artifact "$DETECTION_ARTIFACT" --out /tmp/gh-aw/bsf-budget/measure.json
   - name: Upload the budget measure
     if: always()
@@ -229,6 +229,59 @@ agents can work here, and prove it.
 
 Everything you write goes in `/tmp/gh-aw/agent/bsf/setup/`. Nothing you write
 in the repo itself is kept.
+
+## Which computer you are
+
+Read `/tmp/gh-aw/agent/bsf/setup/amend.json` when it exists. It says which of
+the three computers you are. Do that computer's work and do not do the others.
+
+**Computer 0** — `{"focus":"journeys"}`. Write only `context/journeys.md`.
+The top things a person does in this product, not every route and not the
+folder map (`feature-map.md` is a list of directories; this is not that).
+One `##` heading per journey, then these two lines:
+
+- `How a person gets there:` the path they take.
+- `What proves it:` what on the screen or in the data shows it worked.
+
+Do not boot the app. Do not write `manifest.json`, stubs, or
+`guardrails.patch`. Ignore `previous/`.
+
+**Computer B** — `{"focus":"standards"}`. Install only the factory's standard
+rule pack, into the tools this repo already runs. Prove each rule on a bad
+example and a good one. Fix the violations those rules already report, in
+the same patch, until a count of them would be zero. Do not add rules taken
+from this repo's own patterns or from past corrections. Do not write the
+sandbox manifest. Ignore `previous/`.
+
+**One new journey** — `{"focus":"one-journey", ...}`. The existing launch must
+drive this one journey: seed it if the seed does not already, and add the
+clicks. Add the journey to `context/journeys.md`. Do not redraw the other
+journeys. If it needs a new secret or a new outside account, stop and say so
+in the report. Do not install guardrails.
+
+**Computer A** — anything else, including a journey list pasted as the amend
+text (it contains `How a person gets there`). Do these in order, and do not
+install guardrails:
+
+1. Read the journey list. Do not drop or shrink a journey to make the boot pass.
+2. Write one launch command that reaches a usable app from a private data
+   directory, including migrations, the seed, a doctor check, and cleanup.
+   `commands.seed` loads that private data on every boot.
+3. Under each journey, add `How the sandbox tests it:` the seed user, the
+   page, the click, and the side effect.
+4. Boot and click every listed journey with no scratch. A missing seed
+   precondition belongs in the shared seed, not in a note for one run.
+
+Prefer a vendor's test mode (Clerk dev, Stripe test) when a test-mode secret
+exists. Use a local stub only when it does not. No production keys. Cleanup
+of objects this run created at a vendor is best effort: if it cannot finish,
+say so and continue. The shared launch must perform every journey with no
+scratch.
+
+`previous/` may contain `seed-round-0`, `setup-round-8` and `setup-round-9`.
+Those are Computer 0 and Computer B, not an earlier sandbox design. A later
+design round reads `setup-round-N` and `trial-round-N` for the round before
+it, and only when both exist.
 
 ## What to produce
 
@@ -500,12 +553,14 @@ git diff > /tmp/gh-aw/agent/bsf/setup/guardrails.patch
 
 ## If this is not the first round
 
-`previous/` holds the last round's design (`setup-round-*`) and what the trial
-measured (`trial-round-*/trial.json`): each step's command, whether it passed,
-and the last lines of its output, then `sign_in` and each dependency's probe
-in `probes`, with what the app did. Read the failing step's output or probe's
-detail, change the smallest thing that explains it, and write the whole
-manifest again.
+`previous/` holds the last round's design (`setup-round-1`, `setup-round-2`)
+and what the trial measured (`trial-round-*/trial.json`): each step's command,
+whether it passed, and the last lines of its output, then `sign_in` and each
+dependency's probe in `probes`, with what the app did. Read the failing step's
+output or probe's detail, change the smallest thing that explains it, and
+write the whole manifest again. Ignore `seed-round-0`, `setup-round-8` and
+`setup-round-9`: those are the journey list and the standard rules, not a
+sandbox design.
 
 ## If this is an amendment
 

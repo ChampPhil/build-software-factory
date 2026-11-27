@@ -152,8 +152,120 @@ jobs:
         id: models
         run: bsf models
 
-  design-1:
+  # An empty earlier round, so Computer 0 and Computer B (rounds 8 and 9)
+  # can start together. The agent refuses to start a round after the first
+  # when no earlier artifact exists.
+  seed-round:
+    name: Getting the setup computers ready to start
     needs: plan
+    if: needs.plan.result == 'success' && inputs.amend == ''
+    runs-on: ubuntu-latest
+    steps:
+      - name: Leave an empty earlier round so the two computers can start together
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/seed"
+          echo "seed" > "$RUNNER_TEMP/seed/README"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: seed-round-0
+          path: ${{ runner.temp }}/seed
+          if-no-files-found: error
+
+  # Computer 0. The top journeys, before anyone builds the private copy.
+  computer-0:
+    name: Computer 0. Reading the product for the top journeys
+    needs: [plan, seed-round]
+    if: needs.plan.result == 'success' && needs.seed-round.result == 'success'
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+      id-token: write
+      issues: write
+      pull-requests: write
+    uses: ./.github/workflows/factory-setup-agent.lock.yml
+    with:
+      budget_key: ${{ github.run_id }}-${{ github.run_attempt }}-computer-0
+      model: ${{ needs.plan.outputs.model_builder }}
+      round: 8
+      amend: '{"focus":"journeys"}'
+    secrets: inherit
+
+  computer-0-budget:
+    needs: computer-0
+    if: always() && needs.computer-0.result != 'skipped'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/factory-budget-settle.yml
+    with:
+      key: ${{ github.run_id }}-${{ github.run_attempt }}-computer-0
+    secrets:
+      FACTORY_APP_PRIVATE_KEY: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
+
+  # Computer B, beside Computer 0. The standard rules only.
+  computer-b:
+    name: Computer B. Proving the standard rules
+    needs: [plan, seed-round]
+    if: needs.plan.result == 'success' && needs.seed-round.result == 'success'
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+      id-token: write
+      issues: write
+      pull-requests: write
+    uses: ./.github/workflows/factory-setup-agent.lock.yml
+    with:
+      budget_key: ${{ github.run_id }}-${{ github.run_attempt }}-computer-b
+      model: ${{ needs.plan.outputs.model_builder }}
+      round: 9
+      amend: '{"focus":"standards"}'
+    secrets: inherit
+
+  computer-b-budget:
+    needs: computer-b
+    if: always() && needs.computer-b.result != 'skipped'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/factory-budget-settle.yml
+    with:
+      key: ${{ github.run_id }}-${{ github.run_attempt }}-computer-b
+    secrets:
+      FACTORY_APP_PRIVATE_KEY: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
+
+  publish-journeys:
+    name: Computer 0. Handing the journey list to the private-copy computer
+    needs: [computer-0, computer-0-budget]
+    if: needs.computer-0.result == 'success'
+    runs-on: ubuntu-latest
+    outputs:
+      journeys: ${{ steps.read.outputs.journeys }}
+    steps:
+      - name: Read the journey list
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: setup-round-8
+          path: ${{ runner.temp }}/round8
+      - name: Pass the list to Computer A
+        id: read
+        shell: bash
+        run: |
+          file="$RUNNER_TEMP/round8/context/journeys.md"
+          if [ ! -s "$file" ]; then echo "Computer 0 did not write the journey list"; exit 1; fi
+          {
+            echo "journeys<<JOURNEYS_EOF"
+            cat "$file"
+            echo "JOURNEYS_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+  design-1:
+    name: Computer A. Writing the launch and how each journey is tested
+    needs: [plan, publish-journeys]
+    # An amendment skips Computer 0, so the journey job is skipped and this
+    # computer still runs, on the amendment text. A failed journey list does
+    # not: setup does not build a private copy for a list that was never written.
+    if: always() && needs.plan.result == 'success' && (needs.publish-journeys.result == 'success' || (needs.publish-journeys.result == 'skipped' && inputs.amend != ''))
     # What the compiled agent's own jobs request; checked against the lock.
     permissions:
       actions: read
@@ -167,7 +279,7 @@ jobs:
       budget_key: ${{ github.run_id }}-${{ github.run_attempt }}-design-1
       model: ${{ needs.plan.outputs.model_builder }}
       round: 1
-      amend: ${{ inputs.amend }}
+      amend: ${{ needs.publish-journeys.result == 'success' && needs.publish-journeys.outputs.journeys || inputs.amend }}
     secrets: inherit
 
   # Charge design-1's budget hold with what gh-aw measured, before the next
@@ -184,6 +296,7 @@ jobs:
       FACTORY_APP_PRIVATE_KEY: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
 
   trial-1:
+    name: Computer A. Booting the private copy and clicking the listed journeys
     needs: [design-1, design-1-budget]
     uses: ./.github/workflows/factory-setup-trial.yml
     with:
@@ -191,6 +304,7 @@ jobs:
     secrets: inherit
 
   design-2:
+    name: Computer A. Fixing the one journey the last try could not click
     needs: [plan, trial-1]
     if: needs.trial-1.outputs.met != 'true'
     # What the compiled agent's own jobs request; checked against the lock.
@@ -223,6 +337,7 @@ jobs:
       FACTORY_APP_PRIVATE_KEY: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
 
   trial-2:
+    name: Computer A. Booting the private copy and clicking again
     needs: [design-2, design-2-budget]
     uses: ./.github/workflows/factory-setup-trial.yml
     with:
@@ -230,6 +345,7 @@ jobs:
     secrets: inherit
 
   design-3:
+    name: Computer A. One last try at the journey that did not click
     needs: [plan, trial-2]
     if: needs.trial-2.outputs.met != 'true'
     # What the compiled agent's own jobs request; checked against the lock.
@@ -262,6 +378,7 @@ jobs:
       FACTORY_APP_PRIVATE_KEY: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
 
   trial-3:
+    name: Computer A. Booting the private copy and clicking the last try
     needs: [design-3, design-3-budget]
     uses: ./.github/workflows/factory-setup-trial.yml
     with:
@@ -271,8 +388,9 @@ jobs:
   # Runs whenever at least one round was designed and tried. Freezes the best
   # measured round and opens the setup pull request.
   freeze:
-    needs: [trial-1, trial-2, trial-3]
-    if: always() && needs.trial-1.result == 'success'
+    name: Opening the setup pull request with the launch, the notes, and the proof
+    needs: [trial-1, trial-2, trial-3, computer-b, computer-b-budget]
+    if: always() && needs.trial-1.result == 'success' && (needs.computer-b.result == 'success' || needs.computer-b.result == 'skipped')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -370,27 +488,42 @@ jobs:
               fi
             done
           fi
-          # The setup agent's checker configuration. It may not reach the
-          # factory's own files or the workflows; the PR is reviewed in full.
-          if [ -z "$AMEND" ] && [ -s "$design/guardrails.patch" ]; then
-            if grep -E '^(\+\+\+|---) [ab]/(\.github|\.factory)/' "$design/guardrails.patch"; then
-              echo "::warning::guardrails.patch touches .github/ or .factory/; it is left out"
-            elif git apply --index "$design/guardrails.patch"; then
-              echo "applied the guardrails patch"
-            else
-              echo "::warning::guardrails.patch did not apply; it is left out"
-            fi
+          # Computer 0's list. Computer A's copy wins when it added the
+          # "how the sandbox tests it" line under each journey.
+          if [ -z "$AMEND" ] && [ -f "$ROUNDS_DIR/setup-round-8/context/journeys.md" ]; then
+            cp "$ROUNDS_DIR/setup-round-8/context/journeys.md" .factory/definition/context/journeys.md
           fi
-          # Baseline what the repo's checkers report today, with the rules
-          # just installed, from inside the sandbox that was frozen: the
-          # ratchet starts here, and gardening's work is everything above zero.
+          if [ -z "$AMEND" ] && [ -f "$design/context/journeys.md" ]; then
+            cp "$design/context/journeys.md" .factory/definition/context/journeys.md
+          fi
+          # The standard rules (Computer B) and any patch the design round
+          # still carried. Neither may reach the factory's own files.
+          apply_guardrails() {
+            local patch="$1"
+            if [ ! -s "$patch" ]; then return 0; fi
+            if grep -E '^(\+\+\+|---) [ab]/(\.github|\.factory)/' "$patch"; then
+              echo "::warning::$patch touches .github/ or .factory/; it is left out"
+            elif git apply --index "$patch"; then
+              echo "applied $patch"
+            else
+              echo "::warning::$patch did not apply; it is left out"
+            fi
+          }
+          if [ -z "$AMEND" ]; then
+            apply_guardrails "$ROUNDS_DIR/setup-round-9/guardrails.patch"
+            apply_guardrails "$design/guardrails.patch"
+          fi
+          # The clean step. Setup is not finished while a count is above zero.
+          # Gardening, afterwards, is only for new drift.
           guard=""
           if [ -z "$AMEND" ]; then
-            if bsf sandbox start && bsf guardrails record > "$RUNNER_TEMP/baseline.txt"; then
-              guard="$(head -1 "$RUNNER_TEMP/baseline.txt")"
-            else
-              guard="the baseline could not be recorded; the static gate starts from zero"
+            if ! bsf sandbox start; then echo "the private copy did not start; the counts are still recorded"; fi
+            if ! bsf guardrails record > "$RUNNER_TEMP/baseline.txt"; then
+              echo "guardrail counts were not recorded"
+              exit 1
             fi
+            guard="$(head -1 "$RUNNER_TEMP/baseline.txt")"
+            bsf guardrails require-zero
             if [ -f "$design/guardrails.json" ]; then
               guard="$guard. Rules: $(jq -r '"\(.installed // [] | length) installed, \(.skipped // [] | length) left out"' "$design/guardrails.json")"
             fi

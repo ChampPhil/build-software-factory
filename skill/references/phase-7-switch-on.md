@@ -45,9 +45,10 @@ Setup is still open while any of these is true:
    and still watch until the merge has happened.
 
    On merge, `factory-sync` adds the factory's required checks where the
-   plan allows, keeping every existing protection rule, and gardening picks
-   up the seeded cleanup that night. Pipeline switches stay off. Setup's
-   own pull requests were the exception, and only those.
+   plan allows, keeping every existing protection rule. The tree is already
+   at zero violations. Gardening after this is for new drift only. Pipeline
+   switches stay off. Setup's own pull requests were the exception, and
+   only those.
 
    Then check the assessment file is gone from the default branch, because
    it is unrequested markdown and the merge is meant to delete it:

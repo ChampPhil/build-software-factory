@@ -460,6 +460,20 @@ export class GitHubClient {
   }
 
   /** Recent workflow runs, newest first: what is running, and what failed and can be run again. */
+  /**
+   * The jobs on one workflow run.
+   *
+   * The setup watch reads the job name, which is the sentence the person
+   * should hear (which computer, and what it is doing). A run with no jobs
+   * yet returns an empty list.
+   *
+   * runId: the Actions run id.
+   */
+  async workflowJobs(runId: number): Promise<readonly { readonly name: string; readonly status: string }[]> {
+    const r = await this.get<{ jobs?: { name: string; status: string }[] }>(`repos/${this.repo}/actions/runs/${runId}/jobs`);
+    return r.jobs ?? [];
+  }
+
   async workflowRuns(perPage = 50): Promise<readonly WorkflowRunSummary[]> {
     const r = await this.get<{ workflow_runs: WorkflowRunSummary[] }>(`repos/${this.repo}/actions/runs?per_page=${perPage}`);
     return r.workflow_runs;

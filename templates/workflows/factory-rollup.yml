@@ -83,3 +83,24 @@ jobs:
         run: |
           bsf budget verify
           bsf budget minutes
+      # The every-couple-of-days backstop for the journey look. The push
+      # workflow is the one that runs on a merge. This one only runs on the
+      # daily sweep, and it does not rebuild the sandbox.
+      - name: Look for one new journey
+        if: github.event_name == 'schedule'
+        id: journeys
+        run: bsf journeys look
+      - name: Ask setup to drive that one journey
+        if: github.event_name == 'schedule' && steps.journeys.outputs.gap != ''
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          GAP: ${{ steps.journeys.outputs.gap }}
+        run: |
+          set -euo pipefail
+          busy=$(gh run list --workflow factory-setup.yml --status in_progress --limit 1 --json databaseId --jq 'length')
+          if [ "$busy" != "0" ]; then
+            echo "setup is already running"
+            exit 0
+          fi
+          amend=$(jq -n --arg path "$GAP" '{focus:"one-journey", reaches:$path, why:"a page appeared that the journey list cannot reach"}')
+          gh workflow run factory-setup.yml --ref "$GITHUB_REF_NAME" -f "amend=$amend"

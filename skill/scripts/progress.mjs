@@ -41,13 +41,52 @@ import { execFileSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-/** The setup workflow's jobs, in words a person wants to read. */
+/**
+ * The setup workflow's jobs, in words a person wants to read.
+ *
+ * The long jobs are Computer 0, Computer A (the design and trial rounds),
+ * and Computer B. A job whose name is already the sentence is repeated as
+ * that sentence. Order is the order the watch considers them; every job
+ * that is still going is spoken, so two computers running together are both
+ * named.
+ */
 export const JOB_LINES = {
   ready: "Checking your repository is ready",
-  plan: "Reading your code and planning the sandbox",
-  freeze: "Building and testing your sandbox, then opening the setup PR",
+  plan: "Reading which model the setup computers will use",
+  "seed-round": "Getting the setup computers ready to start",
+  "computer-0": "Computer 0. Reading the product for the top journeys",
+  "Computer 0. Reading the product for the top journeys": "Computer 0. Reading the product for the top journeys",
+  "computer-b": "Computer B. Proving the standard rules",
+  "Computer B. Proving the standard rules": "Computer B. Proving the standard rules",
+  "publish-journeys": "Computer 0. Handing the journey list to the private-copy computer",
+  "design-1": "Computer A. Writing the launch and how each journey is tested",
+  "trial-1": "Computer A. Booting the private copy and clicking the listed journeys",
+  "design-2": "Computer A. Fixing the one journey the last try could not click",
+  "trial-2": "Computer A. Booting the private copy and clicking again",
+  "design-3": "Computer A. One last try at the journey that did not click",
+  "trial-3": "Computer A. Booting the private copy and clicking the last try",
+  clean: "Cleaning until every guardrail count is zero",
+  freeze: "Opening the setup pull request with the launch, the notes, and the proof",
   release: "Switching the factory on",
 };
+
+/**
+ * The sentence key for a GitHub job name.
+ *
+ * Reusable workflows show up as "computer-0 / agent". That is still Computer
+ * 0. A name that is already a sentence (it starts with "Computer") is itself.
+ *
+ * name: the job name from `gh run view`.
+ */
+export function jobKey(name) {
+  if (JOB_LINES[name] !== undefined) return name;
+  const head = name.split(" / ")[0];
+  if (JOB_LINES[head] !== undefined) return head;
+  for (const [key, sentence] of Object.entries(JOB_LINES)) {
+    if (name === sentence || head === sentence) return key;
+  }
+  return null;
+}
 
 /** Speak again after this long even when the stage has not changed. */
 export const SPEAK_EVERY_MS = 60 * 1000;
@@ -61,15 +100,30 @@ export const LIVE_STATUSES = ["queued", "in_progress", "waiting", "requested", "
 /** Two minutes between looks is a failed watch. The default look is far inside this. */
 export const MAX_LOOK_SEC = 120;
 
+/**
+ * Every setup job that is still going, in the order a person would hear them.
+ *
+ * A completed job is skipped. Two computers running at once are both
+ * returned, so the watch does not go quiet on the one it listed second.
+ *
+ * jobs: the jobs on the run, each with a name and a status.
+ */
+export function liveJobs(jobs) {
+  const seen = new Set();
+  const out = [];
+  for (const job of jobs) {
+    if (job.status === "completed") continue;
+    const key = jobKey(job.name);
+    if (key === null || seen.has(key)) continue;
+    seen.add(key);
+    out.push(key);
+  }
+  return out;
+}
+
 /** The job in progress, from `gh run view --json jobs`; the first not yet finished. */
 export function currentJob(jobs) {
-  const known = Object.keys(JOB_LINES);
-  const byName = new Map(jobs.map((j) => [j.name, j]));
-  for (const name of known) {
-    const j = byName.get(name);
-    if (j !== undefined && j.status !== "completed") return name;
-  }
-  return null;
+  return liveJobs(jobs)[0] ?? null;
 }
 
 /**
@@ -86,15 +140,17 @@ export function currentJob(jobs) {
  * @returns {{line: string|null, state: {job: string|null, at: number}}}
  */
 export function nextLine(jobs, state, now) {
-  const job = currentJob(jobs);
-  if (job === null) return { line: null, state };
+  const live = liveJobs(jobs);
+  if (live.length === 0) return { line: null, state };
+  const job = live.join("+");
   const changed = job !== state.job;
   const due = now - state.at >= SPEAK_EVERY_MS;
   if (!changed && !due) return { line: null, state };
   // Only on the change. Repeating "just started" every minute is a lie.
-  const freezeDone = jobs.some((j) => j.name === "freeze" && j.status === "completed" && j.conclusion === "success");
+  const freezeDone = jobs.some((j) => (j.name === "freeze" || jobKey(j.name) === "freeze") && j.status === "completed" && j.conclusion === "success");
   const win = changed && freezeDone ? " Your app just started in the sandbox." : "";
-  return { line: `${JOB_LINES[job]}.${win}`, state: { job, at: now } };
+  const sentence = live.map((name) => `${JOB_LINES[name] ?? name}.`).join(" ");
+  return { line: `${sentence}${win}`, state: { job, at: now } };
 }
 
 /**

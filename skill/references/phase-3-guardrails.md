@@ -7,6 +7,11 @@ Build static rules and verification from the assessment, **extending the tools
 the repo already runs** rather than replacing them. A repo with eslint gets its
 eslint config extended. It does not get a second linter beside the first.
 
+During setup this is the factory's standard pack only. Each rule must fail on
+a bad example and pass on a good one. Rules taken from this repo's own
+patterns, or from past corrections, are a later pass. They are not part of
+this install.
+
 A note that says to add no tools does not cancel this part. Do not skip the
 linter install, the format commit, the proof of each rule, or the cleanup.
 
