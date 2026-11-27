@@ -11,3 +11,6 @@ dashboard/out/
 # Python bytecode
 __pycache__/
 *.pyc
+
+# Local working notes. Kept on this machine, never published.
+HANDOFF.md

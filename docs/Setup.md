@@ -1,6 +1,4 @@
-# Build Software Factory — Setup Skill Spec
-
-Nov 18, 2026 · @Philip
+# Setup
 
 The setup skill (`build-software-factory`) turns an existing repo into a running factory in one session, asking the user for as little as possible.
 
@@ -25,7 +23,7 @@ The setup skill (`build-software-factory`) turns an existing repo into a running
 The skill checks these before starting and tells the user exactly what's missing.
 
 1. **A git repo hosted on GitHub**, with the user's `gh` CLI signed in and admin rights on the repo.
-2. **Claude Code** running the skill. The factory's agents also run on Claude Code: it is the one harness whose spend gh-aw's credit cap is proven to stop (doc 07, §Agent CLI adapters).
+2. **Claude Code** running the skill. The factory's agents also run on Claude Code: it is the one harness whose spend gh-aw's credit cap is proven to stop ([Architecture](Architecture.md), Agent CLI adapters).
 3. **A supported language** among TypeScript, JavaScript, Python, Go, Java, Rust, C# and Ruby. Repos mixing several are fine.
 4. **A clean working tree on main.** If there are uncommitted changes, the skill stops and asks the user to commit or stash them.
 5. Nothing else on their machine: phase 2 builds and checks the sandbox on GitHub's runners, so no Docker and no language toolchain.
@@ -86,6 +84,8 @@ The submitted PR merges rather than replaces. A problem already pending becomes 
 
 ## Phase 2: Make it runnable
 
+What the sandbox is, and the posture it runs under, is [The Sandbox](<The Sandbox.md>). This phase is how setup builds one.
+
 The skill produces a reproducible, isolated sandbox where an agent can build the app, run its tests and verify it at runtime with real dev tools.
 
 1. **Reuse first:** an existing devcontainer, Dockerfile or setup script becomes the base of the sandbox, which is always described as a standard `devcontainer.json` so any devcontainer tool can open it.
@@ -130,7 +130,7 @@ The skill writes the factory definition and installs the workflows.
 4. **Context files:** `feature-map.md` generated from the folder structure, `runbook.md` from phase 2, `fundamentals.md` from the dominant patterns and accepted context candidates, `history.md` seeded from mined corrections.
 5. **Rubrics** from templates (one per pipeline plus shared).
 6. **The workflows:** one gh-aw workflow per role (`factory-role-<role>.md`), compiled with `gh aw compile` into `.lock.yml` files (the skill installs the `gh aw` CLI extension locally if it's missing), and the eleven trigger workflows under `.github/workflows/factory-*.yml`, pinned to the runner's commit SHA with the version in a trailing comment (`runner@<sha> # v0.1.0`). None of them runs on a polling timer except nightly gardening, the daily review check and the daily rollup sweep.
-7. **Runner upgrades:** a `.github/dependabot.yml` entry for the `github-actions` ecosystem, limited to `build-software-factory/runner` and with a 3-day cooldown after each release, plus the `factory-runner-pin.yml` workflow it watches. `install-factory.mjs` writes both, from `skill/RUNNER_PIN` (`<owner/repo> <sha> <version>`, cut by `scripts/pin-release.mjs` when a release is tagged). From then on GitHub's Dependabot opens an upgrade PR whenever a new runner is released; the user approves it with one click, and a second PR brings the vendored runner up to it (docs/07). If the repo already has a `dependabot.yml`, the entry is appended without touching the others; if `updates:` is not its last section the file is left alone and the user is told. Before a release is pinned (`unreleased`), neither file is installed.
+7. **Runner upgrades:** a `.github/dependabot.yml` entry for the `github-actions` ecosystem, limited to `build-software-factory/runner` and with a 3-day cooldown after each release, plus the `factory-runner-pin.yml` workflow it watches. `install-factory.mjs` writes both, from `skill/RUNNER_PIN` (`<owner/repo> <sha> <version>`, cut by `scripts/pin-release.mjs` when a release is tagged). From then on GitHub's Dependabot opens an upgrade PR whenever a new runner is released; the user approves it with one click, and a second PR brings the vendored runner up to it ([Architecture](Architecture.md)). If the repo already has a `dependabot.yml`, the entry is appended without touching the others; if `updates:` is not its last section the file is left alone and the user is told. Before a release is pinned (`unreleased`), neither file is installed.
 8. **Local session hooks** for Claude Code (and any other agent CLI its developers use, detected in the repo, for correction mining only). Each hook asks its developer once, on first run on their machine, whether to capture their sessions, and stores the answer locally; no answer means no capture. The setup user answers for themselves during setup. On a public repo without the private data repo, the hooks are installed but capture stays off.
 9. **Trigger sources:** if the GitHub app for Slack or Linear's GitHub integration is already installed, the skill notes it; otherwise it prints the two-minute steps to connect them (both free).
 

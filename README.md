@@ -2,30 +2,127 @@
 
 _Built by Philip Valcin._
 
-Turns a repository into a governed, automated loop: work comes in as an issue,
-agents triage, specify, build and verify it, deterministic gates decide whether
-it is allowed to merge, and a human approves what lands. It runs entirely on
-GitHub Actions with no server to host, and it hardens itself — the corrections
-people have already made to agents become static rules, and a scheduled review
-grades recent work and turns what it finds into hardening work. Changes to the
-factory's own definition stay with you (`/practice`); automatic definition
-changes are planned for v1.1.
+A software factory fully automates coding, from the start of a change to the end, and runs that work on sandboxed cloud agents. It is an open, adaptable infrastructure stack defined in code.
 
-> **Status: beta.** It has run end to end on nine fixture repositories and on
-> one real app; what is proven, and how, is in
-> [`docs/12-acceptance-v1.0.md`](docs/12-acceptance-v1.0.md).
+## What is an autonomous software factory?
 
-## Quickstart
+Coding moved from a chat, to autocomplete, to several agents on a laptop, to a factory of cloud agents.
 
-You need: a GitHub repository you are an admin of, the
-[`gh` CLI](https://cli.github.com) signed in (`gh auth login`), Node 20 or
-later, a coding agent that can load a skill folder and run shell commands
-([Claude Code](https://code.claude.com), Cursor, Codex or similar) to run the
-setup, and an Anthropic API key for the factory itself.
-Nothing else runs on your machine: the sandbox the agents verify in is built
-and proved in your repository's GitHub Actions.
+```mermaid
+flowchart LR
+  chat[Chat] --> complete[Autocomplete]
+  complete --> local[Several agents on a laptop]
+  local --> factory[A factory of cloud agents]
+```
 
-**1. Get the factory and give your coding agent its setup skill.**
+A factory is a governed loop. Work comes in, agents do it, and a person approves what lands. Every action is recorded, so the factory can be measured. It gets better from that record. The whole thing is files in the repository, so it can be read, versioned, and changed like any other code.
+
+The shape of this idea comes from Zach Lloyd, founder of Warp: cloud agents, the factory defined in code, a product engineer and a factory engineer, and a garden kept clean because agents copy the code they see. The [dashboard](<docs/The Dashboard.md>) follows the shape of Warp's factory dashboard.
+
+Two people work with it.
+
+```mermaid
+flowchart LR
+  product[Product engineer] -->|puts work in| factory[The factory]
+  factory -->|proof to review| product
+  engineer[Factory engineer] -->|improves the factory| factory
+  factory -->|what it spent, and where it failed| engineer
+```
+
+A product engineer puts work in and reviews the result. A factory engineer improves the factory itself: its checks, its instructions, and when a pipeline is allowed to merge on its own.
+
+The codebase is the largest input the agents get, and they copy what they see. So the code is kept as a garden. Guardrails are the fence. They come from the codebase's own best patterns, from corrections people have already made, and from rules every codebase should have. Once the garden is clean, later changes have to keep it that way, and a correction that keeps coming back becomes a new guardrail.
+
+```mermaid
+flowchart LR
+  code[Existing code] --> rules[Guardrails]
+  rules --> fit[Fit the code to the guardrails]
+  fit --> garden[Later changes keep the garden]
+```
+
+The principles in full are in [Principles](docs/Principles.md). The checks themselves are in [Guardrails](docs/Guardrails.md).
+
+## What this factory does, and how
+
+This skill installs that factory into a repository you already have. After setup, nothing of it runs on your machine. GitHub Actions is the computer. The definition sits in the repository. A static dashboard reads that same repository from your browser.
+
+```mermaid
+flowchart LR
+  you[Your machine, once] -->|setup| repo[Your repository]
+  repo --> actions[GitHub Actions]
+  actions -->|pull requests and records| repo
+  dash[Dashboard in your browser] -->|reads| repo
+```
+
+You tell it what you want. A chief of staff turns that into one specific piece of work and picks the pipeline. The roles for that pipeline do the work. Two gates decide whether it may merge. You review the proof, then it joins the queue.
+
+```mermaid
+flowchart TD
+  issue[Issue or comment] --> trust{"From someone with write access?"}
+  trust -->|yes| chief[Chief of staff]
+  trust -->|no| wait[Waits for one click]
+  wait --> chief
+  chief --> roles[The roles for that pipeline]
+  roles --> static["Gate: static rules"]
+  static -->|fail| roles
+  static -->|pass| verify["Gate: run the app and keep the proof"]
+  verify -->|fail| roles
+  verify -->|pass| pr[Draft pull request]
+  pr --> you[You review the proof]
+  you --> queue[Merge queue]
+```
+
+An issue from someone without write access waits. Its text stays out of every prompt until a trusted person accepts it.
+
+Five ways work starts. The three that write product code, and a rebuilt conflict, all pass the same two gates. A change to the factory's own definition waits for a person either way.
+
+```mermaid
+flowchart LR
+  product[Product work] --> clear[The same two gates]
+  garden[Gardening] --> clear
+  harden[Hardening] --> clear
+  conflict[Conflict rebuild] --> clear
+  practice[A change to the definition] --> person[You approve the definition]
+```
+
+- **Product work.** You say what you want. The factory triages it, writes a spec, builds it, and verifies it.
+- **Gardening.** Every night the factory looks for debt, duplicated patterns, and behavior that landed without tests, and opens a small cleanup.
+- **Hardening.** A correction, or a failure the review found, becomes a check for the whole codebase: a static rule, a stronger verification, or a refactor that makes the mistake impossible. The new check has to fail on the bad example and pass on the good one.
+- **The definition.** `/practice` on an issue or pull request adds a standing instruction. You approve that pull request.
+- **Conflicts.** When main moves under an open factory pull request, the factory rebuilds the change on the latest code and opens a fresh pull request.
+
+Three clocks run at once.
+
+```mermaid
+flowchart LR
+  hours["Hours: ship the change"] --> days["Days: garden and harden"]
+  days --> review["Every few days: grade the work and harden what failed"]
+```
+
+The way a person trusts the result comes from Lauren Tan, a SpaceX engineer. Her pstack work has an agent boot the repository's own app, walk a journey, and keep the proof. This factory runs that check on GitHub Actions, in a sandbox. You review the screenshots, the recording, and the checks.
+
+```mermaid
+flowchart TD
+  boot[The verifier boots the app and walks the change]
+  boot --> proof[Screenshots, a recording, the checks]
+  proof --> you[You approve the proof]
+```
+
+Product work, gardening, and hardening start with you merging, until you turn that pipeline's switch on. Setup's own pull requests are the exception: they merge on their own unless you say you will merge them by hand.
+
+The monthly budget defaults to **$35**, split into product work 60%, gardening 25%, and reviews and practices 15%. Before any agent step starts, the factory reserves the most that step could cost. The step starts only when the month's spend, the reservations already held, and this step's reservation all fit. The mechanism is in [Budget](docs/Budget.md). The agents that do this work run on Claude Code, the harness whose spend that cap is proven to stop ([Architecture](docs/Architecture.md)).
+
+On a public repository or a paid plan, GitHub can require the checks. On a free private repository the factory watches main after each push. The table is in [Security](docs/Security.md).
+
+The factory reuses existing tools wherever one fits, and the map of what is reused and what is custom is in [Architecture](docs/Architecture.md).
+
+## Start
+
+You need a GitHub repository you administer, the [`gh` CLI](https://cli.github.com) signed in, Node 20 or later, and a coding agent that can load a skill folder ([Claude Code](https://code.claude.com), Cursor, Codex, or similar). The Anthropic key goes on GitHub, as the Actions secret `ANTHROPIC_API_KEY`. It does not go in the chat.
+
+**1. Get the factory and give your agent the skill.**
+
+The skill is linked, because its scripts install the factory's templates from the clone beside it.
 
 PowerShell (Windows):
 
@@ -43,207 +140,39 @@ mkdir -p ~/.claude/skills
 ln -s ~/build-software-factory/skill ~/.claude/skills/build-software-factory
 ```
 
-The skill is linked rather than copied because its scripts install the
-factory's templates from the clone beside it.
+Those commands link it for Claude Code. For another agent, link the same `skill` folder into that agent's skills folder (Cursor: `~/.cursor/skills/build-software-factory`, Codex: `~/.codex/skills/build-software-factory`).
 
-The commands above link it for Claude Code. For another agent, link the same
-`skill` folder into that agent's own skills folder instead (Cursor:
-`~/.cursor/skills/build-software-factory`, Codex:
-`~/.codex/skills/build-software-factory`). The setup does not depend on which
-agent runs it.
-
-**2. In your repository, ask your coding agent to set it up.**
+**2. In your repository, ask the agent to set it up.**
 
 ```
 cd path/to/your-repo
-claude        # or open the repo in Cursor, Codex, or your agent of choice
 > Set up the software factory on this repo.
 ```
 
-**3. Do the five things only you can do.** Your agent does everything else
-and tells you at each step what it found and what it needs.
+**3. The steps that are yours.** The agent does the rest, and tells you the one thing it needs at each step.
 
-| You | When |
+| You | The agent |
 | --- | --- |
-| Click **Create**, then **Install**, on two GitHub App pages it opens | Phase 6: the factory's App, which is what its agents act as |
-| Paste your Anthropic API key once | It is stored as the repo secret `ANTHROPIC_API_KEY`, never in a file |
-| Answer a few questions about the product | They become the agents' standing instructions, which you can change later |
-| Merge the **bootstrap PR** | It installs the runner and workflows; setup then runs on its own in Actions |
-| Merge the **setup PR** | It shows the app running in the sandbox and every gate passing; merging switches the factory on |
+| Paste `ANTHROPIC_API_KEY` on GitHub, on the Actions secrets page | Gives you that page, then watches for the secret |
+| Press **Create**, then **Install**, on this repository only | Opens the two GitHub App pages |
+| Say if you want to merge setup's own pull requests by hand | Otherwise those merge on their own. The other pipelines wait for a person |
+| Merge a setup pull request, only if you said you would | Watches that pull request |
+| Sign in to the dashboard once, from the link at the end | Gives that link when setup is finished |
 
-**4. Open an issue.** The factory triages it, writes a spec, builds it,
-verifies it in the sandbox and opens a PR with the proof. You review and merge.
+The dashboard is [buildsoftwarefactory.com](https://buildsoftwarefactory.com). It is where you watch the factory, what it spent, and what needs you, and where you change its settings.
 
-Later, comment `/practice <anything>` on any issue or PR to add a standing
-instruction every agent follows, and `/retry` to hand back something the
-factory stopped on.
+After that, open an issue. Comment `/practice` followed by the instruction on any issue or pull request to add a standing rule, and `/retry` to hand back something the factory stopped on.
 
-## What it does
+The phases of setup are in [Setup](docs/Setup.md).
 
-| | |
+## Where to read next
+
+| If you want | Open |
 | --- | --- |
-| **Intake** | An issue from someone trusted becomes a work item. Anything else waits for a one-click accept, and its text never reaches a prompt until it does. |
-| **Pipelines** | Product work, gardening, hardening, definition changes and conflict resolution, each with its own roles, path policy and budget share. |
-| **Sandbox** | Each role works against a sandbox built to match the app: its database, sign-in and outside services stand in as stubs, each with a probe that must pass. When a role finds the sandbox lacking, the factory repairs it itself and verifies the stuck change again, with no one in the loop unless the repair asks for a new host or secret. |
-| **Gates** | Static rules, tests and coverage run on every PR and decide the merge, with a per-file ratchet so a change cannot trade one new violation for one fix. |
-| **Guardrails** | Eight language rule packs, each rule carrying the bad and good example that proves it discriminates — a rule is installed only once it has failed on the bad one and passed on the good one. |
-| **Merge queue** | GitHub's native queue where the repo qualifies, a one-at-a-time fallback everywhere else, so a human PR and a factory PR cannot each pass alone and break main together. |
-| **Self-hardening** | A scheduled review grades recent work and files what it finds as hardening work: static rules, tests and checks. Failures found in hardening runs are shown to you, never hardened again. Changing the factory's own definition is manual (`/practice`); automatic, measured definition changes are v1.1. |
-| **Dashboard** | A static page that talks to GitHub from your browser. No backend, no data anywhere but your repository. |
-
-## Enforcement depends on your GitHub plan
-
-The factory's own checks run on every plan. What changes is whether GitHub can
-be told to *require* them.
-
-| | Free personal / private | Public, or paid org | Enterprise Cloud |
-| --- | --- | --- | --- |
-| Gates, policy check, ratchet | yes | yes | yes |
-| Branch protection making them required | no | yes | yes |
-| Native merge queue | no — the factory's fallback queue | org-owned public repos | yes |
-| Bypass detection | `factory-audit` re-runs the gates on every push to main and flags anything that got past them, with an optional revert PR | as needed | as needed |
-
-On a free private repository nothing can stop a direct push to main, so the
-factory watches main instead of pretending otherwise.
-
-## What it costs, and the budget
-
-Two meters, both yours: your Anthropic API key, and your GitHub Actions
-minutes. The factory has a monthly budget in dollars (default **$35**) split
-into shares (product work 60%, gardening 25%, reviews and practices 15%). Both are set and changed from the
-dashboard's Factory page.
-
-**The factory stops before it can spend past the budget, even if that means
-stopping with money left.** Before any agent step starts, it reserves the most
-that step could cost: its gh-aw credit cap, plus one request past it (the cap
-is checked before each request, so the request that crosses it still
-finishes), for the agent and for its threat-detection check, at Anthropic's
-list prices. The step starts only if what is already spent this month, what
-running steps have reserved, and its own reservation all fit within the budget
-and its pipeline's share. When the step ends it is charged what it measured
-(the larger of its session's reported cost and its tokens at list price), and
-anything it could not measure is charged at the full reservation. When even
-the largest step of a pipeline no longer fits, that pipeline's work waits in
-the queue until next month or until you raise the budget.
-
-Measured on the first live run: a private GitHub Free repository holding a
-realistic, messy app (about 100 files: Node, React, Python, Postgres, Redis),
-seven hours, a dozen requests of every kind, default models. In dollars, as
-the budget ledger counts them:
-
-| What | Cost |
-| --- | --- |
-| Setup (four sandbox rounds) | $4.58 |
-| A product request that reached a draft PR | about $1–2 (spec on Opus 5.5 about $0.85, build on Sonnet 5.5 about $0.15, triage on Haiku 5.5 about $0.01; the rest is retries and steps the ledger charges at their reserved cost) |
-| A nightly gardening PR | about $0.10–0.15 a try |
-| A hardening PR | about $0.20–0.25 a try |
-| A scheduled review of three runs | about $0.40 |
-| The whole seven hours | $14.37, or about $9.80 without setup |
-
-Verification (the step that starts the app and records proof) never ran in
-this test, so its cost is not measured here. The dashboard's Spend page
-under-reported the month at $2.77 while the ledger said $13.18 at that moment:
-trust `refs/factory/data/budget.json`, which is what the budget enforces.
-
-**On GitHub Free, Actions minutes run out before dollars do.** The same seven
-hours billed about 1,290 Actions minutes (setup 158, the work pipelines about
-660, the gates, merge and intake checks the rest), which is two thirds of the
-2,000 a private Free repository gets in a month. That is 100 to 130 minutes for
-each draft PR, counting retries, cancelled runs and duplicates. At that rate
-the free minutes cover roughly 15 to 20 small changes a month, so the $35
-default budget is the looser limit. These figures come from a first run with
-known defects, and fixing them should lower both numbers.
-
-As a second line of defence, make the key in its own
-[Anthropic Console](https://console.anthropic.com) workspace with a monthly
-spend limit a little above the factory's budget: then Anthropic stops the
-spending too, whatever happens in the factory.
-
-**Setup runs from any coding agent, but the factory's own agents run on Claude
-Code only.** The agent on your laptop that sets the factory up is your choice.
-The agents that do the factory's work in GitHub Actions are a different thing,
-and for now they are Claude Code only. gh-aw's per-step credit
-cap, which the budget is built on, was tested live with a 2-credit cap: it
-stopped Claude Code after one request, and did not stop Cursor CLI at all
-(49 tool calls, about 29 times the cap), because Cursor's requests never
-reach gh-aw's metering proxy. A harness whose spend cannot be stopped cannot
-run under a budget, so it is not supported.
-
-Actions minutes are separate. A private repository on GitHub Free gets 2,000
-a month; public repositories get standard runners free. To estimate both for
-your repository before you start:
-
-```bash
-node $HOME/build-software-factory/skill/scripts/estimate-spend.mjs --repo owner/name   # works in PowerShell and bash
-```
-
-## Built on
-
-The factory reuses mature tools wherever one fits its constraints — free,
-nothing hosted, works on free GitHub plans, MIT-compatible —
-and writes custom code only where nothing does.
-
-[**gh-aw**](https://github.com/githubnext/gh-aw) runs the agents (sandbox,
-network firewall, threat detection, writes only through checked outputs) ·
-[**memex**](https://github.com/nicosuave/memex) reads past local sessions ·
-[**promptfoo**](https://github.com/promptfoo/promptfoo) grades runs and
-compares configurations · [**Semgrep**](https://semgrep.dev) taint rules for
-data flow · [**Playwright**](https://playwright.dev) for runtime verification ·
-each linter's own native baseline for the ratchets ·
-[**Dependabot**](https://docs.github.com/code-security/dependabot) for runner
-upgrades. The full table, with what the factory adds to each, is in
-[the architecture doc](docs/07-architecture.md).
-
-Built custom because nothing fits: mining corrections into guardrail
-candidates, the hardening pipeline, the scheduled review, the
-cross-tool weakening check, the path-policy check, the merge-queue fallback,
-the git-ref data store and the static dashboard.
-
-## How this differs from other software factories
-
-Other projects use the name — [addyosmani/factory](https://github.com/addyosmani/factory),
-claude-software-factory, agent-factory, Elastic's AI software factory. Each is
-worth reading, and the overlap is real: they all orchestrate agents around a
-repository.
-
-Four things here are not in any of them, and the combination is the reason
-this exists:
-
-1. **Corrections become rules.** The moments you told an agent it was wrong —
-   in your own past local sessions, in reverts, in review comments — are mined
-   into guardrail candidates, and the accepted ones become static rules, tests
-   or context. A correction you have made once should not be a correction you
-   make again.
-2. **A review that feeds hardening.** A scheduled review grades recent work with
-   scorers, groups the failures, and files each group as hardening work. The
-   first review runs three days after the first graded run, so you see it early.
-   Changing the factory's own definition is your call, through `/practice`.
-3. **It works on a free plan.** No hosted service, no Enterprise features
-   required: a fallback merge queue, audit-after-the-fact where branch
-   protection is unavailable, and a dashboard with no backend.
-4. **A budget it cannot overspend.** Each agent step reserves its worst case
-   before it starts, so the monthly cap is a ceiling rather than an estimate.
-
-## The docs
-
-The specification is the source of truth, and the build follows it rather than
-the other way round.
-
-| | |
-| --- | --- |
-| [01 Overview](docs/01-overview.md) | What a software factory is, and the principles this one enforces |
-| [02 Decisions](docs/02-decisions.md) | Every choice made, with what it was weighed against |
-| [03 Walkthrough](docs/03-walkthrough.md) | The whole thing in plain language, for a reader who is new to it |
-| [04 Build plan](docs/04-build-plan.md) | Milestones, acceptance criteria, fixtures |
-| [05 Setup skill](docs/05-setup-skill.md) | The seven phases that turn a repo into a factory |
-| [06 Pipelines](docs/06-pipelines.md) | Each pipeline's roles, triggers and policy |
-| [07 Architecture](docs/07-architecture.md) | Components, data layout, enforcement, what is reused |
-| [08 Dashboard](docs/08-dashboard.md) | The nine pages and what each answers |
-| [09 Schemas](docs/09-schemas.md) | Every file the factory writes, and how they are versioned |
-| [10 gh-aw spike](docs/10-spike-gh-aw.md) | What was learned by building against gh-aw |
-| [11 Acceptance v0.1](docs/11-acceptance-v0.1.md) | The first milestone's evidence |
-| [12 Acceptance v1.0](docs/12-acceptance-v1.0.md) | What is proven live, how, and what is not |
-| [13 Security review](docs/13-security-review.md) | Threats considered and how each is handled |
+| The principles, the checks, and how a change is verified | [Principles](docs/Principles.md), [Guardrails](docs/Guardrails.md), [Verification](docs/Verification.md), [The Sandbox](<docs/The Sandbox.md>) |
+| How work enters, who does it, and how it merges | [Triggers](docs/Triggers.md), [Roles](docs/Roles.md), [Pipelines](docs/Pipelines.md), [The Merge Queue](<docs/The Merge Queue.md>), [The Three Loops](<docs/The Three Loops.md>), [Self-Improvement](docs/Self-Improvement.md) |
+| How it is installed, how it runs, what it costs, and where you watch it | [Setup](docs/Setup.md), [Architecture](docs/Architecture.md), [Budget](docs/Budget.md), [The Dashboard](<docs/The Dashboard.md>), [Security](docs/Security.md) |
+| Why it is shaped this way, and the files it writes | [Decisions](docs/Decisions.md), [Schemas](docs/Schemas.md) |
 
 ## Developing
 
@@ -255,9 +184,7 @@ npm run typecheck
 npm run schema-check   # the schemas against their frozen shape
 ```
 
-`CONTRIBUTING.md` covers adding a rule pack. A new harness for the factory's own agents is only worth
-adding once a live test shows gh-aw's credit cap stops it (see
-`tests/live`).
+`CONTRIBUTING.md` covers adding a rule pack. A new harness for the factory's own agents is only worth adding once a live test shows gh-aw's credit cap stops it (see `tests/live`).
 
 ## Licence
 

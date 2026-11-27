@@ -1,6 +1,4 @@
-# Build Software Factory — Schemas & Contracts
-
-Nov 18, 2026 · @Philip
+# Schemas
 
 Every file the skill, the runner and the dashboard share is defined here; each has a JSON Schema in `/schema` and is validated on every read and write.
 
@@ -10,7 +8,7 @@ Every file the skill, the runner and the dashboard share is defined here; each h
 - **Every file carries `schema: <name>/<major>`**, for example `schema: run/1`. Readers reject a major version they don't know.
 - **IDs:** work items `wi_<ulid>`, runs `run_<ulid>`, reviews `rev_<yyyymmdd>`, candidates `cand_<ulid>`. ULIDs sort by time.
 - **Times:** ISO 8601 in UTC. **Money:** USD as a decimal number. **Durations:** seconds.
-- **Locations:** definition files in `.factory/definition/`, guardrail files in `.factory/guardrails/`, data files on `factory-data` (`refs/factory/data`), media on `factory-media` (`refs/factory/media`), live status on `refs/factory/live/<run-id>` refs (see the Architecture doc for the full tree).
+- **Locations:** definition files in `.factory/definition/`, guardrail files in `.factory/guardrails/`, data files on `factory-data` (`refs/factory/data`), media on `factory-media` (`refs/factory/media`), live status on `refs/factory/live/<run-id>` refs (see [Architecture](Architecture.md) for the full tree).
 
 ## Factory config (`factory.yaml`)
 

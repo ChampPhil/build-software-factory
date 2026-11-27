@@ -131,7 +131,7 @@ for (const [src, dest] of PLAN) {
     cpSync(file, target);
   }
 }
-// The runner upgrade path (docs/07, "Upgrades open themselves"). The pin
+// The runner upgrade path (docs/Architecture.md, "Upgrades open themselves"). The pin
 // workflow and the Dependabot entry exist only for a published release: a pin
 // has to name a commit that is on GitHub, and one that is not would fail every
 // run. skill/RUNNER_PIN holds "<owner/repo> <40-hex sha> <version>" once a

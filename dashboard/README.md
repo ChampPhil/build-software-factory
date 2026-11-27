@@ -16,7 +16,7 @@ npm test
 `out/` is plain static files, published once from this repository to Cloudflare
 Pages on one shared domain. Build command `npm ci && npm -w @bsf/dashboard run
 build` from the repository root, output directory `dashboard/out`; the full
-settings are in `docs/08-dashboard.md`. `public/_headers` carries the security
+settings are in `docs/The Dashboard.md`. `public/_headers` carries the security
 headers, including the policy that lets the page talk only to itself and
 `api.github.com`.
 
@@ -29,7 +29,7 @@ npm run e2e      # needs Playwright and Chromium; builds first with `npm run bui
 The main way in is one button, "Sign in with GitHub": the person approves the
 Software Factory app at GitHub and lands back signed in. It needs the
 sign-in function (`../worker`, a Pages Function) and a GitHub App, set up once
-by whoever runs the site (`docs/08-dashboard.md`); where that is not set up the
+by whoever runs the site (`docs/The Dashboard.md`); where that is not set up the
 button does not appear. "Use a token instead" opens GitHub's token form with
 the name, lifetime and every permission already chosen. Either way the session
 is checked against the repository before it is stored, and a missing read

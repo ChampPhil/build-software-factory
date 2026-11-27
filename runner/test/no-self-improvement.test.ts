@@ -8,7 +8,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const read = (p: string): string => readFileSync(join(root, p), "utf8");
 
 // v1.0 has no automatic changes to the factory definition. If someone adds the
-// machinery back, this fails and points at the decision (docs/02-decisions.md).
+// machinery back, this fails and points at the decision (docs/Decisions.md).
 describe("v1.0 carries no self-improvement of the factory definition", () => {
   it("has no benchmark command, source or schema", () => {
     const cli = read("runner/src/cli.ts");

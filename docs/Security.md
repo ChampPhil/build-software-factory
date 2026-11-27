@@ -1,6 +1,34 @@
-# Build Software Factory — Security Review
+# Security
 
-Nov 20, 2026 · Claude
+The factory enforces its rules with its own gates, and uses GitHub's branch protection on top wherever the user's plan allows it.
+
+1. **Trust at intake.** Only events from trusted people start agent work: authors whose association is owner, member or collaborator with write access. Trust belongs to people, never integrations: issues created by an integration's bot account (Linear, Sentry) wait for a one-click accept like any outside issue. Anything untrusted waits until a trusted person adds the `factory:accept` label, and comments from untrusted authors are stripped from prompts. Untrusted events never reach a job that holds secrets.
+2. **Policy from main.** On a PR, GitHub runs the workflow files from the PR itself, so a PR (a fork's above all) could rewrite `factory-gates.yml` to always pass. The `factory/policy` check closes this: it runs on `pull_request_target`, which always uses main's copy of the workflow, loads `policy.yaml` from main, and fails any PR that touches workflow or definition files until a trusted human approves. It is a required check. GitHub's own fix, required workflows through rulesets, is only on Enterprise Cloud, so the factory doesn't rely on it. Its rules use Palantir policy-bot's YAML vocabulary, so teams that know policy-bot can read them; policy-bot itself isn't used because it needs a hosted server.
+3. **Path policy per pipeline.** Product work and gardening may change code and tests; hardening may also change guardrail paths; only a PR approved by a trusted human may change `.factory/definition/`. Any pipeline may lower baseline counts and raise the coverage floor. A factory PR may modify or delete existing test files only if its spec declared them.
+4. **Weakening check.** Removing or loosening a rule, raising a baseline, lowering the coverage floor or adding a skip without a reason fails the gate unless a trusted human approves.
+5. **The App can't touch workflows, and the agent can't write to GitHub.** No `workflows` permission, so gate files can only change through a human's own push; each job's token is down-scoped, and agents write only through gh-aw safe outputs after threat detection.
+6. **The factory merges only through a queue.** GitHub's native merge queue where the repo qualifies, the factory's fallback queue elsewhere; it is the only path factory PRs take into main, and it merges only after the gates pass on the final commit.
+7. **Branch protection where available.** On public repos and paid plans, `factory-sync` adds the factory's checks as required, requires branches to be up to date with main before merging, and blocks direct pushes to main. It only adds: existing rules, required reviews and required checks are kept. "Up to date before merging" means a human PR is re-checked against the latest main too, so a human PR and a factory PR can't each pass alone and break main together.
+8. **Human PRs keep their normal flow.** They run the deterministic gates (static rules, tests, coverage) and merge however the team already merges, through those checks. Agent runtime verification runs on a human PR only when someone adds `factory:verify`. Where the repo already has a CI test check that runs on the factory's branches, Gate 2 reads its result instead of re-running the tests; if that result hasn't arrived within 15 minutes, the gate runs the tests itself.
+9. **Audit where it isn't.** On free private repos, `factory-audit` re-runs the gates on every push to main and flags any bypass on the dashboard, with an optional revert PR.
+10. **Fork PRs.** PRs from forks run only the gates that need no secrets; agent work never starts from a fork.
+11. **A budget that cannot be passed.** Every agent step reserves its worst case before it starts and is charged what it measured afterwards; gardening and review stay within their shares and product work may use the rest, never past the total ([Budget](Budget.md)).
+
+## What the GitHub plan changes
+
+The factory's own checks run on every plan. What changes is whether GitHub can be told to require them.
+
+| | Free personal, private | Public, or a paid organization | Enterprise Cloud |
+| --- | --- | --- | --- |
+| Gates, the policy check, the ratchet | yes | yes | yes |
+| Branch protection making them required | no | yes | yes |
+| Native merge queue | no, so the factory's own queue | organization-owned public repositories | yes |
+| Bypass detection | `factory-audit` re-runs the gates on every push to main and flags anything that got past them, with an optional revert pull request | as needed | as needed |
+
+On a free private repository nothing can stop a direct push to main, so the factory watches main.
+
+
+## Review
 
 The release checklist's security review, item by item. Each claim below was
 checked against the code rather than recalled, and each says what was looked

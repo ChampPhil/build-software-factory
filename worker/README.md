@@ -23,7 +23,7 @@ ids, no database, no request bodies in logs.
 Three values in the Pages project (Settings, Variables and secrets), then
 redeploy. The registration link for the GitHub App is printed by
 `cd dashboard && npx tsx scripts/app-link.ts https://your-address`; the full
-steps are in `docs/08-dashboard.md`.
+steps are in `docs/The Dashboard.md`.
 
 | Name | Kind |
 | --- | --- |
