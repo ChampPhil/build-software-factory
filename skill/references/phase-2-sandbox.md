@@ -108,6 +108,11 @@ with `gh workflow run factory-setup.yml`, only after both are true.
    command until a person could use the app. Migrations are applied. The
    seed is loaded.
 
+   The start command binds to `127.0.0.1`, and the address the check uses is
+   that same host. A directory change sits in a subshell, `(cd dir && cmd)`,
+   so the server still starts at the repository root. A type-check is its
+   own command, not the start of the server command.
+
    The image boots on a virtual machine the GitHub Actions job starts. The
    factory's own credentials stay outside that machine. The same image can
    boot on a hypervisor service when someone wants that boundary. The

@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { intentBlock, mergeProductIntent, INTENT_HEADING } from "../src/lib/product-intent.js";
 import { scrubPlaceholders, looksLikeSecret, NOT_A_KEY } from "../src/lib/placeholders.js";
+import { validate } from "../src/lib/schema.js";
 
 const PERSON = [
   INTENT_HEADING,
@@ -63,5 +64,39 @@ describe("secret-shaped placeholders in the sandbox manifest", () => {
     expect(out.text).toContain(NOT_A_KEY);
     expect(out.text).not.toContain("AKIA");
     expect(out.text).toContain('"MODE": "test"');
+  });
+
+  it("keeps a long env name and a long secret name, and still scrubs the value", () => {
+    const envName = "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY";
+    const secretName = `A${"B".repeat(33)}`;
+    const token = "a".repeat(40);
+    expect(envName.length).toBeGreaterThanOrEqual(32);
+    expect(secretName.length).toBeGreaterThanOrEqual(32);
+    const manifest = {
+      schema: "sandbox/1",
+      tier: "static",
+      tier_reason: null,
+      commands: { install: null, build: null, run: null, test: null },
+      app_url: null,
+      env: [
+        { name: envName, kind: "inert", value: token, why: "the publishable key the page reads" },
+        { name: "CLERK_SECRET_KEY", kind: "test_mode", secret: secretName, why: "the test-mode secret's name" },
+      ],
+      services: [],
+      egress: [],
+      stubs: [],
+      dropped: [],
+      capabilities: { exercised: ["x"], not_exercised: [] },
+      episode: [{ attempt: 1, tried: "t", observed: "o", changed: null }],
+      frozen_at: "2026-11-20T00:00:00Z",
+    };
+    const out = scrubPlaceholders(JSON.stringify(manifest));
+    const parsed = JSON.parse(out.text) as { env: { name: string; value?: string; secret?: string }[] };
+    expect(out.replaced).toBe(1);
+    expect(parsed.env[0]?.name).toBe(envName);
+    expect(parsed.env[0]?.value).toBe(NOT_A_KEY);
+    expect(parsed.env[1]?.secret).toBe(secretName);
+    const checked = validate("sandbox", parsed);
+    if (!checked.ok) throw new Error(JSON.stringify(checked.errors, null, 2));
   });
 });

@@ -266,7 +266,9 @@ install guardrails:
 1. Read the journey list. Do not drop or shrink a journey to make the boot pass.
 2. Write one launch command that reaches a usable app from a private data
    directory, including migrations, the seed, a doctor check, and cleanup.
-   `commands.seed` loads that private data on every boot.
+   `commands.seed` loads that private data on every boot. Bind the server
+   to `127.0.0.1` and set `app_url` to that same host. Keep every `cd` in
+   a subshell, as the launch rules below say.
 3. Under each journey, add `How the sandbox tests it:` the seed user, the
    page, the click, and the side effect.
 4. Boot and click every listed journey with no scratch. A missing seed
@@ -468,7 +470,13 @@ that on the runner.
 Set `tier` to what you believe the trial will reach: `renders` if the app will
 start and show its main screen, `build_and_test` if it will build and test but
 not start, `static` if neither. Set `app_url` to the page a person would land
-on. Fill `capabilities` honestly: what verification here can exercise, and
+on. Bind the server on `127.0.0.1` and use that same host and port in
+`app_url` (`http://127.0.0.1:<port>/...`). On the runner, `localhost` is a
+different socket from `127.0.0.1`, and a check of one does not reach a server
+bound to the other. Any `cd` in `commands.build` or `commands.run` sits in a
+subshell, `(cd dir && cmd)`, so the process that stays up still starts at the
+repository root. A type-check is its own command. It is not the start of the
+server command. Fill `capabilities` honestly: what verification here can exercise, and
 under `not_exercised`, what it cannot and why. Write each thing you tried in
 `episode`.
 

@@ -3,6 +3,7 @@ import { describe, it, expect } from "vitest";
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, existsSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
+import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
 import { assertValid, validate } from "../src/lib/schema.js";
@@ -21,6 +22,16 @@ function repoRoot(): string {
     dir = dirname(dir);
   }
   throw new Error("repo root not found");
+}
+
+// Ajv is CommonJS. createRequire is how an ESM test loads it without a
+// bundler. The validator is built from the packed schema, not the source one.
+const require = createRequire(import.meta.url);
+
+/** The slice of Ajv this test calls. The full class is the CJS export. */
+interface AjvLike {
+  addSchema(schema: object, key: string): void;
+  getSchema(key: string): ((data: unknown) => boolean) & { errors?: unknown } | undefined;
 }
 
 const ROOT = repoRoot();
@@ -45,6 +56,30 @@ describe("default factory.yaml", () => {
     const res = validate("factory", doc);
     if (!res.ok) throw new Error(JSON.stringify(res.errors, null, 2));
     expect(res.ok).toBe(true);
+  });
+
+  it("validates against the schema packed in the runner the install copies", () => {
+    // Source schema and the tarball can drift: the unit test above reads
+    // schema/factory.json, and `bsf models` on a user's machine reads the
+    // copy inside skill/runner/runner.tgz.
+    const dir = mkdtempSync(join(tmpdir(), "bsf-packed-schema-"));
+    execFileSync("tar", ["-xzf", join(ROOT, "skill/runner/runner.tgz"), "-C", dir, "schema"]);
+    const ajvMod = require("ajv/dist/2020.js") as { default?: new (opts: object) => AjvLike } | (new (opts: object) => AjvLike);
+    const Ajv2020 = typeof ajvMod === "function" ? ajvMod : ajvMod.default;
+    if (Ajv2020 === undefined) throw new Error("ajv did not export a constructor");
+    const formatsMod = require("ajv-formats") as { default?: (ajv: AjvLike) => void } | ((ajv: AjvLike) => void);
+    const addFormats = typeof formatsMod === "function" ? formatsMod : formatsMod.default;
+    if (addFormats === undefined) throw new Error("ajv-formats did not export a function");
+    const ajv = new Ajv2020({ allErrors: true, strict: true });
+    addFormats(ajv);
+    const schemaDir = join(dir, "schema");
+    for (const file of readdirSync(schemaDir)) {
+      if (!file.endsWith(".json") || file === "SURFACE.json") continue;
+      ajv.addSchema(JSON.parse(readFileSync(join(schemaDir, file), "utf8")) as object, file);
+    }
+    const check = ajv.getSchema("factory.json");
+    if (check === undefined) throw new Error("packed schema/factory.json did not register");
+    if (!check(doc)) throw new Error(JSON.stringify(check.errors, null, 2));
   });
 
   it("names a model for every role a factory configures", () => {
