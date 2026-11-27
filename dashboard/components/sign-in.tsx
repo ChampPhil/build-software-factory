@@ -243,8 +243,8 @@ export function SignIn({
         <div className="grow">
           <h1>Connect your repository</h1>
           <p>
-            This page talks to GitHub straight from your browser. Nothing is stored on a server, and the sign-in is
-            kept for this tab only unless you ask otherwise.
+            This page talks to GitHub straight from your browser. Nothing is stored on a server. The sign-in is kept
+            in every tab until you quit the browser, unless you ask to remember it on this device.
           </p>
 
           {notice !== null && <p className="note">{notice}</p>}

@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
-  readSession, clearSession, writeSession, connectRepo, selectRepo, repoFromAddress, demoFromAddress, startDemo, validRepo, type Session,
+  readSession, reloadSession, clearSession, writeSession, connectRepo, selectRepo, repoFromAddress, demoFromAddress, startDemo, validRepo, type Session,
 } from "@/lib/session";
 import { repoBarLabel } from "@/lib/repo-label";
 import { isDemo } from "@/lib/demo";
@@ -105,6 +105,18 @@ export function Shell({ children }: { children: ReactNode }) {
     return () => {
       live = false;
     };
+  }, []);
+
+  // Another tab in this sitting can sign in or sign out. The storage event
+  // fires in the other tabs, not in the one that wrote, so this tab follows
+  // the shared copy instead of keeping a stale one.
+  useEffect(() => {
+    const onStore = (e: StorageEvent): void => {
+      if (e.key === null || e.key === THEME_KEY || !e.key.startsWith("bsf.")) return;
+      setSession(reloadSession());
+    };
+    window.addEventListener("storage", onStore);
+    return () => window.removeEventListener("storage", onStore);
   }, []);
 
   // Keep a GitHub sign-in alive while the tab stays open: renew just before it expires,

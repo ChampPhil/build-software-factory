@@ -3,10 +3,22 @@
 /**
  * Where the user's token lives.
  *
- * Default is `sessionStorage`, cleared when the tab closes, because a token
- * with write access to someone's repo should not outlive the sitting unless
- * they ask for it. `localStorage` only on an explicit "remember on this
- * device".
+ * The token stays in this browser. It is never put in a cookie, because a
+ * cookie is sent to this site's host on every page load, and the host is not
+ * supposed to see a GitHub token.
+ *
+ * Every tab of one browser sitting shares one copy, in localStorage. A
+ * sitting is one run of the browser: it covers every tab and window, and it
+ * ends when the browser quits. A cookie with no expiry marks that the sitting
+ * is still open. That cookie's value is the flag "1", never the token. When
+ * the browser quits, the cookie goes, and the next visit throws the shared
+ * copy away.
+ *
+ * "Remember on this device" is the only case that outlives the sitting.
+ *
+ * A sign-in from an older version of this page lived in sessionStorage, which
+ * belongs to one tab. The first read of that copy moves it into the shared
+ * store, so the next tab does not have to ask again.
  */
 
 import { DEMO_REPO, DEMO_TOKEN } from "./demo";
@@ -17,6 +29,17 @@ const REPOS_KEY = "bsf.repos";
 const REMEMBER_KEY = "bsf.remember";
 const REFRESH_KEY = "bsf.refresh";
 const EXPIRES_KEY = "bsf.expires";
+
+/** The keys that make up a sign-in. The theme, and the trip to GitHub and back, use other names. */
+const SESSION_KEYS = [TOKEN_KEY, REPO_KEY, REPOS_KEY, REMEMBER_KEY, REFRESH_KEY, EXPIRES_KEY] as const;
+
+/**
+ * Marks that this browser sitting is still open.
+ *
+ * No expiry date: the browser deletes it when the sitting ends, and every
+ * tab of that sitting can see it. The value is a flag, never a token.
+ */
+const SITTING_COOKIE = "bsf.sitting";
 
 export interface Session {
   readonly token: string;
@@ -39,13 +62,36 @@ export interface Session {
   readonly expiresAt?: number;
 }
 
-function store(remember: boolean): Storage | null {
+/**
+ * The store every tab of this site can read.
+ *
+ * localStorage is per origin, so a second tab sees the same copy. It also
+ * survives quitting the browser, which is why a sign-in that was not
+ * remembered still needs the sitting cookie: the cookie is what ends it.
+ */
+function sharedStore(): Storage | null {
   if (typeof window === "undefined") return null;
   try {
-    return remember ? window.localStorage : window.sessionStorage;
+    return window.localStorage;
   } catch {
-    // Storage can be unavailable (private mode, blocked cookies). The app
-    // still works for the length of the page.
+    // Storage can be unavailable (private mode, blocked storage). The app
+    // still works for the length of this tab, from the in-memory copy.
+    return null;
+  }
+}
+
+/**
+ * The per-tab store.
+ *
+ * Older versions kept the sign-in here, which is why a new tab asked again.
+ * The trip to GitHub and back still uses it, under different keys, because
+ * that trip returns to the same tab.
+ */
+function tabStore(): Storage | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return window.sessionStorage;
+  } catch {
     return null;
   }
 }
@@ -103,69 +149,175 @@ function parseRepos(raw: string | null): readonly string[] {
   }
 }
 
+/**
+ * Read a sign-in out of one store.
+ *
+ * s: the store to read. Null when that store does not exist.
+ * Returns null when the token or the repository is missing, which is how an
+ * empty store and a half-written one both look.
+ */
+function readFrom(s: Storage | null): Session | null {
+  if (s === null) return null;
+  const token = s.getItem(TOKEN_KEY);
+  const repo = s.getItem(REPO_KEY);
+  if (token === null || token === "" || repo === null || repo === "") return null;
+  const refreshToken = s.getItem(REFRESH_KEY);
+  const expires = Number(s.getItem(EXPIRES_KEY));
+  // A session saved before the list existed still has one repository: this one.
+  const repos = connectRepo(parseRepos(s.getItem(REPOS_KEY)), repo);
+  return {
+    token,
+    repo,
+    repos,
+    remembered: s.getItem(REMEMBER_KEY) === "true",
+    ...(refreshToken !== null && refreshToken !== "" ? { refreshToken } : {}),
+    ...(Number.isFinite(expires) && expires > 0 ? { expiresAt: expires } : {}),
+  };
+}
+
+/** Remove every sign-in key from one store. Leaves the theme and the GitHub trip alone. */
+function scrub(s: Storage | null): void {
+  if (s === null) return;
+  for (const key of SESSION_KEYS) s.removeItem(key);
+}
+
+/**
+ * Whether this browser sitting is still open.
+ *
+ * True when the sitting cookie is present. Also true when there is no
+ * document, which is the test runner: there the store itself is the source
+ * of truth, and a real browser always has a document.
+ */
+function sittingOpen(): boolean {
+  const doc = globalThis.document;
+  if (doc === undefined) return true;
+  return doc.cookie.split(";").some((part) => {
+    const item = part.trim();
+    return item.startsWith(`${SITTING_COOKIE}=`) && item.length > SITTING_COOKIE.length + 1;
+  });
+}
+
+/**
+ * Mark this browser sitting as open.
+ *
+ * A session cookie has no Max-Age and no Expires, so the browser deletes it
+ * when the sitting ends and shares it with every tab until then. Secure only
+ * on https, so a local http preview can still set it.
+ */
+function markSitting(): void {
+  const doc = globalThis.document;
+  if (doc === undefined || typeof window === "undefined") return;
+  const secure = window.location?.protocol === "https:" ? "; Secure" : "";
+  doc.cookie = `${SITTING_COOKIE}=1; Path=/; SameSite=Lax${secure}`;
+}
+
+/** Delete the sitting marker. The shared copy is cleared by the caller. */
+function endSitting(): void {
+  const doc = globalThis.document;
+  if (doc === undefined) return;
+  doc.cookie = `${SITTING_COOKIE}=; Path=/; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax`;
+}
+
+/**
+ * The sign-in this tab should show.
+ *
+ * Returns the copy this tab just wrote, when it has one. Otherwise the shared
+ * copy. A shared copy that was not remembered is dropped when the sitting
+ * cookie is gone, which is the visit after the browser quit.
+ */
 export function readSession(): Session | null {
   if (memory !== null) return memory;
-  if (typeof window === "undefined") return null;
-  for (const remember of [false, true]) {
-    const s = store(remember);
-    if (s === null) continue;
-    const token = s.getItem(TOKEN_KEY);
-    const repo = s.getItem(REPO_KEY);
-    if (token !== null && token !== "" && repo !== null && repo !== "") {
-      const refreshToken = s.getItem(REFRESH_KEY);
-      const expires = Number(s.getItem(EXPIRES_KEY));
-      // A session saved before the list existed still has one repository: this one.
-      const repos = connectRepo(parseRepos(s.getItem(REPOS_KEY)), repo);
-      return {
-        token,
-        repo,
-        repos,
-        remembered: remember,
-        ...(refreshToken !== null && refreshToken !== "" ? { refreshToken } : {}),
-        ...(Number.isFinite(expires) && expires > 0 ? { expiresAt: expires } : {}),
-      };
-    }
+  return readStored();
+}
+
+/**
+ * Read the sign-in from storage again, dropping this tab's cached copy first.
+ *
+ * Another tab writes the shared copy. This tab would keep showing its cached
+ * copy until that cache was dropped, so a storage event comes through here.
+ *
+ * Returns the session now in storage, or null when there is none.
+ */
+export function reloadSession(): Session | null {
+  memory = null;
+  return readStored();
+}
+
+/**
+ * The sign-in a token renewal should start from.
+ *
+ * Prefers the shared copy, so two tabs do not each spend a refresh token
+ * that GitHub only honors once. When that copy is gone in a real browser,
+ * returns null: a sign-out in another tab, or a sitting that ended, must not
+ * be undone by writing this tab's old token back. The fallback is used when
+ * there is no document (the test runner), or when storage itself is blocked
+ * and this tab is holding the only copy.
+ *
+ * fallback: the sign-in this tab was already holding.
+ */
+export function sessionToRenew(fallback: Session): Session | null {
+  const cached = memory;
+  const stored = reloadSession();
+  if (stored !== null) return stored;
+  if (globalThis.document === undefined) return fallback;
+  if (sharedStore() === null) {
+    memory = cached;
+    return cached ?? fallback;
   }
   return null;
 }
 
+/**
+ * The shared copy, or a per-tab copy left by an older version of this page.
+ *
+ * The older copy is written into the shared store on the way out, so the
+ * next tab does not have to ask again.
+ */
+function readStored(): Session | null {
+  const shared = readFrom(sharedStore());
+  if (shared !== null) {
+    if (!shared.remembered && !sittingOpen()) {
+      clearSession();
+      return null;
+    }
+    return shared;
+  }
+  const legacy = readFrom(tabStore());
+  if (legacy === null) return null;
+  return writeSession(legacy);
+}
+
 export function writeSession(session: Session): Session {
-  const s = store(session.remembered);
+  const s = sharedStore();
   // Keep repositories already stored when the caller did not bring the list,
   // then make sure the active one is on it. The first write starts the list.
   const stored = parseRepos(s?.getItem(REPOS_KEY) ?? null);
   const repos = connectRepo(session.repos ?? stored, session.repo);
   const saved: Session = { ...session, repos };
   memory = saved;
-  if (s === null) return saved;
-  s.setItem(TOKEN_KEY, session.token);
-  s.setItem(REPO_KEY, session.repo);
-  s.setItem(REPOS_KEY, JSON.stringify(repos));
-  s.setItem(REMEMBER_KEY, String(session.remembered));
-  if (session.refreshToken !== undefined) s.setItem(REFRESH_KEY, session.refreshToken);
-  else s.removeItem(REFRESH_KEY);
-  if (session.expiresAt !== undefined) s.setItem(EXPIRES_KEY, String(session.expiresAt));
-  else s.removeItem(EXPIRES_KEY);
-  // Never leave a copy in the other store.
-  const other = store(!session.remembered);
-  other?.removeItem(TOKEN_KEY);
-  other?.removeItem(REFRESH_KEY);
-  other?.removeItem(EXPIRES_KEY);
-  other?.removeItem(REPOS_KEY);
+  if (s !== null) {
+    s.setItem(TOKEN_KEY, session.token);
+    s.setItem(REPO_KEY, session.repo);
+    s.setItem(REPOS_KEY, JSON.stringify(repos));
+    s.setItem(REMEMBER_KEY, String(session.remembered));
+    if (session.refreshToken !== undefined) s.setItem(REFRESH_KEY, session.refreshToken);
+    else s.removeItem(REFRESH_KEY);
+    if (session.expiresAt !== undefined) s.setItem(EXPIRES_KEY, String(session.expiresAt));
+    else s.removeItem(EXPIRES_KEY);
+  }
+  // A per-tab copy would not be visible to any other tab, and a later read
+  // could bring it back after a sign-out. Only the session keys go; the
+  // GitHub trip keeps its own keys until that same tab comes back.
+  scrub(tabStore());
+  if (!session.remembered) markSitting();
   return saved;
 }
 
 export function clearSession(): void {
   memory = null;
-  for (const remember of [false, true]) {
-    const s = store(remember);
-    s?.removeItem(TOKEN_KEY);
-    s?.removeItem(REPO_KEY);
-    s?.removeItem(REPOS_KEY);
-    s?.removeItem(REMEMBER_KEY);
-    s?.removeItem(REFRESH_KEY);
-    s?.removeItem(EXPIRES_KEY);
-  }
+  scrub(sharedStore());
+  scrub(tabStore());
+  endSitting();
 }
 
 /** The repository a link names, as `?repo=owner/name`, or null when there is none or it is malformed. */
@@ -180,8 +332,9 @@ export function demoFromAddress(search: string): boolean {
 }
 
 /**
- * Start the demo. It is stored for this tab only, with a sentinel in place of a
- * token, so a reload stays in the demo and nothing real is ever kept.
+ * Start the demo. It is stored for this browser sitting, with a sentinel in
+ * place of a token, so a reload or another tab stays in the demo and nothing
+ * real is ever kept.
  */
 export function startDemo(): Session {
   const session: Session = { token: DEMO_TOKEN, repo: DEMO_REPO, remembered: false };

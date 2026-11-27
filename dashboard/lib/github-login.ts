@@ -14,7 +14,7 @@
  * browser, so a code that leaks cannot be redeemed by anyone else.
  */
 
-import { validRepo, writeSession, type Session } from "./session";
+import { sessionToRenew, validRepo, writeSession, type Session } from "./session";
 
 const AUTH = "/api/auth";
 const AUTHORIZE_PREFIX = "https://github.com/login/oauth/authorize?";
@@ -256,37 +256,98 @@ export type RefreshResult =
 let inflight: Promise<RefreshResult> | null = null;
 
 /**
- * Renew the token. GitHub rotates the refresh token, so two renewals at once
- * would spend it twice and the second would fail; callers share one.
+ * A lock shared by every tab of this page.
+ *
+ * Two tabs can both notice that the token is about to expire. GitHub rotates
+ * the refresh token, so the second renewal would fail and sign the person
+ * out. The lock lets one tab renew, and the next tab reads what that one stored.
+ */
+interface TabLocks {
+  request<T>(name: string, callback: () => Promise<T>): Promise<T>;
+}
+
+/** The browser's cross-tab lock, or null in the test runner and older browsers. */
+function tabLocks(): TabLocks | null {
+  const locks = (globalThis as { navigator?: { locks?: TabLocks } }).navigator?.locks;
+  if (locks === undefined || typeof locks.request !== "function") return null;
+  return locks;
+}
+
+/**
+ * Renew the token.
+ *
+ * GitHub rotates the refresh token, so two renewals at once would spend it
+ * twice and the second would fail. Callers in this tab share one promise.
+ * Callers in other tabs share the browser lock, and a tab that finds a
+ * still-fresh stored sign-in does not call GitHub at all.
+ *
+ * session: the sign-in this tab was holding. The shared copy wins when there is one.
+ * f: how to call the site's refresh function. Tests pass their own.
  */
 export function refreshSession(session: Session, f: Fetch = defaultFetch): Promise<RefreshResult> {
   if (session.refreshToken === undefined) return Promise.resolve({ ok: false, reason: "ended" });
   if (inflight !== null) return inflight;
-  const refreshToken = session.refreshToken;
-  const run = async (): Promise<RefreshResult> => {
-    try {
-      const res = await f(`${AUTH}/refresh`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ refresh_token: refreshToken }),
-      });
-      if (res.status === 400 || res.status === 403) return { ok: false, reason: "ended" };
-      if (!res.ok) return { ok: false, reason: "offline" };
-      const next = sessionFrom((await res.json()) as TokenFields, session.repo, session.remembered, Date.now());
-      if (next === null) return { ok: false, reason: "offline" };
-      // The renewed token keeps the repositories already connected.
-      // Omit `repos` when this session has none, so the stored list is kept.
-      const kept = session.repos === undefined ? next : { ...next, repos: session.repos };
-      return { ok: true, session: writeSession(kept) };
-    } catch {
-      return { ok: false, reason: "offline" };
-    }
-  };
-  const promise = run();
+  const promise = refreshAcrossTabs(session, f);
   inflight = promise;
   // Cleared once it settles, so the next renewal starts fresh.
   void promise.then(() => {
     if (inflight === promise) inflight = null;
   });
   return promise;
+}
+
+/** One renewal, after any other tab holding the lock has finished. */
+async function refreshAcrossTabs(session: Session, f: Fetch): Promise<RefreshResult> {
+  const locks = tabLocks();
+  if (locks === null) return refreshOnce(session, f);
+  try {
+    const result = await locks.request("bsf-session-refresh", () => refreshOnce(session, f));
+    return result ?? { ok: false, reason: "offline" };
+  } catch {
+    return { ok: false, reason: "offline" };
+  }
+}
+
+/**
+ * Renew once, from the shared copy if another tab already wrote one.
+ *
+ * session: the sign-in to fall back to when nothing shared is stored.
+ * f: how to call the site's refresh function.
+ */
+async function refreshOnce(session: Session, f: Fetch): Promise<RefreshResult> {
+  const current = sessionToRenew(session);
+  if (current === null) return { ok: false, reason: "ended" };
+  // A pasted token cannot be renewed. A different sign-in another tab stored
+  // (one that simply has no refresh token) is still a sign-in, so keep it.
+  if (current.refreshToken === undefined) {
+    if (current.token !== session.token) return { ok: true, session: current };
+    return { ok: false, reason: "ended" };
+  }
+  if (!needsRefresh(current)) return { ok: true, session: current };
+  const refreshToken = current.refreshToken;
+  try {
+    const res = await f(`${AUTH}/refresh`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ refresh_token: refreshToken }),
+    });
+    if (res.status === 400 || res.status === 403) return { ok: false, reason: "ended" };
+    if (!res.ok) return { ok: false, reason: "offline" };
+    // Another tab may have signed out, or finished its own renewal, while this
+    // request was in flight. A sign-out stays a sign-out. A fresher stored
+    // token wins, so this response cannot overwrite it.
+    const raced = sessionToRenew(current);
+    if (raced === null) return { ok: false, reason: "ended" };
+    if (raced.refreshToken !== undefined && raced.refreshToken !== refreshToken && !needsRefresh(raced)) {
+      return { ok: true, session: raced };
+    }
+    const next = sessionFrom((await res.json()) as TokenFields, current.repo, current.remembered, Date.now());
+    if (next === null) return { ok: false, reason: "offline" };
+    // The renewed token keeps the repositories already connected.
+    // Omit `repos` when this session has none, so the stored list is kept.
+    const kept = current.repos === undefined ? next : { ...next, repos: current.repos };
+    return { ok: true, session: writeSession(kept) };
+  } catch {
+    return { ok: false, reason: "offline" };
+  }
 }

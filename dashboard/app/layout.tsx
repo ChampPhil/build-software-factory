@@ -19,8 +19,9 @@ import { Shell } from "@/components/shell";
  */
 
 export const metadata = {
-  title: "Software Factory",
+  title: "Build Your Software Factory",
   description: "Everything the factory is doing, in one place, and everything it needs from you.",
+  icons: { icon: "/icon.svg" },
 };
 
 // The theme a person chose, applied before the first paint so a dark-mode

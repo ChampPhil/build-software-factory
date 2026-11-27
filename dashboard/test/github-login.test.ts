@@ -246,11 +246,20 @@ describe("renewing", () => {
     expect(a).toEqual(b);
   });
 
-  it("can renew again after the first settles", async () => {
+  it("does not spend the refresh token again while the stored sign-in is still fresh", async () => {
     fakeBrowser();
     const f = vi.fn(async () => jsonRes({ access_token: "ghu_new", expires_in: 28800, refresh_token: "ghr_new" }));
     await refreshSession(session, f);
     await refreshSession(session, f);
+    expect(f).toHaveBeenCalledTimes(1);
+  });
+
+  it("renews again once the stored sign-in is due", async () => {
+    const { win } = fakeBrowser();
+    const f = vi.fn(async () => jsonRes({ access_token: "ghu_new", expires_in: 28800, refresh_token: "ghr_new" }));
+    await refreshSession(session, f);
+    win.localStorage.setItem("bsf.expires", "1");
+    await refreshSession({ ...session, refreshToken: "ghr_new", expiresAt: 1 }, f);
     expect(f).toHaveBeenCalledTimes(2);
   });
 
