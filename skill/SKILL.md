@@ -425,6 +425,12 @@ agent session. List what you found. Let them exclude any.
 
 Every do-not, must, never, and always, and every mined correction, becomes
 a check later. A candidate left pending means setup is not finished.
+Run `bsf mine-corrections`, then `bsf assess check`, before the bootstrap
+pull request. The survey uses the headings in `references/phase-1-assess.md`
+and pastes the miner's summary sentence. Exit 2 from mining means label the
+pending findings and run it again with `--classes`. A fix-commit subject is
+not a rule until a label says so. `bsf assess fundamentals` refuses a
+`fundamentals.md` that copies the README or `AGENTS.md`.
 
 ## 2 — Private copy of the app
 

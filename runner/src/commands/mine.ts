@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { candidateId } from "../lib/ids.js";
-import type { Harness, Candidate, CandidateSource } from "../lib/types.js";
+import type { Harness, Candidate, CandidateSource, CandidateSourceKind } from "../lib/types.js";
 
 const exec = promisify(execFile);
 
@@ -42,6 +42,11 @@ export interface Correction {
   /** How correction-like this turn is, 0 to 1. */
   readonly confidence: number;
   readonly signals: readonly string[];
+  /**
+   * Set when a classifier already chose how to enforce this correction.
+   * Absent means the ordered phrase check in `proposedFix` decides.
+   */
+  readonly enforcement?: "api_change" | "static_rule" | "verification" | "context";
 }
 
 /* ------------------------------------------------------------- the classifier */
@@ -515,11 +520,12 @@ export function clusterCorrections(corrections: readonly Correction[]): readonly
 /* --------------------------------------------------------- guardrail candidates */
 
 /**
- * What mining produces: always `agent_chat` sources and always `pending`.
+ * What mining produces: a pending candidate whose source is whatever the
+ * finder actually read (a chat, a revert, a review, a bug, a written rule).
  * The shared file's wider type is `Candidate` in lib/types.
  */
 export interface MinedCandidate extends Candidate {
-  readonly sources: readonly (CandidateSource & { readonly kind: "agent_chat" })[];
+  readonly sources: readonly CandidateSource[];
   readonly status: "pending";
 }
 
@@ -566,6 +572,21 @@ export function proposedFix(text: string): Candidate["proposed_fix"] {
   return "context";
 }
 
+/**
+ * Which candidate source a mined record is.
+ *
+ * Chat turns stay agent chats. A revert, a written rule, a review, a bug,
+ * or a fix that the classifier admitted keeps the source it actually came
+ * from, so a reviewer can open that commit or comment.
+ *
+ * source: the correction's source name, such as "revert" or "cursor".
+ */
+export function sourceKind(source: string): CandidateSourceKind {
+  if (source === "revert" || source === "fix_commit" || source === "prose_rule" || source === "bug") return source;
+  if (source === "review") return "review_comment";
+  return "agent_chat";
+}
+
 /** Turn clustered corrections into candidates the hardener can act on. */
 export function candidatesFrom(
   clusters: readonly CorrectionCluster[],
@@ -574,6 +595,8 @@ export function candidatesFrom(
   return clusters.map((cl, i) => {
     const times = cl.corrections.map((c) => c.at).filter((a): a is string => a !== null).sort();
     const quotes = cl.corrections.slice(0, 5);
+    const enforced = cl.corrections.map((c) => c.enforcement).filter((e) => e !== undefined);
+    const sameEnforcement = enforced.length === cl.corrections.length && enforced.every((e) => e === enforced[0]);
     return {
       id: candidateId((Date.parse(now) || Date.now()) + i),
       problem_class: cl.theme,
@@ -583,7 +606,7 @@ export function candidatesFrom(
       sources: quotes.map((c) => {
         const harness = HARNESS_BY_MEMEX_SOURCE[c.source];
         return {
-          kind: "agent_chat" as const,
+          kind: sourceKind(c.source),
           ...(harness === undefined ? {} : { harness }),
           session: c.session,
           // Already redacted when the correction was kept, not here.
@@ -591,7 +614,7 @@ export function candidatesFrom(
           ...(c.at === null ? {} : { at: c.at }),
         };
       }),
-      proposed_fix: proposedFix(cl.corrections.map((c) => c.text).join(" ")),
+      proposed_fix: sameEnforcement ? enforced[0]! : proposedFix(cl.corrections.map((c) => c.text).join(" ")),
       // The cluster's own text decides, not one member's: a theme is what the
       // corrections have in common.
       target: correctionTarget(cl.corrections.map((c) => c.text).join(" ")).target,

@@ -62,6 +62,9 @@ import { gardenScan, gardenFile, hardenContext, reviewCollect, reviewWrite } fro
 import { runTestsGate, manifestDropsTests } from "./commands/tests-gate.js";
 import { mineCorrections, listSessions, clusterCorrections, candidatesFrom } from "./commands/mine.js";
 import { mineRepo } from "./commands/mine-repo.js";
+import { mineGithub, ghAt, filesInCommit, repoSlug } from "./commands/mine-github.js";
+import { assembleMine, anthropicClassifier, splitFindings } from "./commands/mine-classify.js";
+import { assessCheck } from "./commands/assess-check.js";
 import { runScorers, loadRubrics } from "./commands/score.js";
 import { readFileSync, appendFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, statSync, rmSync } from "node:fs";
 import { specProblems, type SpecGateInput, type SpecLike } from "./commands/spec-gate.js";
@@ -284,13 +287,25 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
       are their private conversations.
 
   bsf mine-corrections [--exclude ID,ID] [--out PATH] [--source NAME]
-                       [--merge-into PATH]
+                       [--merge-into PATH] [--classes PATH]
       Read the sessions the user did not exclude and find the moments they
       corrected an agent. Each one is a rule they already wanted. Writes
       guardrail candidates; reports and continues if memex is not installed.
       With --merge-into, the existing list is kept and only genuinely new
       problems are added — what the skill's update mode needs, since one the
       user already rejected must not be offered again.
+      A fix subject, an applied review comment, and a bug issue closed by a
+      commit are evidence. They become candidates only after a label says
+      they are a rule and quotes their text. --classes is that label file.
+      Exit 2 means findings are still unlabelled and setup is not finished.
+
+  bsf assess check [--root DIR]
+      Refuse a thin survey. assessment.md must cover the build, the test
+      check, the patterns, a count where two patterns compete, coverage, and
+      the miner's own summary sentence. The miner must have run, and every
+      finding must be labelled.
+  bsf assess fundamentals [--root DIR]
+      Refuse a fundamentals.md that copies the README or AGENTS.md.
 
   bsf recompile-prepare
       Apply the frozen sandbox's research hosts to the spec role's network, ready for gh aw compile.
@@ -613,6 +628,12 @@ async function main(argv: readonly string[]): Promise<number> {
 
     case "mine-corrections":
       return mineCommand(args);
+
+    case "assess":
+      if (second !== "check" && second !== "fundamentals") {
+        die("usage: bsf assess check [--root DIR] | bsf assess fundamentals [--root DIR]");
+      }
+      return assessCommand(args, second === "fundamentals");
 
     case "score":
       return scoreCommand(args);
@@ -3903,54 +3924,75 @@ async function mineCommand(args: Args): Promise<number> {
       `${fromRepo.prose.length} written rule(s)\n`,
   );
 
-  const all = [...report.corrections, ...fromRepo.asCorrections];
-  if (all.length === 0) {
-    setOutput("mined", "0");
-    // Not a failure: setup continues with the rule packs alone.
-    return 0;
-  }
+  const remote = await gitRemote(repoPath);
+  const slug = process.env["GITHUB_REPOSITORY"] ?? (remote === "" ? null : repoSlug(remote));
+  const fromGithubReal = await mineGithub({
+    repo: slug,
+    gh: ghAt(repoPath),
+    filesInCommit: (sha) => filesInCommit(repoPath, sha),
+  });
+  process.stdout.write(`${fromGithubReal.note}\n`);
 
-  const clusters = clusterCorrections(all);
-  const mined = candidatesFrom(clusters, nowIso());
-
+  const split = splitFindings({ session: report.corrections, repo: fromRepo, github: fromGithubReal });
   const mergeInto = typeof args["merge-into"] === "string" ? args["merge-into"] : undefined;
-  let doc: CandidatesFile = { schema: "candidates/1", candidates: mined };
-  let added = mined.length;
-
-  if (mergeInto !== undefined) {
-    // Update mode. The existing list holds decisions — accepted, rejected,
-    // installed — and re-mining must not undo any of them, or re-offer
-    // something the user has already turned down.
-    const existing: CandidatesFile = existsSync(mergeInto)
-      ? (JSON.parse(readFileSync(mergeInto, "utf8")) as CandidatesFile)
-      : { schema: "candidates/1", candidates: [] };
-    const merge = mergeContribution(existing, mined, null);
-    doc = merge.merged;
-    added = merge.added.length;
-    process.stdout.write(
-      `${merge.added.length} new, ${merge.folded.length} already pending (counts raised), ` +
-        `${merge.skipped.length} already decided and not re-offered\n`,
-    );
-    for (const c of merge.added.slice(0, 10)) {
-      process.stdout.write(`  ${c.occurrences}x  ${c.problem_class.slice(0, 90)}\n`);
-    }
-  } else {
-    for (const c of clusters.slice(0, 10)) {
-      process.stdout.write(`  ${c.occurrences}x  ${c.theme.slice(0, 90)}\n`);
-    }
-  }
-
-  assertValid("candidates", doc);
-
   const out =
     typeof args["out"] === "string"
       ? args["out"]
       : (mergeInto ?? ".factory/guardrails/candidates.json");
-  mkdirSync(dirname(out), { recursive: true });
-  writeFileSync(out, `${JSON.stringify(doc, null, 2)}\n`);
-  process.stdout.write(`${doc.candidates.length} candidate(s) in ${out}\n`);
-  setOutput("mined", String(added));
-  return 0;
+  const key = process.env["ANTHROPIC_API_KEY"];
+  const classes = typeof args["classes"] === "string" ? args["classes"] : undefined;
+  const done = await assembleMine({
+    session: report,
+    clear: split.clear,
+    pending: split.pending,
+    counts: {
+      session_searches: report.searched,
+      reverts: fromRepo.reverts.length,
+      fixes: fromRepo.fixes.length,
+      reviews: fromGithubReal.reviews === null ? null : fromGithubReal.reviews.length,
+      bugs: fromGithubReal.bugs === null ? null : fromGithubReal.bugs.length,
+      prose: fromRepo.prose.length,
+    },
+    notes: [report.note, fromGithubReal.note],
+    ...(classes === undefined ? {} : { classesPath: classes }),
+    ...(key && classes === undefined ? { complete: anthropicClassifier(key, "claude-haiku-5-5") } : {}),
+    out,
+    reportPath: join(repoPath, ".factory/guardrails/mining-report.json"),
+    ...(mergeInto === undefined ? {} : { mergeInto }),
+    now: nowIso(),
+  });
+  for (const line of done.lines) process.stdout.write(`${line}\n`);
+  setOutput("mined", done.code === 0 ? "done" : "pending");
+  return done.code;
+}
+
+async function gitRemote(root: string): Promise<string> {
+  try {
+    const { execFile } = await import("node:child_process");
+    const { promisify } = await import("node:util");
+    const { stdout } = await promisify(execFile)("git", ["remote", "get-url", "origin"], { cwd: root });
+    return String(stdout).trim();
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Run the survey check or only the fundamentals copy check.
+ *
+ * args: CLI flags. `--root` is the checkout.
+ * fundamentalsOnly: true for `bsf assess fundamentals`.
+ * Returns 0 when nothing is wrong, 1 when the survey or the copy check failed.
+ */
+function assessCommand(args: Args, fundamentalsOnly: boolean): number {
+  const root = typeof args["root"] === "string" ? args["root"] : process.cwd();
+  const problems = assessCheck(root, fundamentalsOnly);
+  if (problems.length === 0) {
+    process.stdout.write(fundamentalsOnly ? "fundamentals.md does not copy the house docs\n" : "the survey is complete\n");
+    return 0;
+  }
+  for (const p of problems) process.stderr.write(`${p}\n`);
+  return 1;
 }
 
 
