@@ -1,0 +1,101 @@
+# The recipe, on its own.
+#
+# Re-run this workflow when the recipe has to be written again. It reads the
+# journey list and the last boot log from factory/setup-state. Saving the
+# recipe is success even when the writer could not boot the app. The boot
+# workflow still runs.
+name: factory-setup-recipe
+
+on:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      model_builder: ${{ steps.models.outputs.model_builder }}
+      amend: ${{ steps.journeys.outputs.text }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Fetch the factory runner from the default branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: .factory-trusted
+          sparse-checkout: |
+            .factory/bin
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Put the trusted runner on PATH
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/bsf"
+          cp -R .factory-trusted/.factory/bin/. "$RUNNER_TEMP/bsf/"
+          rm -rf .factory-trusted
+          echo "$RUNNER_TEMP/bsf" >> "$GITHUB_PATH"
+          chmod +x "$RUNNER_TEMP/bsf/"*
+      - name: Configuration names still waiting
+        env:
+          FACTORY_SANDBOX_ENV: ${{ secrets.FACTORY_SANDBOX_ENV }}
+        run: bsf env scan
+      - name: Read the journey list and the last boot log
+        id: journeys
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin factory/setup-state
+          list=$(git show origin/factory/setup-state:.factory/setup-state/context/journeys.md)
+          log=$(git show origin/factory/setup-state:.factory/setup-state/trial.json 2>/dev/null | head -c 4000 || true)
+          {
+            echo "text<<SETUP_AMEND"
+            printf '%s\n' "$list"
+            if [ -n "$log" ]; then printf '\nLast boot:\n%s\n' "$log"; fi
+            echo "SETUP_AMEND"
+          } >> "$GITHUB_OUTPUT"
+      - name: Read each role's model from factory.yaml
+        id: models
+        run: bsf models
+  design:
+    name: Writing the launch and how each journey is tested
+    needs: plan
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+      id-token: write
+      issues: write
+      pull-requests: write
+    uses: ./.github/workflows/factory-setup-agent.lock.yml
+    with:
+      budget_key: ${{ github.run_id }}-${{ github.run_attempt }}-design
+      model: ${{ needs.plan.outputs.model_builder }}
+      round: 1
+      amend: ${{ needs.plan.outputs.amend }}
+    secrets: inherit
+  design-budget:
+    needs: design
+    if: always()
+    permissions:
+      contents: read
+    uses: ./.github/workflows/factory-budget-settle.yml
+    with:
+      key: ${{ github.run_id }}-${{ github.run_attempt }}-design
+      ran: ${{ needs.design.result == 'skipped' && 'false' || 'true' }}
+    secrets:
+      FACTORY_APP_PRIVATE_KEY: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
+  save:
+    needs: [design, design-budget]
+    if: always() && needs.design.result != 'skipped'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/factory-setup-save.yml
+    with:
+      artifact: setup-round-1
+    secrets: inherit

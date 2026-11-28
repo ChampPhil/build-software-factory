@@ -24,7 +24,8 @@ description of a red pull request. The person is not asked what to do about
 a failure, and is not asked to come back.
 
 The only turns that wait are the named human chores at the start: the
-Anthropic key, Create, and Install. Those already have a background watch.
+Anthropic key, Create, Install, and the development env paste. Those
+already have a background watch.
 When the watch exits, the next action starts immediately.
 
 A progress ping relays one sentence, then checks that setup is still moving.
@@ -146,19 +147,52 @@ a merge conflict all start with a person merging. Each has a switch. Leave
 those switches off. Never invent that they chose automatic merge for those.
 Never write "you chose automatic merge" for them.
 
+5. **The development environment.** This is the next chore, after the merge
+   question, and before the long job. Say it in everyday words, like this:
+
+   The private copy of your app runs with a development environment. The
+   credentials in that environment are the ones you put in a GitHub secret
+   named `FACTORY_SANDBOX_ENV`. Open the env file the app already uses on
+   your machine (often `.env.local`) and paste the whole file into that
+   secret. Do not paste it in the chat. Agents cannot see what you paste.
+   They can only see that the secret exists.
+
+   Give them the page
+   `https://github.com/<owner>/<repo>/settings/secrets/actions/new`
+   and the name. As you name this chore, start
+   `node scripts/wait-for.mjs secret FACTORY_SANDBOX_ENV`
+   in the background. When it exits 0, start the long job. Do not ask them
+   to come back and say they pasted it.
+
 ## The long job waits
 
-The long GitHub setup job starts only after the secret exists and the app
-is installed on this repository. A bootstrap pull request merging must not
+The long GitHub setup job starts only after the Anthropic secret exists,
+the development env secret `FACTORY_SANDBOX_ENV` exists, and the app is
+installed on this repository. A bootstrap pull request merging must not
 start that job. If a run appears because that pull request merged, and the
-secret or the app was not in place yet, that run has not started the job.
-Do not follow it. Do not treat its failure as the end. If that early run is
-still going and it is blocking the real one, cancel the early run only.
-Start the job yourself only after both are true:
+Anthropic secret, the development env secret, or the app was not in place
+yet, that run has not started the job. Do not follow it. Do not treat its
+failure as the end. If that early run is still going and it is blocking the
+real one, cancel the early run only. Start the job yourself only after all
+three are true:
 
 ```
 gh workflow run factory-setup.yml
 ```
+
+A later step that fails is run again on its own. Do not start
+`factory-setup.yml` again. The earlier steps are already on the branch
+`factory/setup-state`.
+
+| What failed | Run this |
+| --- | --- |
+| The journey list | `gh workflow run factory-setup-journeys.yml` |
+| The standard rules | `gh workflow run factory-setup-rules.yml` |
+| The recipe | `gh workflow run factory-setup-recipe.yml` |
+| The boot | `gh workflow run factory-setup-boot.yml` |
+| The pull request | `gh workflow run factory-setup-pr.yml` |
+
+The same failure twice stops. One issue is opened. Do not start over.
 
 Before it starts, say what the long run will do, in everyday words: it
 lists the top journeys, builds a private copy and clicks those journeys,
@@ -243,6 +277,7 @@ just so a check can see the recipe.
 | They do | You do |
 | --- | --- |
 | Paste `ANTHROPIC_API_KEY` on GitHub, not in the chat | Give them that one page, then watch for the secret |
+| Paste their local env file into `FACTORY_SANDBOX_ENV` on GitHub, not in the chat | Tell them the private copy runs on that development environment, and that agents cannot see the values. Then watch for the secret |
 | Press **Create**, then **Install**, on this repository only | Everything around it, via `scripts/create-app.mjs` |
 | Say if they want to merge setup's own pull requests by hand | Otherwise those merge on their own. The other pipelines wait for a person |
 | Merge a setup pull request, only if they said they would | Watch that pull request and wake when it merges |
