@@ -326,12 +326,12 @@ it, and only when both exist.
    ```bash
    .factory/bin/bsf sandbox check --file /tmp/gh-aw/agent/bsf/setup/manifest.json
    ```
-3. **`stubs/`**, only for a third party the person marked to fake (see below).
+3. **`stubs/`**, if the app needs a third party you cannot reach (see below).
 4. **`research-domains.txt`** — one host per line: the documentation sites of
    the frameworks and libraries this repo actually uses. The spec role reads
-   them when it researches. The private copy can reach the public internet,
-   so a host the app loads at runtime is not a stub unless that setting was
-   marked to fake.
+   them when it researches. **Not** the hosts the app loads at runtime: the
+   sandbox has no egress by design, and those hosts get stubs instead (§
+   "External hosts the app loads" below).
 5. **`guardrails.patch`** and **`guardrails.json`** — the repo's own checkers,
    extended with the factory's rules (see "Guardrails" below). Skip both on an
    amendment.
@@ -363,35 +363,37 @@ genuinely work:
   placeholder: the app's own origin is `http://localhost:<port>`, a domain
   allowlist is the real domain, a feature flag is what the app needs on. A
   placeholder here breaks things that are not secrets at all.
-- **`service`** — something this boot starts: a database, a cache, object
-  storage, a mail catcher. If the repo already starts it (a compose file or
-  a dev script), use that. Otherwise add it under `services` (an official
-  image, a port, throwaway credentials) and point the variable at
-  `127.0.0.1:<port>`. A value that only the person's machine can reach
-  (localhost, a file on their disk) is this kind: start that thing here and
-  point the app at the address this boot created. Do not use their database
-  URL, local or hosted. This boot creates an empty store. The seed writes a
-  marker into it. A migration that runs at build time then migrates the
-  throwaway, which is exactly what should happen.
-- **`test_mode`** — a credential the person put in `FACTORY_SANDBOX_ENV`.
-  The private copy runs with that development environment. You see the name,
-  never the value. Put the name in `secret`. Do not invent a value and do
-  not write one into the recipe. A name marked to fake is not this kind.
-- **`stub`** — only a name the person marked to fake. Write a small local
-  server under `stubs/<name>/` that answers the requests this app actually
-  makes, record it under `stubs`, and point the variable at it. Do not stub
-  a provider whose development credential is in `FACTORY_SANDBOX_ENV`. The
-  trial can reach that provider.
+- **`service`** — something you can run: a database, a cache, object storage,
+  a mail catcher. Add it under `services` (an official image, a port, throwaway
+  credentials) and point the variable at `127.0.0.1:<port>`. A migration that
+  runs at build time then migrates the throwaway, which is exactly what should
+  happen.
+- **`stub`** — a third party you cannot run. Write a small local server under
+  `stubs/<name>/` that answers the requests this app actually makes with the
+  shapes the real API returns (read the client code and the provider's docs),
+  record it under `stubs` with where its fixture shapes came from and when.
+  Where the app can be told the endpoint, point the variable at the stub and
+  start it as part of `run`. Where it cannot — a client library with a fixed
+  host, a driver that derives its endpoint from a connection string, an OAuth
+  provider found by discovery — give the stub `hosts` (the names the app
+  calls), a `port` and a `start` command: the sandbox makes those names
+  resolve to this runner and serves them over HTTPS with a certificate the
+  runtime trusts, forwarding to your stub. Any credential the client needs to
+  sign with (a service-account key, a client secret) is one you generate for
+  the stub, never the owner's. A fixed host is a reason for `hosts`, not for
+  `inert`.
+- **`test_mode`** — only when the provider has a real test mode and the app
+  cannot be exercised otherwise. Name the secret; never write a value.
 - **`inert`** — present so the app starts; any path needing it will not work
-  here. Use it last, and list what it costs under
+  here. Use it last, only once `service` and `stub` (with `hosts` where the
+  address is fixed) are both impossible, and list what it costs under
   `capabilities.not_exercised`. Sign-in is never a reason for `inert`: see
   "Sign-in" below.
 
-**No password goes in the recipe.** A secret value is a name looked up in
-`FACTORY_SANDBOX_ENV`. A value this boot created (a local address, a plain
-flag, a plain word) may be written in the recipe. The person's database URL
-is neither. The sandbox gives the app exactly your list and nothing else, so
-a variable you miss makes the app fail loudly.
+**No credential of the owner's goes in the sandbox.** Not a real database
+URL, not a real API key, not a production origin. The environment is closed:
+the sandbox gives the app exactly your list and nothing else, so a variable
+you miss makes the app fail loudly rather than quietly reach something real.
 
 ## Every dependency, its stand-in, and its proof
 
@@ -426,9 +428,10 @@ sandbox can do something it cannot.
 
 A page that front-loads a library from a CDN is one of these dependencies, and
 the easiest to miss, because nothing crashes — the page just comes up empty.
-The private copy and the browser can reach the public internet. Leave
-`egress` open. Do not redirect a vendor host at a stub unless that setting
-was marked to fake.
+The sandbox has **no egress** (`"egress": []`), so the browser's request to
+that host fails, usually as `ERR_CERT_AUTHORITY_INVALID` rather than anything
+that names the real problem, and every screenshot of that app for the rest of
+the factory's life is a blank page.
 
 Find them by reading the repo rather than by waiting for a trial to show it:
 
@@ -437,9 +440,12 @@ Find them by reading the repo rather than by waiting for a trial to show it:
 ```
 
 It prints every absolute https host the repo's own markup and styles name in a
-`src=`, `href=` or `url()`, and the file each came from. The browser loads
-them from the public internet. Stub one only when the person marked that
-setting to fake.
+`src=`, `href=` or `url()`, and the file each came from. Every one is a
+dependency with `"stand_in": "stub"`: vendor the library if the repo already
+has it, or capture it, and have the stub server rewrite those URLs to
+same-origin paths. **Do not add them to `egress`.** The point of a hermetic
+sandbox is that a third party being down, or rate-limiting a runner, cannot
+change what the factory concludes about a change.
 
 Give each one a `probe` that only passes when the library really loaded — a
 page that renders something only that library can draw — rather than one that
@@ -447,11 +453,11 @@ passes on the shell of the page.
 
 ## Sign-in
 
-The browser on the trial can reach the public internet. It does not type into
-a vendor login page. Sign-in uses a session minted with the development
-secret the person put in `FACTORY_SANDBOX_ENV` (you have the name, not the
-value), or the test token they connected on the first screen. If they took
-the signed-in journey off the finish line, do not require sign-in.
+The roles check the app in a browser that runs **inside their own sandbox**.
+It reaches the app, and nothing else: an identity provider's pages
+(accounts.google.com, a Clerk or Auth0 tenant, GitHub's OAuth screen) never
+load there, stubbed or not. So the roles never sign in through the provider.
+They are handed a session instead.
 
 When any page needs a signed-in user, write `sign_in`: a command that prints
 a session for a throwaway test user, made **the way the app's own auth makes
@@ -466,9 +472,8 @@ sign-in: insert the user and a session row into the sandbox database (a
 database session), or sign a token with the sandbox's own secret (a JWT
 session, using the library the app already depends on), or call a test-only
 sign-in the app offers in development. Create the test user in the same
-command or in `commands.seed`. Sign the session with the development secret
-named in `FACTORY_SANDBOX_ENV`. Do not write that secret's value into the
-recipe. Put any script it runs under `stubs/sign-in/` (it lands in
+command or in `commands.seed`. The secret is the sandbox's own `self` value,
+never the owner's. Put any script it runs under `stubs/sign-in/` (it lands in
 `.factory/sandbox/stubs/sign-in/`) and run it from the repo root, in the
 sandbox's environment, after the app is up. The runner sets each cookie's
 domain; leave it out.
@@ -479,14 +484,8 @@ Then give sign-in its own dependency (`"kind": "sign_in"`, `"stand_in":
 ## Prove what you can, then claim honestly
 
 Inside your own sandbox you can install, build and run the tests, so do — fix
-the manifest until they pass. `commands.test` is the test script the repo
-already declares. A thinner slice fails the trial. You cannot start services
-here; the trial does that on the runner, with the public internet open.
-
-Saving the recipe is success even when you could not boot the app in this
-sandbox. Do not call `report_incomplete` because the boot failed here. The
-trial boots the recipe you saved. Calling `report_incomplete` used to cancel
-that trial.
+the manifest until they pass. You cannot start services here; the trial does
+that on the runner.
 
 Set `tier` to what you believe the trial will reach: `renders` if the app will
 start and show its main screen, `build_and_test` if it will build and test but

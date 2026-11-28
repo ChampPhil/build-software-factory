@@ -63,7 +63,7 @@ describe("one setup, no baselines (fixes 12, 14, 15)", () => {
     expect(wf).toContain("bsf context merge-intent");
     expect(wf).toContain('startswith("factory/setup-")');
     expect(wf).toContain("bsf sandbox dry-run");
-    expect(wf).toContain("bsf sandbox secrets");
+    expect(wf).toContain("bsf sandbox scrub");
   });
 });
 

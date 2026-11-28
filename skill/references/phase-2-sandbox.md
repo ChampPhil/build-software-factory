@@ -19,9 +19,9 @@ things a person does. It is not the folder map.
   the screen never appears. A missing precondition belongs in the seed. Do
   not shorten a journey to make the boot pass. Do not drop a journey to make
   the boot pass.
-- The private copy runs with the development environment in
-  `FACTORY_SANDBOX_ENV`. A stub is only for a name the person marked to fake.
-  No production keys. They paste the env file on GitHub, not in the chat.
+- Prefer a vendor's test mode (Clerk dev, Stripe test) when a test-mode
+  secret exists. Use a local stub only when it does not. No production keys.
+  Ask once for a test-mode secret. They paste it on GitHub, not in the chat.
   Objects this run created at a vendor are cleaned up as a best effort. If
   that cleanup cannot finish, say so and continue. Do not stall setup, and
   do not stall a later sandbox pull request, on a vendor leftover.
@@ -73,19 +73,14 @@ commit the checkers.
 
 ## When the long job starts
 
-The long GitHub setup job starts only after the Anthropic secret exists,
-the development env secret `FACTORY_SANDBOX_ENV` exists, and the GitHub App
-is installed on this repository. Before you ask for `FACTORY_SANDBOX_ENV`,
-say what it is: the private copy runs with a development environment, the
-credentials in it are the ones they paste into that secret, they paste the
-whole local env file (often `.env.local`), they do not paste it in the chat,
-and agents cannot see the values. A bootstrap pull request
+The long GitHub setup job starts only after the Anthropic secret exists and
+the GitHub App is installed on this repository. A bootstrap pull request
 merging must not start that job. If a run appears because that pull request
 merged, and the secret or the app is not in place yet, that run is not the
 job. Do not follow it. Do not treat it as setup. If that early run is still
 going and it blocks the real one, cancel the early run only. Do not cancel
 a later run that still has to commit the checkers. Start the job yourself,
-with `gh workflow run factory-setup.yml`, only after all three are true.
+with `gh workflow run factory-setup.yml`, only after both are true.
 
 ## How you get there
 
@@ -137,12 +132,8 @@ with `gh workflow run factory-setup.yml`, only after all three are true.
    when the stage changes. If it exits at once, or a minute passes with no
    line, it is on an old run. Start it again so it follows the live one.
 
-3. **Repair.** A failed step stays your job. Run that step's workflow again,
-   not `factory-setup.yml`. The journey list is `factory-setup-journeys.yml`,
-   the standard rules are `factory-setup-rules.yml`, the recipe is
-   `factory-setup-recipe.yml`, the boot is `factory-setup-boot.yml`, and the
-   pull request is `factory-setup-pr.yml`. Earlier steps are on the branch
-   `factory/setup-state`. The same failure twice stops. One issue is opened.
+3. **Repair.** A failed lock-in stays your job. Repair and rerun until the
+   pull request contains the private copy, the checkers, and the switch-on.
    A hand-built pull request of the sandbox alone does not close the run.
 
 ## The environment is closed
@@ -154,14 +145,15 @@ runner and asserts it never arrives.
 
 ## No production credentials
 
-A value is the app's own correct configuration, a throwaway service this
-boot started, or the name of a credential in `FACTORY_SANDBOX_ENV`. Never a
-production key, and never a password written into the recipe. Production
-data and live payment keys are never on the machine.
+A value is the app's own correct configuration, a throwaway service, a
+standing test surface, or the name of a test-mode secret. Never a
+production key. Never the person's own key. Production data and live
+payment keys are never on the machine, and they are never copied into the
+test accounts.
 
-The person's database, local or hosted, is not used. This boot starts an
-empty store and the seed writes a marker into it. A value that only their
-machine can reach is replaced by something this boot started.
+If the repository's database URL points at a hosted database, the app gets
+a throwaway database instead. The closed environment is a positive list. A
+forgotten production value is absent, not inherited.
 
 The pull request lists any step that was proved only on this local boot, so
 that boot is described as itself. A step that still needs the remote
@@ -176,9 +168,8 @@ is a failed check. A new markdown file the request did not name fails.
 They bring the app up from the recipe in the pull request they are judging,
 not only from the copy on the default branch. The browser is signed in as
 the test user. Where the machine has to mint that session, it hands it over
-as a session file the role loads. The browser can reach the public internet.
-It does not type into a vendor login page. Sign-in uses the development
-secret or the test token from the first screen.
+as a session file the role loads. The browser reaches the app and nothing
+else.
 
 ## After setup, when a change needs more
 
