@@ -91,6 +91,20 @@ describe("splitFindings", () => {
     expect(split.clear.map((c) => c.source)).toEqual(["revert"]);
     expect(split.pending.map((p) => p.id)).toEqual(["fix:abc"]);
   });
+
+  it("holds a conventions sentence for the classifier", () => {
+    const split = splitFindings({
+      session: [],
+      repo: {
+        ...emptyRepo(),
+        prose: [{ file: "AGENTS.md", line: 3, text: "Never commit generated files." }],
+      },
+      github: emptyGithub(),
+    });
+    expect(split.clear).toEqual([]);
+    expect(split.pending.map((p) => p.source)).toEqual(["prose_rule"]);
+    expect(split.pending[0]?.text).toBe("Never commit generated files.");
+  });
 });
 
 describe("assembleMine", () => {

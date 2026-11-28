@@ -10,6 +10,7 @@ Schemas: reads `*/1`, writes `*/1`.
 
 ### Fixed
 
+- **The prose cap fails growth, not a file that was already long.** Always-loaded conventions are still capped at 16 KiB, because every run reads them. The static check now fails only when a change made one of those files larger and left it over the cap. A file the owners already wrote, left untouched, passes, and setup is no longer told to split it.
 - **One issue is one hardening item.** The "Harden this" form applies its label when it opens the issue, so GitHub sends `opened` and `labeled` together and intake made a work item for each: two cards on the dashboard, two hardening runs. Intake now counts the items it has just made as open for the events after them in the same batch, and an issue that already has hardening work does not get a second item from the label.
 - **An issue waiting for a maintainer no longer says "queued".** Issues from people the factory does not trust get `factory:awaiting-maintainer` instead of `factory:queued`; accepting the issue swaps it for `factory:queued`, and a run starting removes both.
 

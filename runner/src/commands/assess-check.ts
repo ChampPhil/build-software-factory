@@ -10,9 +10,10 @@
  *
  * Key terms
  * ---------
- * Survey: assessment.md. It has six sections. Each one has to say something.
- * The mining section has to repeat the miner's own summary sentence, so the
- * counts cannot be invented.
+ * Survey: assessment.md. It has six sections. Each heading has to be there.
+ * A short true sentence is enough. The check does not measure length and
+ * does not require a digit. The mining section has to repeat the miner's
+ * own summary sentence, so the counts cannot be invented.
  * Mining report: `.factory/guardrails/mining-report.json`, written by
  * `bsf mine-corrections`. Missing means the miner never ran. `classified:
  * false` means findings are still unlabelled, so setup is not finished.
@@ -20,8 +21,8 @@
  * after the markdown marks are removed. Short words like "FastAPI" do not
  * count.
  * Copy: a substantial line that also appears in the README or AGENTS.md,
- * once whitespace is collapsed. Three copies, or half the substantial
- * lines, fails the check.
+ * once whitespace is collapsed. The file fails when half or more of its
+ * substantial lines are copies. A few shared sentences pass.
  *
  * Exports
  * -------
@@ -66,13 +67,6 @@ export function assessmentProblems(assessment: string, report: MiningReport | nu
       problems.push(`assessment.md is missing the section "${title}"`);
       continue;
     }
-    if (body.replace(/\s+/g, " ").trim().length < 80) {
-      problems.push(`assessment.md section "${title}" does not say enough`);
-    }
-  }
-  const compete = sectionBody(assessment, "Where two patterns compete");
-  if (compete !== null && !/\d/.test(compete)) {
-    problems.push('assessment.md section "Where two patterns compete" has no count');
   }
   if (report !== null && report.summary !== "" && !assessment.includes(report.summary)) {
     problems.push("assessment.md does not include the miner's summary sentence");
@@ -128,12 +122,12 @@ function collapse(text: string): string {
  *
  * copies: the lines `copiedFundamentals` returned.
  * substantial: how many lines were long enough to be compared.
- * Three copies is a pasted table. Half the lines is the same failure in a
- * shorter file.
+ * Half or more is a second copy of the house docs. Fewer than that is a
+ * sentence that happens to be said in both places.
  */
 export function fundamentalsProblems(copies: readonly string[], substantial: number): readonly string[] {
-  if (copies.length === 0) return [];
-  if (copies.length >= 3 || (substantial > 0 && copies.length * 2 >= substantial)) {
+  if (copies.length === 0 || substantial === 0) return [];
+  if (copies.length * 2 >= substantial) {
     return [
       `fundamentals.md copies ${copies.length} line(s) from the README or AGENTS.md. Write only what those files do not already say.`,
       ...copies.slice(0, 8).map((c) => `  copied: ${c.slice(0, 120)}`),

@@ -344,9 +344,9 @@ design. Read `trial.json` in the amend when it is there: it is the last boot.
    into `fundamentals.md` is a second copy that the owners will not maintain,
    so it goes stale and then contradicts theirs. `fundamentals.md` is for what
    you worked out by reading the code and found written down nowhere. The
-   pull request refuses `fundamentals.md` when a line is copied from the
-   README or `AGENTS.md`. Write the convention only when those files do not
-   already say it.
+   pull request refuses `fundamentals.md` when most of it is copied from the
+   README or `AGENTS.md`. A few shared sentences are not a failure. Write
+   the convention only when those files do not already say it.
 2. **`manifest.json`** — the sandbox, as a complete hypothesis. Check it before
    you finish; an invalid manifest wastes the whole round:
 

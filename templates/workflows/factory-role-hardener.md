@@ -374,8 +374,10 @@ it comes with three conditions, and the gates enforce all three:
    is near its budget, consolidate: merge lines that overlap, delete what no
    longer holds, move a grown section into a file read on demand. A practice
    that supersedes an existing line deletes that line in the same PR and quotes
-   it in the body. The gate fails a file over budget, so appending past the cap
-   will not land.
+   it in the body. The gate fails when this change makes the file larger and
+   the new size is over the budget. A file that was already over the budget,
+   and that this change did not grow, is not a failure, so do not split it.
+   Appending past the cap will not land.
 
 Never write prose into `.factory/`. That is the text that governs you — the
 policy that says what this pipeline may change, the guardrails every change is

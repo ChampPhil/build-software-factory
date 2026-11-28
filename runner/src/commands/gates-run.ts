@@ -1,7 +1,10 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Baselines, Coverage, Policy } from "../lib/types.js";
-import { scanProse, budgetVerdict, budgetBytes, type BudgetVerdict } from "./repo-prose.js";
+import {
+  scanProse, budgetVerdict, budgetBytes, alwaysLoaded, proseBaseSizes, prosePayload,
+  type BudgetVerdict,
+} from "./repo-prose.js";
 import {
   checkRatchet, checkWeakening, checkCoverage, countsFromBaselines, zeroFloorWithTests,
   type RuleCounts, type RatchetResult, type WeakeningFinding,
@@ -45,13 +48,18 @@ export interface StaticGateInput {
   readonly declared?: { readonly checks: readonly StaticCheck[]; readonly env?: Record<string, string> };
   /** Rules whose config got less strict, where a rule pack can tell. */
   readonly loosenedRules?: readonly string[];
+  /**
+   * The ref the prose cap compares against. When omitted, the pull request
+   * base, then main. A file that is the same size there is not a failure.
+   */
+  readonly proseBase?: string;
 }
 
 export interface StaticGateResult {
   readonly conclusion: "success" | "failure" | "neutral";
   readonly ratchet: RatchetResult;
   readonly weakening: readonly WeakeningFinding[];
-  /** Always-loaded prose over its budget: read on every run, so size is a rule. */
+  /** Always-loaded prose this change grew past its budget. */
   readonly prose: BudgetVerdict;
   readonly findings: readonly Finding[];
   readonly toolsRun: readonly string[];
@@ -225,16 +233,16 @@ export async function runStaticGate(input: StaticGateInput): Promise<StaticGateR
     input.policy,
   );
 
-  // The repo's own always-loaded prose, against its budget. This belongs with
-  // the static checks: it is decided by reading files, not by running them,
-  // and like a guardrail it is a rule the change has to keep.
-  //
-  // Hardening may write a practice into AGENTS.md, and the cheapest thing an
-  // agent can do there is append one more line. Those files are in every
-  // build's and every gardening run's context, so fifty corrections later the
-  // file it kept growing is the thing degrading all of its own work. Past the
-  // cap a new practice has to replace one already there.
-  const prose = budgetVerdict(scanProse(root, input.policy), budgetBytes(input.policy));
+  // The repo's own always-loaded prose. Size is the cost, because these files
+  // are in every run. The check fails only when this change made one larger
+  // and left it over the cap. A file the owners already wrote, which this
+  // change did not grow, is not a failure.
+  const scan = scanProse(root, input.policy);
+  const paths = alwaysLoaded(scan).map((d) => d.path);
+  const prior = proseBaseSizes(root, paths, input.proseBase);
+  const current: Record<string, number> = {};
+  for (const p of paths) current[p] = prosePayload(root, p);
+  const prose = budgetVerdict(scan, budgetBytes(input.policy), prior, current);
 
   // A tool that could not run is not a pass, and neither is no tool at all:
   // both are neutral, so "nothing was checked" never shows as a green tick.
@@ -269,15 +277,16 @@ function summarizeStatic(args: {
   const lines: string[] = [];
 
   if (args.prose !== undefined && !args.prose.ok) {
-    lines.push("## The conventions file is over budget", "");
+    lines.push("## A conventions file grew past its budget", "");
     lines.push(
-      "These are read on every build and every gardening run, so what is in them is paid for " +
-        "on every run. Consolidate: merge lines that overlap, drop what no longer holds, or move " +
-        "a grown section into a file read on demand. Do not add to it.",
+      "These are read on every build and every gardening run. This change made one larger " +
+        "and left it over the cap. Consolidate that growth: merge lines that overlap, drop what " +
+        "no longer holds, or move the section this change added into a file read on demand. " +
+        "A file that was already over the cap, and that this change did not grow, is not a failure.",
       "",
     );
     for (const o of args.prose.over) {
-      lines.push(`- \`${o.path}\` — ${o.bytes} bytes, over the ${o.budget}-byte cap`);
+      lines.push(`- \`${o.path}\` — grew from ${o.before} to ${o.now} bytes and is over the ${o.budget}-byte cap`);
     }
     lines.push("");
   }
