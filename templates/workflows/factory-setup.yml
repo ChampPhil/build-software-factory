@@ -84,14 +84,36 @@ jobs:
           mkdir -p "$RUNNER_TEMP/bsf"
           cp -R .factory-trusted/.factory/bin/. "$RUNNER_TEMP/bsf/"
           echo "$RUNNER_TEMP/bsf" >> "$GITHUB_PATH"
+      # The job token can read the checkout. It cannot list Actions secrets, so
+      # doctor records "could not be read" and would otherwise say nothing is
+      # broken. These three expressions are true or false only; the values
+      # never enter the script.
+      - name: Are the App and the model key present?
+        id: creds
+        if: steps.finished.outputs.done != 'true'
+        env:
+          HAS_MODEL: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+          HAS_APP_ID: ${{ vars.FACTORY_APP_CLIENT_ID != '' }}
+          HAS_APP_KEY: ${{ secrets.FACTORY_APP_PRIVATE_KEY != '' }}
+        run: |
+          echo "model=$HAS_MODEL" >> "$GITHUB_OUTPUT"
+          echo "app_id=$HAS_APP_ID" >> "$GITHUB_OUTPUT"
+          echo "app_key=$HAS_APP_KEY" >> "$GITHUB_OUTPUT"
       - name: Is the App installed and the model key set?
         id: doctor
         if: steps.finished.outputs.done != 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          HAS_MODEL: ${{ steps.creds.outputs.model }}
+          HAS_APP_ID: ${{ steps.creds.outputs.app_id }}
+          HAS_APP_KEY: ${{ steps.creds.outputs.app_key }}
         run: |
-          if bsf doctor --repo "$GITHUB_REPOSITORY" --root .factory-trusted --quiet; then
+          missing=""
+          [ "$HAS_MODEL" = "true" ] || missing="${missing}"$'\n'"- \`ANTHROPIC_API_KEY\` is not set"
+          [ "$HAS_APP_ID" = "true" ] || missing="${missing}"$'\n'"- the GitHub App is not installed (\`FACTORY_APP_CLIENT_ID\`)"
+          [ "$HAS_APP_KEY" = "true" ] || missing="${missing}"$'\n'"- the GitHub App private key is not set (\`FACTORY_APP_PRIVATE_KEY\`)"
+          if [ -z "$missing" ] && bsf doctor --repo "$GITHUB_REPOSITORY" --root .factory-trusted --quiet; then
             echo "ready=true" >> "$GITHUB_OUTPUT"
           else
             echo "ready=false" >> "$GITHUB_OUTPUT"
@@ -100,6 +122,10 @@ jobs:
               echo
               echo "The factory's definition is on \`$GITHUB_REF_NAME\`, but it cannot run yet:"
               echo
+              if [ -n "$missing" ]; then
+                echo "$missing"
+                echo
+              fi
               bsf doctor --repo "$GITHUB_REPOSITORY" --root .factory-trusted || true
               echo
               echo "Finish those, then run **factory-setup** from the Actions tab — or just ask"
@@ -112,7 +138,7 @@ jobs:
   start:
     name: Checking the settings
     needs: ready
-    if: needs.ready.outputs.ready == 'true'
+    if: needs.ready.outputs.ready == 'true' && vars.FACTORY_APP_CLIENT_ID != '' && secrets.FACTORY_APP_PRIVATE_KEY != '' && secrets.ANTHROPIC_API_KEY != ''
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
