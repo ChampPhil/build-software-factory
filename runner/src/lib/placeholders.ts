@@ -1,82 +1,81 @@
 /**
- * Secret-looking placeholders in the sandbox manifest.
+ * Pasted passwords in a sandbox recipe.
  *
  * Purpose:
- *     The setup agent invents plausible values for the keys a sandbox needs
- *     (an AWS-shaped key, a Stripe-shaped key). Secret scanners, GitHub's
- *     push protection among them, cannot tell an invented key from a real
- *     one, and the setup pull request is then blocked on a value that was
- *     never a secret. Every credential-shaped value is replaced with a plain
- *     marker before that pull request is opened.
+ *     The recipe that gets committed names configuration. A real password
+ *     lives in the GitHub secret FACTORY_SANDBOX_ENV, and the recipe only
+ *     stores that name. An older cleaner walked the whole file and rewrote
+ *     any long string, which turned a URL path into the words not-a-real-key
+ *     and the path check then rejected a valid recipe. This file does not
+ *     rewrite anything. It looks only at environment value fields.
  *
  * Key terms:
- *     - Manifest: the sandbox JSON that names the app's environment, commands,
- *       and stand-in services.
- *     - Env name: the `name` field on an environment entry, such as
- *       NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY. It is an identifier, not a secret,
- *       even when it is longer than 32 characters.
- *     - Secret field: the `secret` field, which names a repository secret.
- *       The name stays. The value of that secret is never written here.
+ *     - Recipe: the sandbox manifest JSON. It is committed. It must not
+ *       contain a password.
+ *     - Env entry: one variable the sandbox gives the app. It has a name,
+ *       a kind, and either a literal value or the name of a secret.
+ *     - Value field: the literal. A local address, a plain flag, or a plain
+ *       word is fine. A vendor password such as a Stripe or AWS key is not.
+ *     - Secret field: the name looked up in FACTORY_SANDBOX_ENV. The name
+ *       stays. The password never appears in the recipe.
  *
  * Non-obvious behavior:
- *     - The walk replaces string values only. Keys `name` and `secret` are
- *       left as written, because a long SCREAMING_SNAKE name matches the same
- *       character class as a base64 token, and replacing it makes the
- *       manifest fail its own name pattern.
+ *     - Only known password prefixes are refused. A long path is not a
+ *       password, and the file is left exactly as written.
+ *     - A test_mode entry must use the secret field. A literal there is a
+ *       pasted password even when it does not match a prefix.
  *
  * Exports:
- *     - NOT_A_KEY: the marker written in place of a credential-shaped value.
- *     - looksLikeSecret: whether one string has a credential shape.
- *     - scrubPlaceholders: the manifest text with those values replaced.
+ *     - looksLikePastedSecret: whether one string is a vendor password.
+ *     - pastedSecrets: the env entries whose value must not be committed.
  */
 
-export const NOT_A_KEY = "not-a-real-key";
-
-/** JSON keys whose string values are identifiers, never credentials. */
-const IDENTIFIER_KEYS = new Set(["name", "secret"]);
-
-const SHAPES: readonly RegExp[] = [
+/** Prefixes of vendor passwords. A path or a plain word does not match these. */
+const PASTED: readonly RegExp[] = [
   /^(AKIA|ASIA)[0-9A-Z]{12,}$/,
   /^sk_(live|test)_[A-Za-z0-9]+$/,
   /^pk_(live|test)_[A-Za-z0-9]+$/,
   /^gh[pousr]_[A-Za-z0-9]{20,}$/,
+  /^github_pat_[A-Za-z0-9_]{20,}$/,
   /^xox[abprs]-[A-Za-z0-9-]{10,}$/,
-  /^[A-Za-z0-9+/_-]{32,}={0,2}$/,
 ];
 
-export function looksLikeSecret(v: string): boolean {
-  // A URL or a path is long and base64-ish in places, but it is not a key.
-  if (/[:.\s]/.test(v) && !/^sk_|^pk_/.test(v)) return false;
-  return SHAPES.some((r) => r.test(v));
+/**
+ * Whether a literal is a vendor password that must not be committed.
+ *
+ * value: the string stored in an env entry's value field.
+ * Returns true for Stripe, AWS, Slack, and GitHub token shapes. A URL, a
+ * path, and a plain word return false.
+ */
+export function looksLikePastedSecret(value: string): boolean {
+  return PASTED.some((r) => r.test(value));
+}
+
+export interface EnvEntry {
+  readonly name?: string;
+  readonly kind?: string;
+  readonly value?: string;
+  readonly secret?: string;
 }
 
 /**
- * The manifest text with credential-shaped string values replaced.
+ * Env entries that would commit a password.
  *
- * text: the sandbox manifest as JSON text.
- * Returns the rewritten text and how many values were replaced.
- * `name` and `secret` strings are kept, so a long environment name survives.
+ * entries: the recipe's env array. Anything that is not an object is skipped.
+ * Returns one line per problem. An empty list means the recipe's env fields
+ * are safe to commit. The recipe text is not modified.
  */
-export function scrubPlaceholders(text: string): { text: string; replaced: number } {
-  let replaced = 0;
-  // `key` is the object field this value sits under, or null inside an array.
-  const walk = (v: unknown, key: string | null): unknown => {
-    if (typeof v === "string") {
-      // An identifier such as an env name can be 32+ characters of
-      // letters and underscores, which is also the shape of a bare token.
-      if (key !== null && IDENTIFIER_KEYS.has(key)) return v;
-      if (looksLikeSecret(v)) {
-        replaced++;
-        return NOT_A_KEY;
-      }
-      return v;
+export function pastedSecrets(entries: readonly unknown[]): readonly string[] {
+  const problems: string[] = [];
+  for (const raw of entries) {
+    if (raw === null || typeof raw !== "object") continue;
+    const entry = raw as EnvEntry;
+    const name = entry.name ?? "(unnamed)";
+    if (entry.kind === "test_mode" && entry.value !== undefined) {
+      problems.push(`${name} is a test-mode key and must be a secret name, not a value`);
+    } else if (entry.value !== undefined && looksLikePastedSecret(entry.value)) {
+      problems.push(`${name} has a pasted password in its value; put the name in the recipe and the password in FACTORY_SANDBOX_ENV`);
     }
-    if (Array.isArray(v)) return v.map((item) => walk(item, null));
-    if (v !== null && typeof v === "object") {
-      return Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, x]) => [k, walk(x, k)]));
-    }
-    return v;
-  };
-  const out = walk(JSON.parse(text), null);
-  return { text: `${JSON.stringify(out, null, 2)}\n`, replaced };
+  }
+  return problems;
 }

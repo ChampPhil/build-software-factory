@@ -59,11 +59,11 @@ describe("one setup, no baselines (fixes 12, 14, 15)", () => {
   });
 
   it("the setup workflow merges the intent block and reuses an open setup PR", () => {
-    const wf = readFileSync(join(WF, "factory-setup.yml"), "utf8");
+    const wf = readFileSync(join(WF, "factory-setup-pr.yml"), "utf8");
     expect(wf).toContain("bsf context merge-intent");
     expect(wf).toContain('startswith("factory/setup-")');
     expect(wf).toContain("bsf sandbox dry-run");
-    expect(wf).toContain("bsf sandbox scrub");
+    expect(wf).toContain("bsf sandbox secrets");
   });
 });
 

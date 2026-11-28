@@ -102,6 +102,34 @@ export function usePolled<T>(
   return result;
 }
 
+/** One row on the settings screen. It has a name and where it was read. No value. */
+export interface WaitingSetting {
+  readonly name: string;
+  readonly where: string;
+  readonly decision: "missing" | "use" | "fake" | "ignore" | "replace";
+  readonly client: boolean;
+}
+
+/** The file the settings screen reads. It has no secret values. */
+export interface WaitingSettings {
+  readonly names: readonly WaitingSetting[];
+  readonly dynamic: readonly string[];
+  readonly sign_in: readonly string[];
+  readonly waiting: number;
+}
+
+/**
+ * The settings that are waiting on a decision.
+ *
+ * client: the signed-in dashboard, or null before sign-in.
+ * version: bumps after a save so the list is read again.
+ * Returns the wait file, or null when this repository has not scanned yet.
+ */
+export function useWaitingSettings(client: GitHubClient | null, version: number): Loaded<WaitingSettings | null> {
+  const load = client === null ? null : () => client.fileFromRef<WaitingSettings>("env/wait.json");
+  return usePolled(load, 15_000, [client?.repo, version]);
+}
+
 export function useIndex(client: GitHubClient | null): Loaded<IndexFile | null> {
   const load = client === null ? null : () => client.fileFromRef<IndexFile>("index.json");
   return usePolled(load, 60_000, [client?.repo]);

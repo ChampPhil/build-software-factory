@@ -74,7 +74,27 @@ export const JOB_LINES = {
   clean: "Cleaning until every guardrail count is zero",
   freeze: "Opening the setup pull request with the launch, the notes, and the proof",
   release: "Switching the factory on",
+  start: "Checking the settings",
+  "Checking the settings": "Checking the settings",
+  "Write the journey list": "Reading the product to list the journeys a person takes",
+  "Write the standard rules": "Checking the standard rules against the code",
+  "Write the recipe": "Writing how the private copy starts and how each journey is tested",
+  "Boot the saved recipe": "Starting the boot of the saved recipe",
+  "Boot the private copy and click the journeys": "Starting a private copy and clicking through the journeys",
+  "Open the setup pull request": "Opening the setup pull request",
+  "Keep the journey list and start the recipe when the rules are saved too": "Saving the journey list",
+  "Keep the standard rules and start the recipe when the journeys are saved too": "Saving the standard rules",
 };
+
+/** The setup workflows, in the order a run of setup walks them. */
+export const SETUP_WORKFLOWS = [
+  "factory-setup.yml",
+  "factory-setup-journeys.yml",
+  "factory-setup-rules.yml",
+  "factory-setup-recipe.yml",
+  "factory-setup-boot.yml",
+  "factory-setup-pr.yml",
+];
 
 /**
  * The sentence key for a GitHub job name.
@@ -154,7 +174,10 @@ export function nextLine(jobs, state, now) {
   const due = now - state.at >= SPEAK_EVERY_MS;
   if (!changed && !due) return { line: null, state };
   // Only on the change. Repeating "just started" every minute is a lie.
-  const freezeDone = jobs.some((j) => (j.name === "freeze" || jobKey(j.name) === "freeze") && j.status === "completed" && j.conclusion === "success");
+  const freezeDone = jobs.some((j) => {
+    const key = jobKey(j.name);
+    return (j.name === "freeze" || key === "freeze" || key === "Open the setup pull request") && j.status === "completed" && j.conclusion === "success";
+  });
   const win = changed && freezeDone ? " Your app just started in the sandbox." : "";
   const sentence = live.map((name) => `${JOB_LINES[name] ?? name}.`).join(" ");
   return { line: `${sentence}${win}`, state: { job, at: now } };
@@ -223,21 +246,15 @@ if (runningAsEntryPoint(import.meta.url)) {
   const everyMs = everySec * 1000;
   let state = { job: null, at: 0 };
   let watchingId = null;
+  let announced = null;
   for (;;) {
     try {
-      const runs = JSON.parse(
-        gh([
-          "run",
-          "list",
-          "--workflow",
-          "factory-setup.yml",
-          ...r,
-          "--limit",
-          "20",
-          "--json",
-          "databaseId,status,conclusion",
-        ]),
-      );
+      const runs = SETUP_WORKFLOWS.flatMap((workflow) => {
+        const listed = JSON.parse(
+          gh(["run", "list", "--workflow", workflow, ...r, "--limit", "5", "--json", "databaseId,status,conclusion"]),
+        );
+        return listed.map((run) => ({ ...run, workflow }));
+      });
       const picked = pickRun(runs, watchingId);
       // Forget the old stage so the next line is about the run we just joined.
       if (picked.switched) {
@@ -258,13 +275,23 @@ if (runningAsEntryPoint(import.meta.url)) {
         state = out.state;
         if (out.line !== null) console.log(out.line);
         // Only the run we have been following. An old completed run never reaches here on the first look.
-        if (run.status === "completed") {
-          console.log(
-            run.conclusion === "success"
-              ? "The long run on GitHub has finished."
-              : "The long run on GitHub stopped. I'll repair it and run it again.",
-          );
-          process.exit(run.conclusion === "success" ? 0 : 1);
+        if (run.status === "completed" && announced !== run.databaseId) {
+          announced = run.databaseId;
+          if (run.conclusion === "success" && run.workflow === "factory-setup-pr.yml") {
+            console.log("The long run on GitHub has finished.");
+            process.exit(0);
+          }
+          if (run.conclusion === "success") {
+            console.log("That step finished. The next one starts on its own.");
+          } else {
+            await new Promise((res) => setTimeout(res, 20000));
+            const titles = JSON.parse(gh(["issue", "list", ...r, "--state", "open", "--limit", "20", "--json", "title"]));
+            if (titles.some((issue) => issue.title === "Setup stopped")) {
+              console.log("Setup stopped. The same failure happened twice.");
+              process.exit(1);
+            }
+            console.log("That step stopped. Its own workflow starts the one retry. This watch will follow it.");
+          }
         }
       }
     } catch {

@@ -66,6 +66,18 @@ jobs:
           # the installation covers.
           owner: ${{ github.repository_owner }}
           repositories: ${{ github.event.repository.name }}
+      # Before the gardener, which is the model. A waiting setting queues this run.
+      - name: Settings still waiting
+        id: env
+        env:
+          FACTORY_SANDBOX_ENV: ${{ secrets.FACTORY_SANDBOX_ENV }}
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+        run: |
+          if bsf env scan --hold factory-garden.yml; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
       # Stops before spending anything if gardening's budget share is used.
       - name: Check the budget share
         id: budget
@@ -77,7 +89,7 @@ jobs:
         if: steps.budget.outputs.paused != 'true'
         run: bsf models
     outputs:
-      paused: ${{ steps.budget.outputs.paused }}
+      paused: ${{ steps.budget.outputs.paused == 'true' || steps.env.outputs.ready != 'true' }}
       model_gardener: ${{ steps.models.outputs.model_gardener }}
       garden_max_prs: ${{ steps.models.outputs.garden_max_prs }}
 

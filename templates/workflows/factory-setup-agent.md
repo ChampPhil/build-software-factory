@@ -250,60 +250,84 @@ agents can work here, and prove it.
 Everything you write goes in `/tmp/gh-aw/agent/bsf/setup/`. Nothing you write
 in the repo itself is kept.
 
-## Which computer you are
+## Which step you are
 
-Read `/tmp/gh-aw/agent/bsf/setup/amend.json` when it exists. It says which of
-the three computers you are. Do that computer's work and do not do the others.
+Read `/tmp/gh-aw/agent/bsf/setup/amend.json` when it exists. It says which
+step you are. Do that step and do not do the others. Do not call
+`report_incomplete`. Saving the files is the job. If you could not boot the
+app, still write them and say what failed in `episode`.
 
-**Computer 0** — `{"focus":"journeys"}`. Write only `context/journeys.md`.
-The top things a person does in this product, not every route and not the
-folder map (`feature-map.md` is a list of directories; this is not that).
-One `##` heading per journey, then these two lines:
+**The journey list** — the amend contains `"focus":"journeys"`. Write only
+`context/journeys.md`. The things a person does in this product, not every
+route and not the folder map (`feature-map.md` is a list of directories;
+this is not that). One `##` heading per journey, then these two lines:
 
 - `How a person gets there:` the path they take.
 - `What proves it:` what on the screen or in the data shows it worked.
 
-Do not boot the app. Do not write `manifest.json`, stubs, or
-`guardrails.patch`. Ignore `previous/`.
+An app with sign-in has a signed-in journey on that list. If the amend names
+a sign-in under `skipped_sign_in`, leave that vendor's journey off the list
+and do not add it back. Do not boot the app. Do not write `manifest.json`,
+stubs, or `guardrails.patch`. Ignore `previous/`.
 
-**Computer B** — `{"focus":"standards"}`. Install only the factory's standard
-rule pack, into the tools this repo already runs. Prove each rule on a bad
-example and a good one. Fix the violations those rules already report, in
-the same patch, until a count of them would be zero. Do not add rules taken
-from this repo's own patterns or from past corrections. Do not write the
-sandbox manifest. Ignore `previous/`.
+**The standard rules** — the amend contains `"focus":"standards"`. Install
+only the factory's standard rule pack, into the tools this repo already runs.
+Prove each rule on a bad example and a good one. Fix the violations those
+rules already report, in the same patch, until a count of them would be
+zero. Do not add rules taken from this repo's own patterns or from past
+corrections. Do not write the sandbox manifest. Ignore `previous/`.
 
 **One new journey** — `{"focus":"one-journey", ...}`. The existing launch must
 drive this one journey: seed it if the seed does not already, and add the
-clicks. Add the journey to `context/journeys.md`. Do not redraw the other
-journeys. If it needs a new secret or a new outside account, stop and say so
-in the report. Do not install guardrails.
+clicks. Add the journey to `context/journeys.md`. Do not drop a journey that
+is already there. If it needs a new secret or a new outside account, write
+the name in `episode` and do not invent the value. Do not install guardrails.
 
-**Computer A** — anything else, including a journey list pasted as the amend
+**The recipe** — anything else, including a journey list pasted as the amend
 text (it contains `How a person gets there`). Do these in order, and do not
 install guardrails:
 
 1. Read the journey list. Do not drop or shrink a journey to make the boot pass.
-2. Write one launch command that reaches a usable app from a private data
-   directory, including migrations, the seed, a doctor check, and cleanup.
-   `commands.seed` loads that private data on every boot. Bind the server
-   to `127.0.0.1` and set `app_url` to that same host. Keep every `cd` in
-   a subshell, as the launch rules below say.
+   Deleting a heading does not get past the boot.
+2. If the repo already has a way to start its local services, use that. Do not
+   invent a second database beside the one the repo starts. `commands.seed`
+   writes a marker into the empty store this boot creates, and one journey's
+   probe shows that marker. An app with no stored data leaves `commands.seed`
+   null. Bind the server to `127.0.0.1` and set `app_url` to that same host.
+   Keep every `cd` in a subshell, as the launch rules below say.
 3. Under each journey, add `How the sandbox tests it:` the seed user, the
-   page, the click, and the side effect.
-4. Boot and click every listed journey with no scratch. A missing seed
-   precondition belongs in the shared seed, not in a note for one run.
+   page, the click, and the side effect. Name a dependency after each journey,
+   so the boot can see that the journey was clicked.
+4. `commands.test` is the test script the repo already declares. If the repo
+   declares both a package test and pytest, run both. Do not narrow the
+   command with `--`, `-k`, `-m`, `--filter`, or a path to one test file.
+5. A library, or a repo with no server, is finished when those tests run.
+   Do not invent a website for it. Leave `commands.run` and `app_url` null
+   and set `tier` to `build_and_test`.
 
-Prefer a vendor's test mode (Clerk dev, Stripe test) when a test-mode secret
-exists. Use a local stub only when it does not. No production keys. Cleanup
-of objects this run created at a vendor is best effort: if it cannot finish,
-say so and continue. The shared launch must perform every journey with no
-scratch.
+The app and the browser on the boot can reach the public internet. There is
+no list of allowed hosts. Leave `egress` empty. A local stand-in, and a hosts
+redirect onto that stand-in, exists only for a name the amend lists as marked
+to fake. Do not stub a vendor that has a development key.
 
-`previous/` may contain `seed-round-0`, `setup-round-8` and `setup-round-9`.
-Those are Computer 0 and Computer B, not an earlier sandbox design. A later
-design round reads `setup-round-N` and `trial-round-N` for the round before
-it, and only when both exist.
+A secret is a name in the `secret` field, looked up in `FACTORY_SANDBOX_ENV`,
+or a value this boot created: a local address, a plain flag, or a plain word.
+`test_mode` uses `secret`, never `value`. Do not paste a password, a token,
+or a long key into any field. You do not have the secret values. If a name is
+missing, write the name in `episode` and do not invent the value.
+
+A value that only the owner's machine can reach (`localhost`, `127.0.0.1` for
+something this boot did not start, a file on their disk, a Windows drive path)
+is replaced by something this boot starts. Names the browser bundle reads
+(`NEXT_PUBLIC_`, `VITE_`, `PUBLIC_`, `REACT_APP_`) are set for the build, not
+only for the server.
+
+Do not open a vendor's login page and do not type into one. The boot uses the
+test token or the connection from the first screen. A page that is still
+waiting on a vendor login widget fails the boot.
+
+`previous/` may contain `seed-round-0`. That is an empty earlier round, not a
+design. Read `trial.json` in the amend when it is there: it is the last boot.
 
 ## What to produce
 
@@ -329,9 +353,8 @@ it, and only when both exist.
 3. **`stubs/`**, if the app needs a third party you cannot reach (see below).
 4. **`research-domains.txt`** — one host per line: the documentation sites of
    the frameworks and libraries this repo actually uses. The spec role reads
-   them when it researches. **Not** the hosts the app loads at runtime: the
-   sandbox has no egress by design, and those hosts get stubs instead (§
-   "External hosts the app loads" below).
+   them when it researches. The boot can reach the public internet, so a host
+   the app loads at runtime is not a reason for a stub.
 5. **`guardrails.patch`** and **`guardrails.json`** — the repo's own checkers,
    extended with the factory's rules (see "Guardrails" below). Skip both on an
    amendment.
@@ -368,32 +391,22 @@ genuinely work:
   credentials) and point the variable at `127.0.0.1:<port>`. A migration that
   runs at build time then migrates the throwaway, which is exactly what should
   happen.
-- **`stub`** — a third party you cannot run. Write a small local server under
-  `stubs/<name>/` that answers the requests this app actually makes with the
-  shapes the real API returns (read the client code and the provider's docs),
-  record it under `stubs` with where its fixture shapes came from and when.
-  Where the app can be told the endpoint, point the variable at the stub and
-  start it as part of `run`. Where it cannot — a client library with a fixed
-  host, a driver that derives its endpoint from a connection string, an OAuth
-  provider found by discovery — give the stub `hosts` (the names the app
-  calls), a `port` and a `start` command: the sandbox makes those names
-  resolve to this runner and serves them over HTTPS with a certificate the
-  runtime trusts, forwarding to your stub. Any credential the client needs to
-  sign with (a service-account key, a client secret) is one you generate for
-  the stub, never the owner's. A fixed host is a reason for `hosts`, not for
-  `inert`.
-- **`test_mode`** — only when the provider has a real test mode and the app
-  cannot be exercised otherwise. Name the secret; never write a value.
+- **`stub`** — only for a name the amend lists as marked to fake. Write a
+  small local server under `stubs/<name>/` and, when the client library has a
+  fixed host, give the stub `hosts`, a `port` and a `start` command. Do not
+  stub anything else. The boot refuses a stub that is not for a faked name.
+- **`test_mode`** — a real development or test credential. Set `secret` to
+  the name. Do not set `value`. The boot looks the name up in
+  `FACTORY_SANDBOX_ENV`. You never see the value.
 - **`inert`** — present so the app starts; any path needing it will not work
-  here. Use it last, only once `service` and `stub` (with `hosts` where the
-  address is fixed) are both impossible, and list what it costs under
-  `capabilities.not_exercised`. Sign-in is never a reason for `inert`: see
-  "Sign-in" below.
+  here. Use it last, and list what it costs under `capabilities.not_exercised`.
+  Sign-in is never a reason for `inert`: see "Sign-in" below.
 
-**No credential of the owner's goes in the sandbox.** Not a real database
-URL, not a real API key, not a production origin. The environment is closed:
-the sandbox gives the app exactly your list and nothing else, so a variable
-you miss makes the app fail loudly rather than quietly reach something real.
+**No credential of the owner's goes in the recipe.** A secret is a name. The
+value stays in the GitHub secret. A value you write is a local address, a
+plain flag, or a plain word. The boot gives the app exactly your list, filled
+in from that secret, so a name you miss fails the boot and goes back to the
+screen. You are not asked to invent it.
 
 ## Every dependency, its stand-in, and its proof
 
@@ -426,38 +439,23 @@ sandbox can do something it cannot.
 
 ### External hosts the app loads to render
 
-A page that front-loads a library from a CDN is one of these dependencies, and
-the easiest to miss, because nothing crashes — the page just comes up empty.
-The sandbox has **no egress** (`"egress": []`), so the browser's request to
-that host fails, usually as `ERR_CERT_AUTHORITY_INVALID` rather than anything
-that names the real problem, and every screenshot of that app for the rest of
-the factory's life is a blank page.
-
-Find them by reading the repo rather than by waiting for a trial to show it:
+A page that front-loads a library from a CDN loads it from the public
+internet. The boot can reach it. Do not stub it and do not add it to `egress`.
 
 ```bash
 .factory/bin/bsf scan-asset-hosts --why
 ```
 
-It prints every absolute https host the repo's own markup and styles name in a
-`src=`, `href=` or `url()`, and the file each came from. Every one is a
-dependency with `"stand_in": "stub"`: vendor the library if the repo already
-has it, or capture it, and have the stub server rewrite those URLs to
-same-origin paths. **Do not add them to `egress`.** The point of a hermetic
-sandbox is that a third party being down, or rate-limiting a runner, cannot
-change what the factory concludes about a change.
-
-Give each one a `probe` that only passes when the library really loaded — a
-page that renders something only that library can draw — rather than one that
-passes on the shell of the page.
+That command lists the hosts. Leave them as real hosts. A stub is only for a
+name marked to fake.
 
 ## Sign-in
 
-The roles check the app in a browser that runs **inside their own sandbox**.
-It reaches the app, and nothing else: an identity provider's pages
-(accounts.google.com, a Clerk or Auth0 tenant, GitHub's OAuth screen) never
-load there, stubbed or not. So the roles never sign in through the provider.
-They are handed a session instead.
+The boot can open the app. It does not open Google, Clerk's login page, or
+any other vendor's login, and it does not type into a login widget. A page
+that is still waiting on one fails the boot. Use the test token or the
+connection from the first screen: a `test_mode` secret whose name is the
+credential, or a session the app can mint for its own test user.
 
 When any page needs a signed-in user, write `sign_in`: a command that prints
 a session for a throwaway test user, made **the way the app's own auth makes
@@ -607,6 +605,6 @@ missing, so the trial proves the repair.
 
 An amendment merges itself, with no person, when it changes only the sandbox,
 adds no host to `egress` and no secret to `env`, and its trial proves at least
-what the current sandbox does. Stay inside that whenever you can; if the
-repair truly needs a new host or a provider's test-mode secret, it waits for
-a person, so say in the report exactly what they must add and why.
+what the current sandbox does. The boot can already reach the public internet,
+so a new host is not a secret. A new configuration name waits for the person
+on the screen. Write the name in the report. Do not invent the value.

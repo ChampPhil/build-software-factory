@@ -180,6 +180,17 @@ export function sampleFactory(now: number): {
   const cos = (reason: string, ageMs: number) => ({ routing: { by: "chief_of_staff", reason, at: at(ageMs) } });
 
   const data: Record<string, unknown> = {
+    "env/wait.json": {
+      names: [
+        { name: "USER", where: "src/config.ts:12", decision: "missing", client: false },
+        { name: "CLERK_SECRET_KEY", where: "src/auth.ts:4", decision: "replace", client: false },
+        { name: "TMPDIR", where: "src/config.ts:40", decision: "ignore", client: false },
+      ],
+      dynamic: ["src/load-config.ts"],
+      sign_in: ["clerk"],
+      queue: [{ workflow: "factory-run.yml", inputs: {} }],
+      waiting: 2,
+    },
     "index.json": {
       schema: "index/1",
       updated_at: at(4 * MIN),
