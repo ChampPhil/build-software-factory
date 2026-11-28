@@ -164,9 +164,10 @@ describe("findReverts and findFixCommits", () => {
     const mining = await mineRepo(root);
     const sources = new Set(mining.asCorrections.map((c) => c.source));
     expect(sources).toContain("revert");
-    expect(sources).toContain("prose_rule");
-    // "fix: a was wrong" is evidence. It is not admitted as a correction
-    // until a classifier quotes a rule out of it.
+    // A sentence in AGENTS.md is evidence. It is not a correction until a
+    // classifier quotes a rule out of it. Same for "fix: a was wrong".
+    expect(sources.has("prose_rule")).toBe(false);
+    expect(mining.prose.length).toBeGreaterThan(0);
     expect(sources.has("fix_commit")).toBe(false);
     expect(mining.fixes.length).toBeGreaterThan(0);
     // A revert is a decision already taken, so it does not go through the

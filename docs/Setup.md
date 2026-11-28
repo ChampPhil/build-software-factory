@@ -76,7 +76,7 @@ The goal is to catch every past correction and turn the recurring ones into guar
 5. **Sort** each candidate by the ordered check: API change → static rule → verification → context.
 6. **Rank** by occurrences and recency, and show the user one list: problem class, occurrences, proposed fix, one example. The user accepts or rejects each in a single pass (accept-all is the default).
 
-A revert and a written rule are corrections already. A fix-commit subject, an applied review comment, a bug issue closed by a commit, and a soft chat turn are evidence. A classifier labels each one rule, one-off, or noise, and a rule is kept only when its quote is copied from that evidence. `bsf assess check` refuses a survey that skips a section or does not repeat the miner's summary sentence. `bsf assess fundamentals` refuses a fundamentals file that copies the README or `AGENTS.md`.
+A revert is a correction already. A sentence from a conventions file, a fix-commit subject, an applied review comment, a bug issue closed by a commit, and a soft chat turn are evidence. A classifier labels each one rule, one-off, or noise, and a rule is kept only when its quote is copied from that evidence. `bsf assess check` refuses a survey that skips a section or does not repeat the miner's summary sentence. It does not measure how long a section is. `bsf assess fundamentals` refuses a fundamentals file when half or more of its long lines are copied from the README or `AGENTS.md`.
 
 Teammates can later run `bsf contribute-corrections` on their own machines to add their sessions; after setup, the session hooks capture new corrections automatically for developers who opted in, wherever transcripts can be stored privately.
 

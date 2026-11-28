@@ -166,12 +166,42 @@ describe("the budget on always-loaded prose", () => {
     expect(budgetVerdict(scanProse(root)).ok).toBe(true);
   });
 
-  it("fails one file over the cap, and names it", () => {
+  it("fails a new file that arrives over the cap, and names it", () => {
     const big = mkdtempSync(join(tmpdir(), "prose-big-"));
     writeFileSync(join(big, "AGENTS.md"), "x".repeat(DEFAULT_BUDGET_BYTES + 1));
     const verdict = budgetVerdict(scanProse(big));
     expect(verdict.ok).toBe(false);
     expect(verdict.over.map((o) => o.path)).toEqual(["AGENTS.md"]);
+  });
+
+  it("passes a file that was already over the cap and did not grow", () => {
+    const big = mkdtempSync(join(tmpdir(), "prose-same-"));
+    const size = DEFAULT_BUDGET_BYTES + 100;
+    writeFileSync(join(big, "AGENTS.md"), "x".repeat(size));
+    const verdict = budgetVerdict(scanProse(big), DEFAULT_BUDGET_BYTES, { "AGENTS.md": size }, { "AGENTS.md": size });
+    expect(verdict.ok).toBe(true);
+  });
+
+  it("fails when this change grew the file past the cap", () => {
+    const big = mkdtempSync(join(tmpdir(), "prose-grew-"));
+    const size = DEFAULT_BUDGET_BYTES + 100;
+    writeFileSync(join(big, "AGENTS.md"), "x".repeat(size));
+    const verdict = budgetVerdict(scanProse(big), DEFAULT_BUDGET_BYTES, { "AGENTS.md": 100 }, { "AGENTS.md": size });
+    expect(verdict.ok).toBe(false);
+    expect(verdict.over[0]?.before).toBe(100);
+  });
+
+  it("passes a shrink that is still over the cap", () => {
+    const big = mkdtempSync(join(tmpdir(), "prose-shrunk-"));
+    const size = DEFAULT_BUDGET_BYTES + 10;
+    writeFileSync(join(big, "AGENTS.md"), "x".repeat(size));
+    const verdict = budgetVerdict(
+      scanProse(big),
+      DEFAULT_BUDGET_BYTES,
+      { "AGENTS.md": DEFAULT_BUDGET_BYTES + 500 },
+      { "AGENTS.md": size },
+    );
+    expect(verdict.ok).toBe(true);
   });
 
   it("is per file, not a total", () => {

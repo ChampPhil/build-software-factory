@@ -7,8 +7,9 @@ import { redact, type Correction } from "./mine.js";
 const exec = promisify(execFile);
 
 /**
- * The mining sources that are already in the repository: reverts, fix commits
- * and the prose rules a team has written down (doc 05, phase 1).
+ * The mining sources that are already in the repository: reverts, fix commits,
+ * and sentences from the conventions files (doc 05, phase 1). A revert is a
+ * correction. A sentence and a fix subject are evidence for the classifier.
  *
  * These need no consent step and no memex — they are the team's own shared
  * history, not anybody's private conversations — so they run first and work
@@ -282,37 +283,25 @@ export interface RepoMining {
 }
 
 /**
- * Reverts and written rules, in the same shape as a chat correction.
- * Fix commits stay on `fixes`. A subject like "fix login" is evidence for
- * the classifier, not a correction by itself.
+ * Reverts, in the same shape as a chat correction.
+ *
+ * A revert is a decision already taken, so it skips the classifier. A
+ * sentence from a conventions file stays on `prose`. Being written down is
+ * not the same as being a lasting rule, so the classifier labels it. Fix
+ * commits stay on `fixes` for the same reason.
  */
 export async function mineRepo(root: string, days = 365): Promise<RepoMining> {
   const [reverts, fixes] = await Promise.all([findReverts(root, days), findFixCommits(root)]);
   const prose = findProseRules(root);
 
-  const asCorrections: Correction[] = [
-    ...reverts.map((r) => ({
-      text: r.subject,
-      source: "revert",
-      session: r.commit.slice(0, 8),
-      at: r.at,
-      // A revert is a decision already taken, so it needs no classifier.
-      confidence: 0.9,
-      signals: ["revert"],
-    })),
-    // A fix subject such as "fix login" is evidence that something broke.
-    // It is not a rule. It stays on `fixes` for the survey and is offered
-    // to the classifier, which admits it only when the words state a rule.
-    ...prose.map((p) => ({
-      text: p.text,
-      source: "prose_rule",
-      session: `${p.file}:${p.line}`,
-      at: null,
-      // Someone wrote it down deliberately; it is a rule by construction.
-      confidence: 0.8,
-      signals: ["written_rule"],
-    })),
-  ];
+  const asCorrections: Correction[] = reverts.map((r) => ({
+    text: r.subject,
+    source: "revert",
+    session: r.commit.slice(0, 8),
+    at: r.at,
+    confidence: 0.9,
+    signals: ["revert"],
+  }));
 
   return { reverts, fixes, prose, asCorrections };
 }

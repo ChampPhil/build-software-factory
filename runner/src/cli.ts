@@ -18,7 +18,9 @@ import { runConflictsCommand } from "./commands/conflicts.js";
 import { runSyncCommand } from "./commands/sync-settings.js";
 import { runAuditCommand, blockingFindings } from "./commands/audit.js";
 import { scanAssetHosts } from "./commands/asset-hosts.js";
-import { scanProse, renderProse, budgetVerdict, budgetBytes, alwaysLoaded } from "./commands/repo-prose.js";
+import {
+  scanProse, renderProse, budgetVerdict, budgetBytes, alwaysLoaded, proseBaseSizes, prosePayload,
+} from "./commands/repo-prose.js";
 import { planUninstall, applyUninstall, formatPlan, removeLocalFactory, removeLocalFactoryBranches, LOCAL_FACTORY_DIR } from "./commands/uninstall.js";
 import { readBrainstorm, render as renderBrainstorm } from "./commands/brainstorm.js";
 import { byFileOf } from "./commands/gates.js";
@@ -189,9 +191,9 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
       names. Every role reads these: they are the owners' own statement of
       house style, and the factory's context supplements them.
   bsf prose-budget [--root DIR]
-      Is any always-loaded prose file over its budget? Those files are in
-      every run's context, so past the cap a practice has to replace one
-      already there rather than being appended.
+      Did this change grow an always-loaded prose file past its budget?
+      A file that was already over the cap, and that this change did not
+      grow, passes. Past the cap, a new practice replaces one already there.
   bsf uninstall [--apply] [--purge-data] [--root DIR]
       Take the factory out of operation. Keeps everything it built.
       --apply also deletes the .factory/ folder on this computer, including
@@ -942,6 +944,7 @@ async function gatesStatic(args: Args): Promise<number> {
     coverageAfter: await loadCoverage(disk),
     changedFiles: changedFilesSince(base),
     declared: await declaredChecks(),
+    proseBase: base,
   });
 
   process.stdout.write(`${result.summary}\n`);
@@ -2328,10 +2331,10 @@ async function repoProseCommand(args: Args): Promise<number> {
  *
  * `AGENTS.md` and its kind are read on every build and every gardening run, so
  * a line added there is paid for on every run for as long as the repo exists.
- * Hardening may write a practice into them, and the cheapest thing an agent can
- * do is append one more line; fifty corrections later the file it keeps growing
- * is the thing degrading all of its own work. Past the cap, a new practice has
- * to replace one already there.
+ * The command fails only when this checkout made one of those files larger
+ * and left it over the cap. A file the owners already wrote, which this
+ * change did not grow, passes, and the output says so without calling it a
+ * failure. Past the cap, a new practice has to replace one already there.
  */
 async function proseBudgetCommand(args: Args): Promise<number> {
   const root = typeof args["root"] === "string" ? args["root"] : process.cwd();
@@ -2344,20 +2347,32 @@ async function proseBudgetCommand(args: Args): Promise<number> {
   }
   const scan = scanProse(root, policy);
   const budget = budgetBytes(policy);
-  const verdict = budgetVerdict(scan, budget);
+  const paths = alwaysLoaded(scan).map((d) => d.path);
+  const prior = proseBaseSizes(root, paths);
+  const current: Record<string, number> = {};
+  for (const p of paths) current[p] = prosePayload(root, p);
+  const verdict = budgetVerdict(scan, budget, prior, current);
+  const grown = new Set(verdict.over.map((o) => o.path));
 
   for (const d of alwaysLoaded(scan)) {
-    process.stdout.write(`${d.bytes > budget ? "OVER" : "ok  "} ${d.path}\t${d.bytes}/${budget} bytes\n`);
+    if (grown.has(d.path)) {
+      process.stdout.write(`OVER ${d.path}\t${d.bytes}/${budget} bytes, grown past the cap\n`);
+    } else if (d.bytes > budget) {
+      process.stdout.write(`ok   ${d.path}\t${d.bytes}/${budget} bytes, already over the cap and not grown here\n`);
+    } else {
+      process.stdout.write(`ok   ${d.path}\t${d.bytes}/${budget} bytes\n`);
+    }
   }
   if (verdict.ok) {
-    process.stdout.write(`every always-loaded prose file is within ${budget} bytes\n`);
+    process.stdout.write(`no always-loaded prose file grew past ${budget} bytes\n`);
     return 0;
   }
   for (const o of verdict.over) {
     process.stderr.write(
-      `OVER BUDGET  ${o.path} is ${o.bytes} bytes, over the ${o.budget}-byte cap. ` +
-        `It is read on every run, so consolidate it — merge overlapping lines, drop what no longer holds, ` +
-        `or move a grown section into a file read on demand — rather than adding to it.\n`,
+      `OVER BUDGET  ${o.path} grew from ${o.before} to ${o.now} bytes and is over the ${o.budget}-byte cap. ` +
+        `Consolidate that growth — merge overlapping lines, drop what no longer holds, ` +
+        `or move the section this change added into a file read on demand. ` +
+        `Do not split a file this change did not grow.\n`,
     );
   }
   setOutput("prose_over_budget", String(verdict.over.length));

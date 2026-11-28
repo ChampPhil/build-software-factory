@@ -17,7 +17,8 @@
  * below are resolved on every run instead, so a file added today is read today.
  */
 
-import { readdirSync, statSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import type { Policy } from "../lib/types.js";
 
@@ -75,6 +76,10 @@ export function eligible(path: string): boolean {
  * anyone reads carefully. The number matters less than having one: the failure
  * it prevents is a hardening pipeline that appends a line per correction until
  * the file it keeps adding to is the thing degrading every run.
+ *
+ * The cap fails growth. A file the owners already wrote, left the same size,
+ * is not a defect, even when it is over the cap. A pull request that makes
+ * such a file larger, and leaves it over the cap, fails.
  */
 export const DEFAULT_BUDGET_BYTES = 16_384;
 
@@ -266,21 +271,147 @@ export const alwaysLoaded = (scan: ProseScan): readonly ProseDoc[] => scan.docs.
 
 export interface BudgetVerdict {
   readonly ok: boolean;
-  readonly over: readonly { readonly path: string; readonly bytes: number; readonly budget: number }[];
+  readonly over: readonly {
+    readonly path: string;
+    readonly bytes: number;
+    /** Payload bytes on the base. 0 means the file was not there. */
+    readonly before: number;
+    /** Payload bytes in this checkout, carriage returns stripped. */
+    readonly now: number;
+    readonly budget: number;
+  }[];
 }
 
 /**
- * Per file, not in total.
+ * Fail when one always-loaded file is over the cap and this change made it larger.
  *
- * A total would let one file grow without limit as long as another shrank, and
- * the cost that matters is how much any single always-loaded file adds to every
- * run's context.
+ * scan: the files in the checkout.
+ * budget: the cap in bytes of the file on disk.
+ * prior: payload bytes of each file on the base commit. A missing path counts
+ * as 0, so a new file is growth.
+ * current: payload bytes in the checkout. A missing path uses the on-disk
+ * size, which is what a test that only wrote the file is measuring.
+ *
+ * Per file, not in total. A total would let one file grow without limit as
+ * long as another shrank. Carriage returns are stripped before the two
+ * payloads are compared, so a checkout that stores the same text with
+ * different line endings has not grown the file.
  */
-export function budgetVerdict(scan: ProseScan, budget = DEFAULT_BUDGET_BYTES): BudgetVerdict {
+export function budgetVerdict(
+  scan: ProseScan,
+  budget = DEFAULT_BUDGET_BYTES,
+  prior: Readonly<Record<string, number>> = {},
+  current: Readonly<Record<string, number>> = {},
+): BudgetVerdict {
   const over = alwaysLoaded(scan)
-    .filter((d) => d.bytes > budget)
-    .map((d) => ({ path: d.path, bytes: d.bytes, budget }));
+    .filter((d) => {
+      const before = prior[d.path] ?? 0;
+      const now = current[d.path] ?? d.bytes;
+      return d.bytes > budget && now > before;
+    })
+    .map((d) => ({
+      path: d.path,
+      bytes: d.bytes,
+      before: prior[d.path] ?? 0,
+      now: current[d.path] ?? d.bytes,
+      budget,
+    }));
   return { ok: over.length === 0, over };
+}
+
+/**
+ * Payload bytes of a file in the checkout, with carriage returns removed.
+ *
+ * root: the checkout.
+ * rel: a repo-relative path.
+ * Returns 0 when the file is not there.
+ */
+export function prosePayload(root: string, rel: string): number {
+  try {
+    return payloadBytes(readFileSync(join(root, rel)));
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Payload bytes of each path on the base commit.
+ *
+ * root: the checkout.
+ * paths: repo-relative paths.
+ * base: a git ref such as origin/main. When omitted, the pull request's base,
+ * then origin/HEAD, then main.
+ * Returns a count per path. A path missing on the base is 0. When git cannot
+ * answer, every path is 0, which treats the file as new.
+ */
+export function proseBaseSizes(
+  root: string,
+  paths: readonly string[],
+  base?: string,
+): Readonly<Record<string, number>> {
+  const rev = resolveProseBase(root, base);
+  const out: Record<string, number> = {};
+  for (const p of paths) out[p] = rev === null ? 0 : blobPayload(root, rev, p);
+  return out;
+}
+
+/** Bytes of text, ignoring carriage returns so line endings are not growth. */
+function payloadBytes(buf: Buffer): number {
+  let n = 0;
+  for (let i = 0; i < buf.length; i++) if (buf[i] !== 13) n++;
+  return n;
+}
+
+/**
+ * The commit this checkout branched from.
+ *
+ * root: the checkout.
+ * base: an explicit ref. When omitted, GITHUB_BASE_REF, then origin/HEAD,
+ * then main or master.
+ * Returns the merge-base sha, or null when git has no such commit.
+ */
+function resolveProseBase(root: string, base?: string): string | null {
+  const fromEnv = process.env["GITHUB_BASE_REF"];
+  const requested = base !== undefined && base !== ""
+    ? base
+    : fromEnv !== undefined && fromEnv !== ""
+      ? `origin/${fromEnv}`
+      : "origin/HEAD";
+  const seen = new Set<string>();
+  for (const candidate of [requested, "origin/main", "main", "origin/master", "master"]) {
+    if (seen.has(candidate)) continue;
+    seen.add(candidate);
+    const found = gitText(root, ["merge-base", "HEAD", candidate]);
+    if (found !== null && found.trim() !== "") return found.trim();
+  }
+  return null;
+}
+
+/** Payload bytes of one blob. 0 when the path is not in that commit. */
+function blobPayload(root: string, rev: string, rel: string): number {
+  try {
+    const buf = execFileSync("git", ["cat-file", "blob", `${rev}:${rel}`], {
+      cwd: root,
+      stdio: ["ignore", "pipe", "ignore"],
+      maxBuffer: 16 * 1024 * 1024,
+    });
+    return payloadBytes(buf);
+  } catch {
+    return 0;
+  }
+}
+
+/** git output, or null when the command fails. stderr is discarded. */
+function gitText(root: string, args: readonly string[]): string | null {
+  try {
+    return execFileSync("git", [...args], {
+      cwd: root,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+  } catch {
+    return null;
+  }
 }
 
 /**

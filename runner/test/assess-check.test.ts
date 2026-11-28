@@ -40,6 +40,19 @@ describe("assessmentProblems", () => {
     expect(problems.some((p) => p.includes("How it builds and tests"))).toBe(true);
   });
 
+  it("accepts a short section", () => {
+    const text = survey().replace(
+      "Python tests are pytest from the backend. The site tests are vitest. Docker Compose starts Postgres.",
+      "pytest.",
+    );
+    expect(assessmentProblems(text, report)).toEqual([]);
+  });
+
+  it("accepts a competing-patterns section with no digit", () => {
+    const text = survey().replace("One pattern for writes. Count: 1. No second client beside the official one was found.", "One pattern for writes. No second client.");
+    expect(assessmentProblems(text, report)).toEqual([]);
+  });
+
   it("rejects a survey that does not repeat the miner's sentence", () => {
     const text = survey().replace(summary, "Mining found some things.");
     expect(assessmentProblems(text, report).some((p) => p.includes("miner's summary"))).toBe(true);
@@ -64,6 +77,10 @@ describe("copiedFundamentals", () => {
     ].join("\n");
     const copies = copiedFundamentals(fundamentals, [readme]);
     expect(fundamentalsProblems(copies, 3).length).toBeGreaterThan(0);
+  });
+
+  it("allows a few shared sentences when most of the file is new", () => {
+    expect(fundamentalsProblems(["copied line ".repeat(4)], 10)).toEqual([]);
   });
 
   it("allows a line that is not in the house docs", () => {

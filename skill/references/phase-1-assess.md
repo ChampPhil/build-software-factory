@@ -100,10 +100,11 @@ A candidate left pending means setup is not finished. An add-the-rule card
 is not the install path. Do not leave the list for them to click through.
 
 Run `bsf mine-corrections`. It writes `.factory/guardrails/mining-report.json`.
-A revert and a written rule are already corrections. A fix-commit subject, an
-applied review comment, a bug issue closed by a commit, and a soft chat turn
-are evidence. They are not rules until a label says so and the quote is
-copied from that evidence. Exit 2 means those findings are still unlabelled.
+A revert is already a correction. A sentence from a conventions file, a
+fix-commit subject, an applied review comment, a bug issue closed by a
+commit, and a soft chat turn are evidence. They are not rules until a label
+says so and the quote is copied from that evidence. Exit 2 means those
+findings are still unlabelled.
 Write `.factory/guardrails/classes.json` as
 `{"labels":[{"id":"...","kind":"rule"|"once"|"noise","enforcement":"api_change"|"static_rule"|"verification"|"context","quote":"a span copied from the finding"}]}`
 and run `bsf mine-corrections --classes .factory/guardrails/classes.json`.
@@ -112,21 +113,26 @@ and you pass no classes file, the miner asks the model itself.
 
 ## The survey has to be complete
 
-`assessment.md` uses these headings, each with a real paragraph, not a slogan:
+`assessment.md` uses these headings. Each one has to be there. A short true
+sentence is enough. The check does not measure length.
 
 - `## How it builds and tests`
 - `## The test check` — the repo's own test workflow and what triggers it, or
   that there is none
 - `## Patterns` — the dominant pattern per concern, from the code
-- `## Where two patterns compete` — a count, including a count of one
+- `## Where two patterns compete` — how many patterns compete, including when
+  the answer is one
 - `## Coverage` — the measured floor, or that there are no tests
 - `## What mining found` — paste the miner's summary sentence unchanged
 
-Then run `bsf assess check`. Setup is not finished while it fails. A
-twenty-line sketch fails. The file is still deleted after the setup pull
-request merges. `practices.md` and `fundamentals.md` stay short, because
-every later run re-reads them. `fundamentals.md` does not copy the README or
-`AGENTS.md`. `bsf assess fundamentals` refuses that copy.
+Then run `bsf assess check`. Setup is not finished while it fails. A survey
+that skips a heading, or that does not paste the miner's summary sentence,
+fails. The file is still deleted after the setup pull request merges.
+`practices.md` and `fundamentals.md` stay short, because every later run
+re-reads them. `fundamentals.md` does not become a second copy of the README
+or `AGENTS.md`. `bsf assess fundamentals` refuses it when half or more of
+its long lines are copied from those files. A few shared sentences are not
+a failure.
 
 ## What to watch for
 

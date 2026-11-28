@@ -86,13 +86,15 @@ with `gh workflow run factory-setup.yml`, only after the key, the app, and the d
 
 1. **Bootstrap.** `node scripts/install-factory.mjs --into <checkout>` on a
    branch. Before you open the pull request, run `bsf prose-budget` in that
-   checkout. If a file is over the cap, shorten it on this same branch until
-   the command exits 0. Merge lines that say the same thing, drop what no
-   longer holds, or move a grown section into a file that is read only when
-   a task needs it. Do not delete a product rule to get under the cap, and
-   do not leave an over-cap file for a later pull request. The gates that
-   land with this merge fail every later pull request, including a fix that
-   setup itself needs, until those files are under the cap.
+   checkout. The command fails only when this branch made an always-loaded
+   file larger and that file is over the cap. A file the owners already
+   wrote, which this branch did not grow, is not a failure. Do not shorten
+   it, and do not move their rules into another file to get under a cap
+   they were already over. If the command fails, this branch grew the file.
+   Consolidate that growth on this same branch: merge lines that say the
+   same thing, drop what no longer holds, or move a section this branch
+   added into a file that is read only when a task needs it. Do not delete
+   a product rule to get under the cap.
 
    Open the bootstrap pull request with the body the installer
    wrote, at `.factory/bootstrap-pr.md`. Do not compose that body yourself.
