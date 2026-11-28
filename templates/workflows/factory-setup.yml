@@ -53,6 +53,7 @@ jobs:
             .factory/bin
             .factory/definition
             .factory/sandbox/manifest.json
+            .github/workflows
           sparse-checkout-cone-mode: false
           persist-credentials: false
       # A push gets here when the runner or the definition changes, which
@@ -90,7 +91,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if bsf doctor --repo "$GITHUB_REPOSITORY" --quiet; then
+          if bsf doctor --repo "$GITHUB_REPOSITORY" --root .factory-trusted --quiet; then
             echo "ready=true" >> "$GITHUB_OUTPUT"
           else
             echo "ready=false" >> "$GITHUB_OUTPUT"
@@ -99,7 +100,7 @@ jobs:
               echo
               echo "The factory's definition is on \`$GITHUB_REF_NAME\`, but it cannot run yet:"
               echo
-              bsf doctor --repo "$GITHUB_REPOSITORY" || true
+              bsf doctor --repo "$GITHUB_REPOSITORY" --root .factory-trusted || true
               echo
               echo "Finish those, then run **factory-setup** from the Actions tab — or just ask"
               echo "your coding agent to carry on with the software factory setup."
