@@ -59,4 +59,20 @@ describe("missing credentials are caught before a job mints a token or starts a 
   it("the compiled setup-agent lock still exists for callers", () => {
     expect(existsSync(join(ROOT, "templates/compiled/factory-setup-agent.lock.yml"))).toBe(true);
   });
+
+  it("a job that only needs the App does not mention the model key", () => {
+    // Reusable workflows may only name secrets they declare. A settle job
+    // that only mints an App token cannot read ANTHROPIC_API_KEY.
+    const leaked: string[] = [];
+    for (const file of files) {
+      const text = readFileSync(join(WORKFLOWS, file), "utf8");
+      const steps = text.split(/\n(?=      - name:)/);
+      for (const step of steps) {
+        if (!/bsf credentials check --need app\s*$/m.test(step)) continue;
+        if (/bsf credentials check --need app,/.test(step)) continue;
+        if (step.includes("ANTHROPIC_API_KEY")) leaked.push(file);
+      }
+    }
+    expect(leaked).toEqual([]);
+  });
 });

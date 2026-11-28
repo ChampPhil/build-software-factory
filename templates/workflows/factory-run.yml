@@ -240,7 +240,6 @@ jobs:
           "$RUNNER_TEMP/bsf/bsf" --version
       - name: Stop if the credentials this job needs are missing
         env:
-          HAS_MODEL: ${{ secrets.ANTHROPIC_API_KEY != '' }}
           HAS_APP_ID: ${{ vars.FACTORY_APP_CLIENT_ID != '' }}
           HAS_APP_KEY: ${{ secrets.FACTORY_APP_PRIVATE_KEY != '' }}
         run: bsf credentials check --need app
@@ -293,7 +292,6 @@ jobs:
           echo "$RUNNER_TEMP/bsf" >> "$GITHUB_PATH"
       - name: Stop if the credentials this job needs are missing
         env:
-          HAS_MODEL: ${{ secrets.ANTHROPIC_API_KEY != '' }}
           HAS_APP_ID: ${{ vars.FACTORY_APP_CLIENT_ID != '' }}
           HAS_APP_KEY: ${{ secrets.FACTORY_APP_PRIVATE_KEY != '' }}
         run: bsf credentials check --need app
@@ -389,7 +387,6 @@ jobs:
           echo "$RUNNER_TEMP/bsf" >> "$GITHUB_PATH"
       - name: Stop if the credentials this job needs are missing
         env:
-          HAS_MODEL: ${{ secrets.ANTHROPIC_API_KEY != '' }}
           HAS_APP_ID: ${{ vars.FACTORY_APP_CLIENT_ID != '' }}
           HAS_APP_KEY: ${{ secrets.FACTORY_APP_PRIVATE_KEY != '' }}
         run: bsf credentials check --need app
@@ -638,7 +635,6 @@ jobs:
           "$RUNNER_TEMP/bsf/bsf" --version
       - name: Stop if the credentials this job needs are missing
         env:
-          HAS_MODEL: ${{ secrets.ANTHROPIC_API_KEY != '' }}
           HAS_APP_ID: ${{ vars.FACTORY_APP_CLIENT_ID != '' }}
           HAS_APP_KEY: ${{ secrets.FACTORY_APP_PRIVATE_KEY != '' }}
         run: bsf credentials check --need app
@@ -752,7 +748,6 @@ jobs:
           echo "$RUNNER_TEMP/bsf" >> "$GITHUB_PATH"
       - name: Stop if the credentials this job needs are missing
         env:
-          HAS_MODEL: ${{ secrets.ANTHROPIC_API_KEY != '' }}
           HAS_APP_ID: ${{ vars.FACTORY_APP_CLIENT_ID != '' }}
           HAS_APP_KEY: ${{ secrets.FACTORY_APP_PRIVATE_KEY != '' }}
         run: bsf credentials check --need app
