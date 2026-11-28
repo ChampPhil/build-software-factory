@@ -113,7 +113,12 @@ function keysOf(text) {
  * Returns the status and the text it wrote.
  */
 function bsf(args) {
-  const run = spawnSync(runnerPath(), args, { encoding: "utf8" });
+  const run = spawnSync(runnerPath(), args, {
+    encoding: "utf8",
+    // Windows only runs the .cmd launcher through a shell. The arguments stay
+    // a list, and the output is names, never values.
+    shell: process.platform === "win32",
+  });
   return { status: run.status ?? 1, out: `${run.stdout ?? ""}${run.stderr ?? ""}` };
 }
 
@@ -136,7 +141,7 @@ const dir = mkdtempSync(join(tmpdir(), "bsf-env-"));
 const namesFile = join(dir, "names.txt");
 const keyLines = [];
 for (const file of files) {
-  for (const key of keysOf(readFileSync(file))) {
+  for (const key of keysOf(readFileSync(file, "utf8"))) {
     if (!keyLines.includes(key)) keyLines.push(key);
   }
 }
@@ -144,7 +149,7 @@ writeFileSync(namesFile, `${keyLines.join("\n")}\n`);
 
 const scan = bsf(["env", "scan", "--root", root, "--names-file", namesFile]);
 if (scan.status === 0 || development) {
-  const merged = files.map((file) => readFileSync(file)).join("\n");
+  const merged = files.map((file) => readFileSync(file, "utf8")).join("\n");
   if (repo !== undefined && repo !== "" && files.length > 0) {
     const set = spawnSync("gh", ["secret", "set", "FACTORY_SANDBOX_ENV", "--repo", repo], {
       input: merged,
