@@ -10,9 +10,8 @@
  *
  * Key terms:
  *     - Development: every local value is for development. The screen marks
- *       nothing to fake and does not ask. A name that is not in the local
- *       env files is ignored and remembered. The settings screen can undo
- *       that later. A name still waiting after that blocks the cloud job.
+ *       nothing to fake and does not ask. A name that is still missing
+ *       blocks the cloud job.
  *     - Use it: the value is already in a local env file, and the whole
  *       file is saved into the secret.
  *     - Ignore this key: the name is not an app setting. That choice is
@@ -113,32 +112,9 @@ function keysOf(text) {
  * args: the bsf arguments.
  * Returns the status and the text it wrote.
  */
-function bsf(args, extraEnv) {
-  const run = spawnSync(runnerPath(), args, {
-    encoding: "utf8",
-    env: extraEnv === undefined ? process.env : { ...process.env, ...extraEnv },
-  });
+function bsf(args) {
+  const run = spawnSync(runnerPath(), args, { encoding: "utf8" });
   return { status: run.status ?? 1, out: `${run.stdout ?? ""}${run.stderr ?? ""}` };
-}
-
-/**
- * Names the scan printed as still waiting. The line is the name, where it
- * was read, and the decision. A value is never on the line.
- *
- * text: the scan's text.
- * Returns the names whose decision is missing or replace.
- */
-function waitingNames(text) {
-  const names = [];
-  for (const line of text.split(/\r?\n/)) {
-    const parts = line.trim().split(/\s+/);
-    if (parts.length < 3) continue;
-    const decision = parts[parts.length - 1];
-    if (decision !== "missing" && decision !== "replace") continue;
-    const name = parts[0];
-    if (name !== undefined && name !== "" && !names.includes(name)) names.push(name);
-  }
-  return names;
 }
 
 const argv = process.argv.slice(2);
@@ -166,23 +142,7 @@ for (const file of files) {
 }
 writeFileSync(namesFile, `${keyLines.join("\n")}\n`);
 
-let scan = bsf(["env", "scan", "--root", root, "--names-file", namesFile]);
-if (development && scan.status !== 0 && repo !== undefined && repo !== "") {
-  const ignore = waitingNames(scan.out);
-  if (ignore.length > 0) {
-    const applied = bsf(["env", "apply", "--root", root], {
-      DECISIONS: JSON.stringify({ ignore }),
-      GITHUB_REPOSITORY: repo,
-      RESUME: "false",
-    });
-    if (applied.status !== 0 && applied.status !== 1) {
-      rmSync(dir, { recursive: true, force: true });
-      console.error("The names that are not in the local env files could not be remembered.");
-      process.exit(1);
-    }
-    scan = bsf(["env", "scan", "--root", root, "--names-file", namesFile]);
-  }
-}
+const scan = bsf(["env", "scan", "--root", root, "--names-file", namesFile]);
 if (scan.status === 0 || development) {
   const merged = files.map((file) => readFileSync(file)).join("\n");
   if (repo !== undefined && repo !== "" && files.length > 0) {
