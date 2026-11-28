@@ -247,7 +247,7 @@ export function stripFactoryDependabot(text: string): { readonly text: string; r
 }
 
 /**
- * The private repository named in factory.yaml, when records are stored there.
+ * The private repository the factory definition names, when records are stored there.
  *
  * @param text - The contents of `.factory/definition/factory.yaml`.
  * @returns `owner/name`, or null when records stay in this repository.

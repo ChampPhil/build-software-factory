@@ -366,10 +366,21 @@ export async function assembleMine(opts: {
   const mined = candidatesFrom(clusterCorrections(all), opts.now);
   let doc: CandidatesFile = { schema: "candidates/1", candidates: mined };
   if (opts.mergeInto !== undefined) {
+    // Update mode. The existing list holds decisions — accepted, rejected,
+    // installed — and re-mining must not undo any of them, or re-offer
+    // something the user has already turned down.
     const existing: CandidatesFile = existsSync(opts.mergeInto)
       ? (JSON.parse(readFileSync(opts.mergeInto, "utf8")) as CandidatesFile)
       : { schema: "candidates/1", candidates: [] };
-    doc = mergeContribution(existing, mined, null).merged;
+    const merge = mergeContribution(existing, mined, null);
+    doc = merge.merged;
+    lines.push(
+      `${merge.added.length} new, ${merge.folded.length} already pending (counts raised), ` +
+        `${merge.skipped.length} already decided and not re-offered`,
+    );
+    for (const c of merge.added.slice(0, 10)) {
+      lines.push(`  ${c.occurrences}x  ${c.problem_class.slice(0, 90)}`);
+    }
   }
   assertValid("candidates", doc);
   mkdirSync(dirname(opts.out), { recursive: true });

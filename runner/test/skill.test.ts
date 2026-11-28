@@ -72,7 +72,7 @@ describe("SKILL.md", () => {
   });
 
   it("covers all seven phases, in order", () => {
-    const order = PHASES.map((p) => text.indexOf(`## Phase ${p} —`));
+    const order = PHASES.map((p) => text.indexOf(`\n## ${p} — `));
     for (const [i, idx] of order.entries()) {
       expect(idx, `phase ${i + 1} is missing`).toBeGreaterThan(-1);
     }
@@ -93,18 +93,21 @@ describe("SKILL.md", () => {
     }
   });
 
-  it("says phase 2 is terminal if the app cannot be made to run", () => {
+  it("says a private copy that fails is repaired and rerun, never shipped thinner", () => {
     // A factory that cannot verify produces confident unverified PRs, so
-    // continuing past a phase 2 failure is the worst available outcome.
-    expect(text).toMatch(/stop and show the failing step/i);
+    // continuing past a failed private copy is the worst available outcome.
+    expect(text).toMatch(/A failed lock-in is\s+repaired and rerun/);
+    expect(text).toMatch(/Do not freeze a partial trial/);
+    expect(text).toMatch(/Do not\s+ship a private-copy-only pull request/);
   });
 
   it("tells the agent not to let the sandbox inherit real credentials", () => {
-    expect(text).toMatch(/never let the sandbox inherit real credentials/i);
+    expect(text).toMatch(/never let it inherit real\s+credentials/i);
   });
 
-  it("says every auto-merge toggle starts off", () => {
-    expect(text).toMatch(/auto-merge toggles start \*\*off\*\*|toggles start \*\*off\*\*/i);
+  it("says every pipeline switch starts off", () => {
+    expect(text).toMatch(/The pipeline switches stay off/);
+    expect(text).toMatch(/Leave\s+those switches off/);
   });
 
   it("lists what the user does, and keeps it short", () => {
@@ -132,8 +135,9 @@ describe("the phase references", () => {
 
   it("phase 2's reference spells out the credential hazard concretely", () => {
     const text = readFileSync(join(REFS, "phase-2-sandbox.md"), "utf8");
-    expect(text).toContain("DATABASE_URL");
-    expect(text).toMatch(/positive list, not a denylist/i);
+    expect(text).toMatch(/database URL points at a hosted database/);
+    expect(text).toMatch(/The closed environment is a positive list/);
+    expect(text).toMatch(/forgotten production value is absent, not inherited/);
   });
 
   it("phase 5's reference lists what gh aw compile rejects", () => {
@@ -371,16 +375,53 @@ describe("mine-corrections --merge-into (the skill's update mode)", () => {
     return dir;
   }
 
+  /**
+   * Run `bsf mine-corrections` and keep its exit code, which is 2 while a
+   * finding still needs a label.
+   *
+   * args: the flags after `mine-corrections`.
+   */
+  function mine(args: string[]): { out: string; code: number } {
+    try {
+      const out = execFileSync("node", [join(SCRIPTS, "../../runner/dist/cli.js"), "mine-corrections", ...args], {
+        encoding: "utf8",
+        stdio: "pipe",
+        // No key: the labels come from the classes file below, never a model.
+        env: { ...process.env, ANTHROPIC_API_KEY: "" },
+      });
+      return { out, code: 0 };
+    } catch (e) {
+      const err = e as { stdout?: string; stderr?: string; status?: number };
+      return { out: `${err.stdout ?? ""}${err.stderr ?? ""}`, code: err.status ?? 1 };
+    }
+  }
+
   it("adds what is new and leaves a rejected candidate rejected", () => {
     const dir = repoWithCorrections();
     const list = join(dir, "candidates.json");
+    const classes = join(dir, "classes.json");
 
-    // First pass: whatever the repo's own prose yields.
-    const first = execFileSync(
-      "node",
-      [join(SCRIPTS, "../../runner/dist/cli.js"), "mine-corrections", "--repo-path", dir, "--merge-into", list],
-      { encoding: "utf8", stdio: "pipe" },
+    // A sentence in a conventions file is evidence, not a rule, until it has a
+    // label. The first pass therefore stops and lists what needs one.
+    const unlabelled = mine(["--repo-path", dir, "--merge-into", list]);
+    expect(unlabelled.code).toBe(2);
+    const report = JSON.parse(readFileSync(join(dir, ".factory/guardrails/mining-report.json"), "utf8")) as {
+      classified: boolean;
+      pending: { id: string; text: string }[];
+    };
+    expect(report.classified).toBe(false);
+    expect(report.pending.length).toBeGreaterThan(0);
+    writeFileSync(
+      classes,
+      JSON.stringify({
+        labels: report.pending.map((p) => ({ id: p.id, kind: "rule", enforcement: "static_rule", quote: p.text })),
+      }),
     );
+
+    // Labelled: whatever the repo's own prose yields.
+    const labelled = mine(["--repo-path", dir, "--merge-into", list, "--classes", classes]);
+    expect(labelled.code).toBe(0);
+    const first = labelled.out;
     expect(first).toContain("new");
     const after = JSON.parse(readFileSync(list, "utf8")) as {
       candidates: { problem_class: string; status: string; occurrences: number }[];
@@ -397,11 +438,9 @@ describe("mine-corrections --merge-into (the skill's update mode)", () => {
         2,
       ),
     );
-    const second = execFileSync(
-      "node",
-      [join(SCRIPTS, "../../runner/dist/cli.js"), "mine-corrections", "--repo-path", dir, "--merge-into", list],
-      { encoding: "utf8", stdio: "pipe" },
-    );
+    const remined = mine(["--repo-path", dir, "--merge-into", list, "--classes", classes]);
+    expect(remined.code).toBe(0);
+    const second = remined.out;
 
     // The whole point of update mode: nothing the user turned down comes back.
     expect(second).toContain("already decided and not re-offered");
