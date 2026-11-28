@@ -603,7 +603,7 @@ async function deleteFactoryRefs(gh: GitHub, repo: string): Promise<void> {
   const listed = await gh
     .get<readonly { readonly ref?: string }[]>(`repos/${repo}/git/matching-refs/factory/live`)
     .catch((): readonly { readonly ref?: string }[] => []);
-  for (const item of Array.isArray(listed) ? listed : []) {
+  for (const item of listed) {
     const ref = typeof item.ref === "string" ? item.ref.replace(/^refs\//, "") : "";
     if (ref !== "") await drop(ref);
   }
