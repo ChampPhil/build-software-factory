@@ -20,7 +20,7 @@
  *     - envCommand: the `bsf env` entry point.
  */
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { scanConfigNames } from "./env-names.js";
 import {
@@ -162,6 +162,8 @@ async function saveWait(wait: WaitFile, extra: QueuedJob | null): Promise<void> 
  * root: the checkout.
  * args: --hold and --inputs queue this job. --names-file adds keys.
  * Returns 0 when nothing is waiting, 1 when the job must not start a model.
+ * `--gate` still writes the `ready` output and always exits 0, so a workflow
+ * that is holding on a setting is waiting, not failed.
  */
 async function scanCommand(root: string, args: Record<string, string | boolean>): Promise<number> {
   const scan = scanConfigNames(root);
@@ -178,8 +180,10 @@ async function scanCommand(root: string, args: Record<string, string | boolean>)
   }
   const wait = buildWait(scan, decisions, secretKeys(args), extra === null ? [] : [extra]);
   await saveWait(wait, wait.waiting > 0 ? extra : null);
+  const gate = args["gate"] === true;
   if (wait.waiting === 0) {
     process.stdout.write("every setting has a decision\n");
+    if (gate) writeReady("true");
     return 0;
   }
   process.stdout.write(`${wait.waiting} setting${wait.waiting === 1 ? " is" : "s are"} waiting\n`);
@@ -189,7 +193,26 @@ async function scanCommand(root: string, args: Record<string, string | boolean>)
     }
   }
   for (const file of wait.dynamic) process.stdout.write(`unknown ${file}\n`);
+  if (gate) {
+    writeReady("false");
+    return 0;
+  }
   return 1;
+}
+
+/**
+ * Write the `ready` step output, when this process is inside Actions.
+ *
+ * value: `true` or `false`.
+ */
+function writeReady(value: "true" | "false"): void {
+  const file = process.env["GITHUB_OUTPUT"];
+  if (file === undefined) {
+    process.stdout.write(`ready=${value}\n`);
+    return;
+  }
+  const mark = `__bsf_${Math.random().toString(36).slice(2)}`;
+  appendFileSync(file, `ready<<${mark}\n${value}\n${mark}\n`);
 }
 
 /**
@@ -211,10 +234,14 @@ async function listCommand(root: string, args: Record<string, string | boolean>)
  * Save the screen's choices from the DECISIONS environment variable.
  *
  * The variable is JSON with use, fake, ignore, undo, skip, and replace
- * arrays of names. It has no values. When the list is then clear, the
- * queued jobs are started.
+ * arrays of names. It has no values. Names in `use` are treated as present
+ * even when the secret this job was started with does not yet list them:
+ * the screen wrote those values just before this job, and the injected
+ * secret can lag. Saving the choices is success; a remaining wait is
+ * printed as information. The queued jobs start only when nothing is
+ * waiting.
  * root: the checkout.
- * Returns 0 when the list is clear, 1 when names are still waiting.
+ * Returns 0 after the choices are saved. A parse error of DECISIONS is 2.
  */
 async function applyCommand(root: string): Promise<number> {
   const raw = process.env["DECISIONS"] ?? "{}";
@@ -225,11 +252,13 @@ async function applyCommand(root: string): Promise<number> {
   await saveDecisions(root, next);
   const scan = scanConfigNames(root);
   const queue = await loadQueue();
-  const wait = buildWait(scan, next, secretKeys({}), queue);
+  const keys = secretKeys({});
+  for (const name of patch.use ?? []) keys.add(name);
+  const wait = buildWait(scan, next, keys, queue);
   await saveWait(wait, null);
   if (wait.waiting > 0) {
     process.stdout.write(`${wait.waiting} setting${wait.waiting === 1 ? " is" : "s are"} waiting\n`);
-    return 1;
+    return 0;
   }
   process.stdout.write("every setting has a decision\n");
   if (process.env["RESUME"] !== "false") return resumeCommand(root);

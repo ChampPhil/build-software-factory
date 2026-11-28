@@ -65,7 +65,7 @@ import { mineCorrections, listSessions, clusterCorrections, candidatesFrom } fro
 import { mineRepo } from "./commands/mine-repo.js";
 import { mineGithub, ghAt, filesInCommit, repoSlug } from "./commands/mine-github.js";
 import { assembleMine, anthropicClassifier, splitFindings } from "./commands/mine-classify.js";
-import { assessCheck } from "./commands/assess-check.js";
+import { assessCheck, writeSurvey } from "./commands/assess-check.js";
 import { runScorers, loadRubrics } from "./commands/score.js";
 import { readFileSync, appendFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, statSync, rmSync } from "node:fs";
 import { specProblems, type SpecGateInput, type SpecLike } from "./commands/spec-gate.js";
@@ -300,6 +300,9 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
       they are a rule and quotes their text. --classes is that label file.
       Exit 2 means findings are still unlabelled and setup is not finished.
 
+  bsf assess write --from FILE [--root DIR]
+      Write assessment.md from a filled-in survey JSON. The program owns the
+      markdown; the writer fills in JSON.
   bsf assess check [--root DIR]
       Refuse a thin survey. assessment.md must cover the build, the test
       check, the patterns, a count where two patterns compete, coverage, and
@@ -317,19 +320,22 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
   bsf sandbox ui-paths [--file PATH]   (record which files are the UI)
   bsf enforcement detect [--file PATH] (record whether this repo can require checks)
   bsf sandbox secrets [--file PATH]  (refuse a recipe that pastes a password)
-  bsf env scan [--root DIR] [--hold WORKFLOW] [--inputs JSON] [--names-file PATH]
+  bsf env scan [--root DIR] [--hold WORKFLOW] [--inputs JSON] [--names-file PATH] [--gate]
   bsf env list [--root DIR] [--names-file PATH]
   bsf env apply [--root DIR]
   bsf env resume [--root DIR]
   bsf env skipped [--root DIR]
+  bsf credentials check [--need app,model]
   bsf journeys look
   bsf guardrails require-zero [--file PATH]
-  bsf setup publish --from DIR --into DIR
-  bsf setup journeys --file PATH [--root DIR]
-  bsf setup advance --from journeys|rules|recipe [--state DIR]
-  bsf setup failed --step NAME --summary TEXT [--retry WORKFLOW] [--then pr]
-  bsf setup judge --trial PATH [--journeys PATH]
-  bsf setup reset
+  bsf setup ready --trusted DIR
+  bsf setup start [--amend TEXT]
+  bsf setup plan --step journeys|rules|recipe [--amend TEXT]
+  bsf setup submit --dir DIR
+  bsf setup finish --step journeys|rules|recipe --from DIR [--amend TEXT] [--writer RESULT]
+  bsf setup boot
+  bsf setup pr
+  bsf setup status [--repo OWNER/NAME] [--json]
   bsf sandbox dry-run   (start the sandbox and serve the app, as the checker will)
   bsf sandbox start
       Bring up the frozen sandbox: its services, its closed environment, its install.
@@ -586,6 +592,8 @@ async function main(argv: readonly string[]): Promise<number> {
       return sandboxCommandCli(second, args);
     case "env":
       return (await import("./commands/env-command.js")).envCommand(second, args);
+    case "credentials":
+      return (await import("./commands/credentials.js")).credentialsCommand(second, args);
     case "setup":
       return (await import("./commands/setup-command.js")).setupCommand(second, args);
     case "practice":
@@ -631,8 +639,9 @@ async function main(argv: readonly string[]): Promise<number> {
       return mineCommand(args);
 
     case "assess":
+      if (second === "write") return assessWriteCommand(args);
       if (second !== "check" && second !== "fundamentals") {
-        die("usage: bsf assess check [--root DIR] | bsf assess fundamentals [--root DIR]");
+        die("usage: bsf assess write --from FILE [--root DIR] | bsf assess check [--root DIR] | bsf assess fundamentals [--root DIR]");
       }
       return assessCommand(args, second === "fundamentals");
 
@@ -3998,6 +4007,23 @@ async function gitRemote(root: string): Promise<string> {
  * fundamentalsOnly: true for `bsf assess fundamentals`.
  * Returns 0 when nothing is wrong, 1 when the survey or the copy check failed.
  */
+/**
+ * Turn an accepted survey JSON file into `assessment.md`.
+ *
+ * args: `--from` is the JSON the writer produced. `--root` is the checkout
+ * the markdown is written into (and where the mining report is read).
+ * Returns 0 when the file was written, 1 when the JSON did not match the
+ * survey's shape, 2 when the command line is wrong.
+ */
+function assessWriteCommand(args: Args): number {
+  const from = args["from"];
+  if (typeof from !== "string" || from === "") die("usage: bsf assess write --from FILE [--root DIR]");
+  const root = typeof args["root"] === "string" ? args["root"] : process.cwd();
+  const result = writeSurvey(from, root);
+  for (const line of result.lines) process.stdout.write(`${line}\n`);
+  return result.code;
+}
+
 function assessCommand(args: Args, fundamentalsOnly: boolean): number {
   const root = typeof args["root"] === "string" ? args["root"] : process.cwd();
   const problems = assessCheck(root, fundamentalsOnly);

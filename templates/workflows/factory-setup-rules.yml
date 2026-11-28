@@ -16,7 +16,8 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       model_builder: ${{ steps.models.outputs.model_builder }}
-      ready: ${{ steps.env.outputs.ready }}
+      amend: ${{ steps.go.outputs.amend }}
+      ready: ${{ steps.go.outputs.ready }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Fetch the factory runner from the default branch
@@ -44,6 +45,12 @@ jobs:
           echo "$RUNNER_TEMP/bsf" >> "$GITHUB_PATH"
           chmod +x "$RUNNER_TEMP/bsf/"*
           "$RUNNER_TEMP/bsf/bsf" --version
+      - name: Stop if the credentials this job needs are missing
+        env:
+          HAS_MODEL: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+          HAS_APP_ID: ${{ vars.FACTORY_APP_CLIENT_ID != '' }}
+          HAS_APP_KEY: ${{ secrets.FACTORY_APP_PRIVATE_KEY != '' }}
+        run: bsf credentials check --need app,model
       - name: Mint a token
         id: token
         uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1
@@ -55,20 +62,16 @@ jobs:
           permission-issues: write
           owner: ${{ github.repository_owner }}
           repositories: ${{ github.event.repository.name }}
-      - name: Settings still waiting
-        id: env
+      - name: Plan this step
+        id: go
         env:
-          FACTORY_SANDBOX_ENV: ${{ secrets.FACTORY_SANDBOX_ENV }}
           GH_TOKEN: ${{ steps.token.outputs.token }}
-        run: |
-          if bsf env scan --hold factory-setup-rules.yml; then
-            echo "ready=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "ready=false" >> "$GITHUB_OUTPUT"
-          fi
+          FACTORY_SANDBOX_ENV: ${{ secrets.FACTORY_SANDBOX_ENV }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: bsf setup plan --step rules
       - name: Read each role's model from factory.yaml
         id: models
-        if: steps.env.outputs.ready == 'true'
+        if: steps.go.outputs.ready == 'true'
         run: bsf models
 
   seed:
@@ -103,7 +106,7 @@ jobs:
       budget_key: ${{ github.run_id }}-${{ github.run_attempt }}-writer
       model: ${{ needs.plan.outputs.model_builder }}
       round: "9"
-      amend: '{"focus":"standards"}'
+      amend: ${{ needs.plan.outputs.amend }}
     secrets:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       FACTORY_APP_PRIVATE_KEY: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
@@ -121,25 +124,15 @@ jobs:
     secrets:
       FACTORY_APP_PRIVATE_KEY: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
 
-  save:
+  finish:
+    name: Save the standard rules and start the recipe when the journeys are saved too
     needs: [writer, writer-budget]
-    if: always() && needs.writer.result != 'skipped'
-    uses: ./.github/workflows/factory-setup-save.yml
-    with:
-      artifact: setup-round-9
-      marker: rules.done
-    secrets:
-      FACTORY_APP_PRIVATE_KEY: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
-
-  check:
-    name: Keep the standard rules and start the recipe when the journeys are saved too
-    needs: [writer, writer-budget, save]
     if: always() && needs.writer.result != 'skipped'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          fetch-depth: 1
+          fetch-depth: 0
           persist-credentials: false
       - name: Fetch the factory runner from the default branch
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -159,6 +152,12 @@ jobs:
           echo "$RUNNER_TEMP/bsf" >> "$GITHUB_PATH"
           chmod +x "$RUNNER_TEMP/bsf/"*
           "$RUNNER_TEMP/bsf/bsf" --version
+      - name: Stop if the credentials this job needs are missing
+        env:
+          HAS_MODEL: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+          HAS_APP_ID: ${{ vars.FACTORY_APP_CLIENT_ID != '' }}
+          HAS_APP_KEY: ${{ secrets.FACTORY_APP_PRIVATE_KEY != '' }}
+        run: bsf credentials check --need app
       - name: Mint a token
         id: token
         uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1
@@ -170,16 +169,15 @@ jobs:
           permission-issues: write
           owner: ${{ github.repository_owner }}
           repositories: ${{ github.event.repository.name }}
-      - name: Accept the rules or run this step again
+      - name: Download the writer's round
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: setup-round-9
+          path: ${{ runner.temp }}/round
+      - name: Save the round or start this step again
         env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
-          SAVE: ${{ needs.save.result }}
-        run: |
-          set -euo pipefail
-          git fetch "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" factory/setup-state:refs/remotes/origin/factory/setup-state || true
-          git checkout -B factory/setup-state origin/factory/setup-state 2>/dev/null || true
-          if [ "$SAVE" != "success" ] || [ ! -f .factory/setup-state/rules.done ]; then
-            bsf setup failed --step rules --summary "the standard rules were not saved" --retry factory-setup-rules.yml
-            exit 1
-          fi
-          bsf setup advance --from rules --state .factory/setup-state
+          FACTORY_SANDBOX_ENV: ${{ secrets.FACTORY_SANDBOX_ENV }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: bsf setup finish --step rules --from "$RUNNER_TEMP/round" --writer "${{ needs.writer.result }}"

@@ -42,6 +42,12 @@ jobs:
           echo "$RUNNER_TEMP/bsf" >> "$GITHUB_PATH"
           chmod +x "$RUNNER_TEMP/bsf/"*
           "$RUNNER_TEMP/bsf/bsf" --version
+      - name: Stop if the credentials this job needs are missing
+        env:
+          HAS_MODEL: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+          HAS_APP_ID: ${{ vars.FACTORY_APP_CLIENT_ID != '' }}
+          HAS_APP_KEY: ${{ secrets.FACTORY_APP_PRIVATE_KEY != '' }}
+        run: bsf credentials check --need app
       - name: Mint a token
         id: token
         uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1
@@ -55,129 +61,8 @@ jobs:
           owner: ${{ github.repository_owner }}
           repositories: ${{ github.event.repository.name }}
       - name: Open the setup pull request
-        shell: bash
         env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          BASE: ${{ github.event.repository.default_branch }}
-        run: |
-          set -euo pipefail
-          git fetch "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" factory/setup-state
-          mkdir -p "$RUNNER_TEMP/state"
-          git archive FETCH_HEAD .factory/setup-state | tar -x -C "$RUNNER_TEMP/state"
-          design="$RUNNER_TEMP/state/.factory/setup-state"
-          mkdir -p "$design/report"
-          sha=$(sha256sum "$design/manifest.json" | awk '{print $1}')
-          if ! bsf sandbox secrets --file "$design/manifest.json"; then
-            bsf setup failed --step pr --summary "a password is in the recipe $sha" --retry factory-setup-recipe.yml --then pr
-            exit 1
-          fi
-          if [ -f .factory/sandbox/manifest.json ]; then cp .factory/sandbox/manifest.json "$RUNNER_TEMP/main-manifest.json"; AMEND=1; else AMEND=""; fi
-          mkdir -p .factory/sandbox .factory/definition/context
-          cp "$design/manifest.json" .factory/sandbox/manifest.json
-          cp "$design/manifest.json" "$RUNNER_TEMP/manifest.json"
-          bsf sandbox secrets --file .factory/sandbox/manifest.json
-          bsf sandbox ui-paths --file .factory/sandbox/manifest.json
-          if [ -f .factory/definition/factory.yaml ]; then bsf enforcement detect --file .factory/definition/factory.yaml; fi
-          if [ -d "$design/stubs" ]; then rm -rf .factory/sandbox/stubs; cp -R "$design/stubs" .factory/sandbox/stubs; fi
-          if [ -f "$design/research-domains.txt" ]; then cp "$design/research-domains.txt" .factory/sandbox/research-domains.txt; fi
-          if [ -z "$AMEND" ] && [ -d "$design/context" ]; then
-            for f in "$design/context/"*.md; do
-              dest=".factory/definition/context/$(basename "$f")"
-              if [ "$(basename "$f")" = "fundamentals.md" ]; then
-                bsf context merge-intent --existing "$dest" --incoming "$f" --out "$RUNNER_TEMP/fundamentals.merged.md"
-                cp "$RUNNER_TEMP/fundamentals.merged.md" "$dest"
-              else
-                cp "$f" "$dest"
-              fi
-            done
-          fi
-          if [ -f .factory/definition/context/fundamentals.md ]; then
-            if ! bsf assess fundamentals --root .; then
-              bsf setup failed --step pr --summary "fundamentals.md copies the README or AGENTS.md" --retry factory-setup-recipe.yml --then pr
-              exit 1
-            fi
-          fi
-          apply_guardrails() {
-            local patch="$1"
-            if [ ! -s "$patch" ]; then return 0; fi
-            if grep -E '^(\+\+\+|---) [ab]/(\.github|\.factory)/' "$patch"; then
-              echo "::warning::$patch touches .github/ or .factory/; it is left out"
-            elif git apply --index "$patch"; then
-              echo "applied $patch"
-            else
-              echo "::warning::$patch did not apply; it is left out"
-            fi
-          }
-          if [ -z "$AMEND" ]; then
-            apply_guardrails "$design/guardrails.patch"
-          fi
-          guard=""
-          TIER=$(jq -r '.reached // "static"' "$design/trial.json" 2>/dev/null || echo static)
-          if [ -z "$AMEND" ]; then
-            if ! bsf sandbox start; then echo "the private copy did not start; the counts are still recorded"; fi
-            if ! bsf guardrails record > "$RUNNER_TEMP/baseline.txt"; then
-              echo "guardrail counts were not recorded"
-              exit 1
-            fi
-            guard="$(head -1 "$RUNNER_TEMP/baseline.txt")"
-            bsf guardrails require-zero
-            if [ -f "$design/guardrails.json" ]; then
-              guard="$guard. Rules: $(jq -r '"\(.installed // [] | length) installed, \(.skipped // [] | length) left out"' "$design/guardrails.json")"
-            fi
-          fi
-          bsf sandbox dry-run
-          existing=""
-          if [ -z "$AMEND" ]; then
-            existing=$(gh api "repos/${GITHUB_REPOSITORY}/pulls?state=open&per_page=100" \
-              --jq '[.[] | select(.head.ref | startswith("factory/setup-"))] | sort_by(.number) | .[0] | "\(.number) \(.head.ref)"' 2>/dev/null || true)
-            [ "$existing" = "null null" ] && existing=""
-          fi
-          git config user.name "factory[bot]"
-          git config user.email "factory[bot]@users.noreply.github.com"
-          if [ -n "$existing" ]; then
-            existing_pr="${existing%% *}"; branch="${existing#* }"
-            git checkout -q -B "$branch"
-          else
-            existing_pr=""; branch="factory/setup-${GITHUB_RUN_ID}"
-            git checkout -b "$branch"
-          fi
-          git add .factory
-          if git diff --cached --quiet; then echo "nothing changed"; exit 0; fi
-          if [ -z "$AMEND" ]; then title="Set up the software factory"; else title="Amend the factory's sandbox"; fi
-          git commit -q -m "$title"
-          url="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-          if ! git push --force "$url" "$branch"; then
-            bsf setup failed --step pr --summary "the push was rejected $sha" --retry factory-setup-recipe.yml --then pr
-            exit 1
-          fi
-          mkdir -p "$RUNNER_TEMP/trial"
-          if [ -f "$design/trial.json" ]; then cp "$design/trial.json" "$RUNNER_TEMP/trial/trial.json"; fi
-          jq -n --arg tier "$TIER" --arg guard "$guard" --arg run "$RUN_URL" '{
-            focus: ([
-              { title: "What the private copy can exercise", detail: ("It reached " + $tier + " when this computer booted it and clicked the journeys. .factory/sandbox/manifest.json says what it runs.") },
-              { title: "No credential of yours is in it", detail: "A secret is a name. The value stays in the GitHub secret FACTORY_SANDBOX_ENV." }
-            ] + (if $guard == "" then [] else [{ title: "Guardrails", detail: $guard }] end)),
-            links: [{ label: "The boot, and its logs", url: $run }]
-          }' > "$RUNNER_TEMP/report-extra.json"
-          bsf report setup --dir "$design/report" --trial-dir "$RUNNER_TEMP/trial" --tier "$TIER" \
-            --extra "$RUNNER_TEMP/report-extra.json" --out "$RUNNER_TEMP/pr-body.md"
-          if [ -n "$existing_pr" ]; then
-            pr="$existing_pr"
-            gh api -X PATCH "repos/${GITHUB_REPOSITORY}/pulls/$pr" -f title="$title" -F "body=@$RUNNER_TEMP/pr-body.md" > /dev/null
-            echo "updated #$pr"
-          else
-            pr=$(gh api "repos/${GITHUB_REPOSITORY}/pulls" -f title="$title" -f head="$branch" \
-              -f base="$BASE" -F "body=@$RUNNER_TEMP/pr-body.md" --jq .number)
-            echo "opened #$pr"
-          fi
-          if [ -f "$RUNNER_TEMP/pr-body.md.continued.md" ]; then
-            gh api "repos/${GITHUB_REPOSITORY}/issues/$pr/comments" -F "body=@$RUNNER_TEMP/pr-body.md.continued.md" > /dev/null
-          fi
-          report_rc=0
-          bsf report check --pr "$pr" --problems "$RUNNER_TEMP/pr-body.md.problems.json" \
-            --degraded "$RUNNER_TEMP/pr-body.md.degraded.json" || report_rc=$?
-          if [ -f "$RUNNER_TEMP/main-manifest.json" ]; then
-            bsf sandbox land --pr "$pr" --main "$RUNNER_TEMP/main-manifest.json" --candidate "$RUNNER_TEMP/manifest.json"
-          fi
-          exit "$report_rc"
+          FACTORY_SANDBOX_ENV: ${{ secrets.FACTORY_SANDBOX_ENV }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: bsf setup pr

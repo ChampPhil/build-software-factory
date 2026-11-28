@@ -27,12 +27,14 @@
  * Exports
  * -------
  * ASSESSMENT_SECTIONS, assessmentProblems, copiedFundamentals,
- * fundamentalsProblems, assessCheck.
+ * fundamentalsProblems, assessCheck, writeSurvey.
  */
 
-import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { readJsonAnswer, shapeProblems } from "../lib/structured.js";
 import type { MiningReport } from "./mine-classify.js";
+import { SURVEY_SHAPE, renderSurvey } from "./setup-shapes.js";
 
 /** The sections a survey has to have, in the order a reader meets them. */
 export const ASSESSMENT_SECTIONS = [
@@ -158,6 +160,36 @@ export function substantialLines(fundamentals: string): number {
  * fundamentalsOnly: true in the setup pull-request job, which does not have
  * the survey. It only checks that fundamentals.md is not a copy.
  */
+/**
+ * Turn an accepted survey JSON file into `assessment.md`.
+ *
+ * from: the JSON the writer produced (`assessment.json`).
+ * root: the checkout. The mining report is read from here so the miner's
+ * own summary sentence is inserted by this program, and the markdown is
+ * written to `assessment.md` at the root.
+ * Returns 0 when the file was written, 1 when the JSON did not match the
+ * survey's shape.
+ */
+export function writeSurvey(from: string, root: string): { readonly code: number; readonly lines: readonly string[] } {
+  if (!existsSync(from)) return { code: 1, lines: [`${from} was not written`] };
+  const parsed = readJsonAnswer(readFileSync(from, "utf8"));
+  if ("problems" in parsed) return { code: 1, lines: parsed.problems.map((p) => `${from} ${p}`) };
+  const problems = shapeProblems(SURVEY_SHAPE, parsed.value);
+  if (problems.length > 0) return { code: 1, lines: problems.map((p) => `${from} ${p}`) };
+  let miningSummary: string | null = null;
+  const reportPath = join(root, ".factory/guardrails/mining-report.json");
+  if (existsSync(reportPath)) {
+    try {
+      const report = JSON.parse(readFileSync(reportPath, "utf8")) as Partial<MiningReport>;
+      if (typeof report.summary === "string" && report.summary !== "") miningSummary = report.summary;
+    } catch { /* the check will refuse an unreadable report; this write still inserts nothing */ }
+  }
+  const out = join(root, "assessment.md");
+  mkdirSync(dirname(out), { recursive: true });
+  writeFileSync(out, renderSurvey(parsed.value as Record<string, string>, miningSummary));
+  return { code: 0, lines: [`wrote ${out}`] };
+}
+
 export function assessCheck(root: string, fundamentalsOnly = false): readonly string[] {
   const problems: string[] = [];
   const fundamentalsPath = join(root, ".factory/definition/context/fundamentals.md");

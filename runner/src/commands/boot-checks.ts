@@ -376,7 +376,7 @@ export function signedInJourneyProblem(list: string, root: string, skipped: read
  * root: the repository checkout.
  * Returns true when a package.json names a known sign-in package.
  */
-function appHasSignIn(root: string): boolean {
+export function appHasSignIn(root: string): boolean {
   const files = [join(root, "package.json")];
   try {
     for (const name of readdirSync(root)) {

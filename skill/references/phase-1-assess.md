@@ -113,6 +113,11 @@ and you pass no classes file, the miner asks the model itself.
 
 ## The survey has to be complete
 
+Write `assessment.json` with one field per section (`schema` is `"survey/1"`),
+then run `bsf assess write --from assessment.json`. That command writes
+`assessment.md` and inserts the miner's own summary sentence, so the counts
+cannot be misquoted. Then run `bsf assess check`.
+
 `assessment.md` uses these headings. Each one has to be there. A short true
 sentence is enough. The check does not measure length.
 
@@ -123,10 +128,11 @@ sentence is enough. The check does not measure length.
 - `## Where two patterns compete` — how many patterns compete, including when
   the answer is one
 - `## Coverage` — the measured floor, or that there are no tests
-- `## What mining found` — paste the miner's summary sentence unchanged
+- `## What mining found` — extra notes; the miner's summary sentence is
+  inserted by `bsf assess write`, do not type it yourself
 
 Then run `bsf assess check`. Setup is not finished while it fails. A survey
-that skips a heading, or that does not paste the miner's summary sentence,
+that skips a heading, or that does not include the miner's summary sentence,
 fails. The file is still deleted after the setup pull request merges.
 `practices.md` and `fundamentals.md` stay short, because every later run
 re-reads them. `fundamentals.md` does not become a second copy of the README

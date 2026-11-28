@@ -1,339 +1,206 @@
 /**
- * The setup commands that chain one step to the next.
+ * setup-command.ts — the `bsf setup` entry point: one subcommand per setup workflow step.
  *
- * Purpose:
- *     Each setup step is its own workflow. These commands copy a step onto
- *     the branch, decide which workflow runs next, and stop when the same
- *     failure happens twice. They do not print secret values.
+ * WHY THIS EXISTS
  *
- * Key terms:
- *     - Advance: after a step is saved, start the next one. The journey list
- *       and the standard rules both have to be saved before the recipe starts.
- *     - Same failure: the summary matches the previous one for that step.
- *       The second time opens one issue and does not start the step again.
- *     - Judge: read the boot log and say whether the finish line was met,
- *       whether the writer should run again, or whether the person has to
- *       answer a missing name on the screen.
+ * Each setup workflow step is a single `bsf setup ...` command. This file
+ * reads the command line, builds the connection to GitHub, and hands over to
+ * the function that does the work. The work itself is in `setup-steps.ts`
+ * (ready, start, plan, finish, boot, status), `setup-pr.ts` (the pull
+ * request) and `setup-round.ts` (the writer's own check).
  *
- * Exports:
- *     - setupCommand: the `bsf setup` entry point.
+ * THE SUBCOMMANDS
+ *
+ *   bsf setup ready    can setup start at all? (credentials, a whole install)
+ *   bsf setup start    check the settings and start the first steps
+ *   bsf setup plan     before a writer: hold on settings, write its brief
+ *   bsf setup submit   inside the writer's run: check what it wrote
+ *   bsf setup finish   after a writer: check, save, start the next step
+ *   bsf setup boot     boot the saved recipe and click the journeys
+ *   bsf setup pr       open the pull request
+ *   bsf setup status   where setup is, what it waits on, the last failure
+ *
+ * KEY TERMS
+ *
+ *   - Writer: the model run that produces a step's files.
+ *   - Round: the folder the writer leaves its files in.
+ *   - Brief: `amend.json`, what the writer is told before it starts.
+ *   - Record: `env/setup.json` on the factory's data ref, where setup notes
+ *     which step it is on and every failure with its full reason.
+ *
+ * EXPORTS
+ *
+ *   - setupCommand: the `bsf setup` entry point.
  */
 
-import { createHash } from "node:crypto";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { publishSetupStep } from "./setup-flow.js";
-import { deletedJourneyProblem, namesFromBootLog, signedInJourneyProblem, unclickedJourneys, vendorLoginWaiting } from "./boot-checks.js";
-import { FAILURES_PATH, JOURNEY_HEADINGS_PATH, NEXT_PATH, finishLineJourneys, sameFailure, type SetupNext } from "./env-state.js";
 import { DataRefStore } from "../lib/dataref.js";
 import { GitHub } from "../lib/github.js";
+import { prStep } from "./setup-pr.js";
+import type { SetupStep } from "./setup-record.js";
+import { submitRound } from "./setup-round.js";
+import { bootStep, failStep, finishStep, planStep, readyStep, startStep, statusStep } from "./setup-steps.js";
+import { githubWorld, type SetupWorld } from "./setup-world.js";
+
+const USAGE = [
+  "usage:",
+  "  bsf setup ready --trusted DIR",
+  "  bsf setup start [--amend TEXT]",
+  "  bsf setup plan --step journeys|rules|recipe [--amend TEXT]",
+  "  bsf setup submit --dir DIR",
+  "  bsf setup finish --step journeys|rules|recipe --from DIR [--amend TEXT] [--writer RESULT]",
+  "  bsf setup boot",
+  "  bsf setup pr",
+  "  bsf setup status [--repo OWNER/NAME] [--json]",
+].join("\n");
 
 /**
  * Run one `bsf setup` subcommand.
  *
- * second: publish, journeys, advance, failed, or judge.
+ * second: the subcommand, as listed at the top of this file.
  * args: the flags for that subcommand.
- * Returns 0 on success, 1 when the step should be tried again, 2 when setup
- * has stopped or the command line is wrong.
+ * Returns 0 on success, 1 when a step was started again, 2 when setup has
+ * stopped or the command line is wrong.
  */
 export async function setupCommand(second: string | undefined, args: Record<string, string | boolean>): Promise<number> {
-  if (second === "publish") return publishCommand(args);
-  if (second === "journeys") return journeysCommand(args);
-  if (second === "advance") return advanceCommand(args);
-  if (second === "failed") return failedCommand(args);
-  if (second === "judge") return judgeCommand(args);
-  if (second === "reset") return resetCommand();
-  process.stderr.write("usage: bsf setup publish|journeys|advance|failed|judge\n");
+  const text = (name: string): string => (typeof args[name] === "string" ? (args[name] as string) : "");
+  const root = text("root") === "" ? process.cwd() : text("root");
+
+  if (second === "submit") {
+    if (text("dir") === "") return usage();
+    const result = submitRound(text("dir"), root);
+    for (const line of result.lines) process.stdout.write(`${line}\n`);
+    return result.code;
+  }
+  if (second === "status") return statusCommand(text("repo"), args["json"] === true);
+
+  const known = ["ready", "start", "plan", "finish", "boot", "pr"];
+  if (second === undefined || !known.includes(second)) return usage();
+  const world = githubWorld(root);
+  if (world === null) {
+    process.stderr.write(`bsf setup ${second} runs inside a GitHub workflow. GITHUB_REPOSITORY is not set.\n`);
+    return 2;
+  }
+  // The request arrives in the environment as well as on the command line,
+  // because text a person typed must not be pasted into a shell command.
+  const amend = text("amend") !== "" ? text("amend") : process.env["AMEND"] ?? "";
+  const step = text("step");
+  const writerStep = step === "journeys" || step === "rules" || step === "recipe" ? step : null;
+
+  if (second === "ready") {
+    if (text("trusted") === "") return usage();
+    return readyStep(world, {
+      trusted: text("trusted"),
+      event: process.env["GITHUB_EVENT_NAME"] ?? "",
+      env: process.env,
+      repo: process.env["GITHUB_REPOSITORY"] ?? "",
+      branch: process.env["GITHUB_REF_NAME"] ?? world.defaultBranch,
+    });
+  }
+  if (second === "start") return guarded(world, "start", () => startStep(world, amend));
+  if (second === "plan") {
+    if (writerStep === null) return usage();
+    return guarded(world, writerStep, () => planStep(world, writerStep, amend));
+  }
+  if (second === "finish") {
+    if (writerStep === null || text("from") === "") return usage();
+    return guarded(world, writerStep, () => finishStep(world, writerStep, text("from"), amend, text("writer")));
+  }
+  if (second === "boot") return guarded(world, "boot", () => bootStep(world));
+  if (second === "pr") return prStep(world);
+  return usage();
+}
+
+/**
+ * Print how the command is used.
+ *
+ * Returns 2, the exit code for a wrong command line.
+ */
+function usage(): number {
+  process.stderr.write(`${USAGE}\n`);
   return 2;
 }
 
 /**
- * The repository client, or null outside GitHub.
+ * Run a step, and record anything it throws as that step's failure.
  *
- * Returns the client when GITHUB_REPOSITORY is set.
+ * world: the outside world.
+ * name: the step, for the record.
+ * step: the step to run.
+ * Returns the step's exit code. A step that throws has hit something it has
+ * no rule for (a refused request, a full disk). Running a writer again
+ * cannot fix that, so setup stops and the issue carries the whole message.
+ * When even the record cannot be written, both messages are printed and
+ * the job fails.
  */
-function githubOrNull(): { store: DataRefStore; gh: GitHub; repo: string } | null {
-  const repo = process.env["GITHUB_REPOSITORY"];
-  if (repo === undefined || repo === "") return null;
-  const gh = new GitHub({ repo });
-  return { store: new DataRefStore(gh), gh, repo };
-}
-
-/**
- * Copy one step's files.
- *
- * args: --from is the artifact directory, --into is the setup-state directory.
- * Returns 0 when the copy is done, 1 when a password or a deleted journey
- * refused it.
- */
-function publishCommand(args: Record<string, string | boolean>): number {
-  const from = typeof args["from"] === "string" ? args["from"] : "";
-  const into = typeof args["into"] === "string" ? args["into"] : "";
-  if (from === "" || into === "") {
-    process.stderr.write("usage: bsf setup publish --from DIR --into DIR\n");
-    return 2;
-  }
+async function guarded(world: SetupWorld, name: SetupStep, step: () => Promise<number>): Promise<number> {
   try {
-    const result = publishSetupStep(from, into);
-    process.stdout.write(result.copied.length === 0 ? "nothing to save\n" : `saved ${result.copied.join(", ")}\n`);
-    if (result.journeysKept !== null) process.stderr.write(`${result.journeysKept}\n`);
-    return 0;
+    return await step();
   } catch (err) {
-    process.stderr.write(`${(err as Error).message}\n`);
-    return 1;
-  }
-}
-
-/**
- * An app with sign-in needs a signed-in journey, unless the person skipped it.
- *
- * args: --file is the journey list, --root is the checkout.
- * Returns 0 when the list is acceptable, 1 when it must be written again.
- */
-async function journeysCommand(args: Record<string, string | boolean>): Promise<number> {
-  const file = typeof args["file"] === "string" ? args["file"] : "";
-  const root = typeof args["root"] === "string" ? args["root"] : process.cwd();
-  if (file === "" || !existsSync(file)) {
-    process.stderr.write("usage: bsf setup journeys --file PATH [--root DIR]\n");
-    return 2;
-  }
-  const list = readFileSync(file, "utf8");
-  let skipped: string[] = [];
-  const remote = githubOrNull();
-  if (remote !== null) {
+    const message = world.git.redact((err as Error).stack ?? (err as Error).message);
     try {
-      const text = await remote.store.read("env/decisions.json");
-      if (text !== null) {
-        const parsed = JSON.parse(text) as { skipped_sign_in?: string[] };
-        skipped = parsed.skipped_sign_in ?? [];
-      }
-      const headings = finishLineJourneys(list);
-      await remote.store.updateJson(JOURNEY_HEADINGS_PATH, () => ({ next: { headings }, result: true }), "Remember the journey list");
-    } catch { /* the check still runs from the file */ }
-  }
-  const problem = signedInJourneyProblem(list, root, skipped);
-  if (problem !== null) {
-    process.stderr.write(`${problem}\n`);
-    return 1;
-  }
-  process.stdout.write("the journey list is on the finish line\n");
-  return 0;
-}
-
-/**
- * Start the next setup workflow.
- *
- * args: --from is journeys, rules, or recipe. --state is the setup-state
- * directory on the branch that was just pushed.
- * Returns 0 when the next workflow was started or is waiting on the other
- * step. Returns 1 when there is nothing to start.
- */
-async function advanceCommand(args: Record<string, string | boolean>): Promise<number> {
-  const from = typeof args["from"] === "string" ? args["from"] : "";
-  const state = typeof args["state"] === "string" ? args["state"] : ".factory/setup-state";
-  const remote = githubOrNull();
-  if (remote === null) {
-    process.stderr.write("no repository to start the next step in\n");
-    return 1;
-  }
-  if (from === "journeys" || from === "rules") {
-    const journeys = existsSync(join(state, "context", "journeys.md"));
-    const rules = existsSync(join(state, "rules.done")) || existsSync(join(state, "guardrails.patch"));
-    if (!journeys || !rules) {
-      process.stdout.write("waiting for the other step\n");
-      return 0;
-    }
-    const journeysFile = join(state, "context", "journeys.md");
-    const rulesFile = existsSync(join(state, "rules.done")) ? join(state, "rules.done") : join(state, "guardrails.patch");
-    const token = createHash("sha256")
-      .update(existsSync(journeysFile) ? readFileSync(journeysFile) : "")
-      .update(existsSync(rulesFile) ? readFileSync(rulesFile) : "")
-      .digest("hex");
-    const start = await remote.store.updateJson<{ token?: string }, boolean>(
-      "env/recipe-started.json",
-      (current) => current?.token === token ? { next: current, result: false } : { next: { token }, result: true },
-      "The recipe can start",
-    );
-    if (!start) {
-      process.stdout.write("the recipe is already starting\n");
-      return 0;
-    }
-    await remote.gh.dispatchWorkflow("factory-setup-recipe.yml", undefined, {});
-    process.stdout.write("started the recipe\n");
-    return 0;
-  }
-  if (from === "recipe") {
-    if (!existsSync(join(state, "manifest.json"))) {
-      process.stderr.write("the recipe was not saved\n");
+      return await failStep(world, { step: name, code: "unexpected", detail: message }, name === "start" ? null : name);
+    } catch (second) {
+      process.stderr.write(`${message}\n`);
+      process.stderr.write(`The failure could not be recorded: ${world.git.redact((second as Error).message)}\n`);
       return 1;
     }
-    const next = await remote.store.updateJson<SetupNext, "boot" | "pr">(
-      NEXT_PATH,
-      (current) => ({ next: { after_recipe: "boot" }, result: current?.after_recipe ?? "boot" }),
-      "The recipe's next step",
-    );
-    const workflow = next === "pr" ? "factory-setup-pr.yml" : "factory-setup-boot.yml";
-    await remote.gh.dispatchWorkflow(workflow, undefined, {});
-    process.stdout.write(`started ${workflow}\n`);
-    return 0;
   }
-  process.stderr.write("usage: bsf setup advance --from journeys|rules|recipe [--state DIR]\n");
-  return 2;
 }
 
 /**
- * Record a failure. The first time, start the one workflow that should run
- * again. The second time, open one issue and stop.
+ * `bsf setup status`: read the record and what can be seen right now.
  *
- * args: --step is the step name, --summary is what went wrong (no secrets),
- * --retry is the workflow to start the first time.
- * Returns 1 when the retry was started, 2 when setup stopped.
+ * repo: `owner/name`, or empty to use `GITHUB_REPOSITORY`.
+ * json: true to print JSON.
+ * Returns 0, or 2 when no repository was named.
  */
-async function failedCommand(args: Record<string, string | boolean>): Promise<number> {
-  const step = typeof args["step"] === "string" ? args["step"] : "";
-  const summary = typeof args["summary"] === "string" ? args["summary"] : "";
-  const retry = typeof args["retry"] === "string" ? args["retry"] : "";
-  if (step === "" || summary === "") {
-    process.stderr.write("usage: bsf setup failed --step NAME --summary TEXT [--retry WORKFLOW]\n");
+async function statusCommand(repo: string, json: boolean): Promise<number> {
+  const name = repo !== "" ? repo : process.env["GITHUB_REPOSITORY"] ?? "";
+  if (name === "") {
+    process.stderr.write("Say which repository: bsf setup status --repo OWNER/NAME\n");
     return 2;
   }
-  const remote = githubOrNull();
-  if (remote === null) {
-    process.stderr.write(`${summary}\n`);
-    return 1;
+  const gh = new GitHub({ repo: name });
+  const store = new DataRefStore(gh);
+  /**
+   * The names in one list GitHub keeps for the repository.
+   *
+   * path: `actions/secrets` or `actions/variables`.
+   * Returns the names, or null when this login may not read the list.
+   */
+  const names = async (path: "actions/secrets" | "actions/variables"): Promise<readonly string[] | null> => {
+    try {
+      const got = await gh.get<{ secrets?: { name: string }[]; variables?: { name: string }[] }>(`repos/${name}/${path}?per_page=100`);
+      return (got.secrets ?? got.variables ?? []).map((row) => row.name);
+    } catch {
+      return null;
+    }
+  };
+  const [secrets, variables] = [await names("actions/secrets"), await names("actions/variables")];
+  const missing: string[] = [];
+  if (variables !== null && !variables.includes("FACTORY_APP_CLIENT_ID")) missing.push("the factory's GitHub App (the variable FACTORY_APP_CLIENT_ID)");
+  if (secrets !== null && !secrets.includes("FACTORY_APP_PRIVATE_KEY")) missing.push("the GitHub App's private key (the secret FACTORY_APP_PRIVATE_KEY)");
+  if (secrets !== null && !secrets.includes("ANTHROPIC_API_KEY")) missing.push("the model key (the secret ANTHROPIC_API_KEY)");
+  if (secrets !== null && !secrets.includes("FACTORY_SANDBOX_ENV")) missing.push("the development environment (the secret FACTORY_SANDBOX_ENV)");
+
+  const running: { name: string; url: string }[] = [];
+  for (const status of ["in_progress", "queued"]) {
+    try {
+      const got = await gh.get<{ workflow_runs?: { name: string; html_url: string }[] }>(`repos/${name}/actions/runs?status=${status}&per_page=50`);
+      for (const run of got.workflow_runs ?? []) {
+        if (run.name.startsWith("factory-setup")) running.push({ name: `${run.name} (${status === "queued" ? "queued" : "running"})`, url: run.html_url });
+      }
+    } catch { /* this login may not list runs */ }
   }
-  const again = await remote.store.updateJson<Record<string, string>, boolean>(
-    FAILURES_PATH,
-    (current) => {
-      const prev = current ?? {};
-      if (sameFailure(prev[step] ?? null, summary)) return { next: prev, result: true };
-      return { next: { ...prev, [step]: summary.trim() }, result: false };
+  return statusStep(
+    {
+      readJson: async <T>(path: string) => {
+        const found = await store.read(path);
+        return found === null ? null : (JSON.parse(found) as T);
+      },
+      say: (line) => process.stdout.write(`${line}\n`),
     },
-    "Record a setup failure",
+    { missing, running },
+    json,
   );
-  if (again) {
-    await openStopIssue(remote.gh, remote.repo, summary);
-    process.stderr.write("The same failure happened twice. Setup has stopped.\n");
-    return 2;
-  }
-  if (retry === "factory-setup-recipe.yml") {
-    await remote.store.updateJson<SetupNext, true>(NEXT_PATH, () => ({ next: { after_recipe: "boot" }, result: true }), "The next recipe is booted");
-  }
-  if (retry === "factory-setup-pr.yml" || args["then"] === "pr") {
-    await remote.store.updateJson<SetupNext, true>(NEXT_PATH, () => ({ next: { after_recipe: "pr" }, result: true }), "The next recipe opens the pull request");
-  }
-  if (retry !== "") {
-    await remote.gh.dispatchWorkflow(retry, undefined, {});
-    process.stdout.write(`started ${retry}\n`);
-  }
-  return 1;
-}
-
-/**
- * Open the one issue that says setup stopped, if it is not already open.
- *
- * gh: the repository client.
- * repo: owner/name.
- * summary: what failed, with no secret values.
- */
-async function openStopIssue(gh: GitHub, repo: string, summary: string): Promise<void> {
-  const issues = await gh.get<{ title: string; state: string }[]>(`repos/${repo}/issues?state=open&per_page=50`);
-  if (issues.some((i) => i.title === "Setup stopped")) return;
-  await gh.send("POST", `repos/${repo}/issues`, {
-    title: "Setup stopped",
-    body: `Setup stopped. The same failure happened twice, so it did not start over.\n\n${summary}\n`,
-  });
-}
-
-/**
- * Forget the chain flag so a new setup can start the recipe again.
- *
- * Returns 0. A retry of one step does not call this.
- */
-async function resetCommand(): Promise<number> {
-  const remote = githubOrNull();
-  if (remote === null) return 0;
-  await remote.store.updateJson("env/recipe-started.json", () => ({ next: { token: "" }, result: true }), "A new setup can start the recipe");
-  await remote.store.updateJson(FAILURES_PATH, () => ({ next: {}, result: true }), "A new setup starts with a clear failure count");
-  process.stdout.write("setup can start\n");
-  return 0;
-}
-
-/**
- * Decide what the boot log means.
- *
- * args: --trial is the trial JSON, --journeys is the journey list, --html is
- * an optional saved page.
- * Returns 0 when the finish line was met, 1 when the writer should run again,
- * 2 when a missing or rejected name sends the person back to the screen.
- */
-async function judgeCommand(args: Record<string, string | boolean>): Promise<number> {
-  const trialPath = typeof args["trial"] === "string" ? args["trial"] : "";
-  if (trialPath === "" || !existsSync(trialPath)) {
-    process.stderr.write("usage: bsf setup judge --trial PATH [--journeys PATH] [--html PATH] [--root DIR]\n");
-    return 2;
-  }
-  const trial = JSON.parse(readFileSync(trialPath, "utf8")) as {
-    reached?: string; claimed?: string; summary?: string;
-    steps?: { tail?: string }[];
-    probes?: { dependency?: string; path?: string; ok?: boolean }[];
-    return_to_screen?: string[];
-    rejected_names?: string[];
-  };
-  const log = [trial.summary ?? "", ...(trial.steps ?? []).map((s) => s.tail ?? "")].join("\n");
-  const fromLog = namesFromBootLog(log);
-  const missing = [...new Set([...(trial.return_to_screen ?? []), ...fromLog.missing])];
-  const rejected = [...new Set([...(trial.rejected_names ?? []), ...fromLog.rejected])];
-  const note = typeof args["note"] === "string" ? args["note"] : "";
-  const writeNote = (kind: string, names: readonly string[]): void => {
-    if (note === "") return;
-    writeFileSync(note, `${JSON.stringify({ kind, names })}\n`);
-  };
-  if (missing.length > 0 || rejected.length > 0) {
-    writeNote("screen", [...missing, ...rejected]);
-    process.stderr.write("A setting is missing or was rejected. The screen has to answer it. The writer is not asked to invent the value.\n");
-    return 2;
-  }
-  const htmlPath = typeof args["html"] === "string" ? args["html"] : "";
-  if (htmlPath !== "" && existsSync(htmlPath) && vendorLoginWaiting(readFileSync(htmlPath, "utf8"))) {
-    writeNote("writer", []);
-    process.stderr.write("a page is still waiting on a vendor login. The boot does not type into that page.\n");
-    return 1;
-  }
-  const journeys = typeof args["journeys"] === "string" ? args["journeys"] : "";
-  if (journeys !== "" && existsSync(journeys)) {
-    const list = readFileSync(journeys, "utf8");
-    let original: readonly string[] = [];
-    const remote = githubOrNull();
-    if (remote !== null) {
-      try {
-        const text = await remote.store.read(JOURNEY_HEADINGS_PATH);
-        if (text !== null) original = (JSON.parse(text) as { headings?: string[] }).headings ?? [];
-      } catch { /* the list on disk is the check */ }
-    }
-    const deleted = deletedJourneyProblem(original, list);
-    if (deleted !== null) {
-      writeNote("writer", []);
-      process.stderr.write(`${deleted}\n`);
-      return 1;
-    }
-    const server = trial.claimed === "renders" || (trial.reached === "renders");
-    if (server) {
-      const probed = (trial.probes ?? []).filter((p) => p.ok).flatMap((p) => [p.dependency ?? "", p.path ?? ""]);
-      const missed = unclickedJourneys(list, probed);
-      if (missed.length > 0) {
-        writeNote("writer", []);
-        process.stderr.write(`these journeys were not clicked: ${missed.join(", ")}\n`);
-        return 1;
-      }
-    }
-  }
-  if (trial.reached !== trial.claimed) {
-    writeNote("writer", []);
-    process.stderr.write(`${trial.summary ?? "the boot did not meet the finish line"}\n`);
-    return 1;
-  }
-  writeNote("ok", []);
-  process.stdout.write("the boot met the finish line\n");
-  return 0;
 }

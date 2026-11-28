@@ -77,7 +77,7 @@ describe("every runner step that may call GitHub has a token", () => {
   // `repo-prose` and `prose-budget` are local too: the repo's own conventions
   // are files in the checkout, and the budget is their size.
   // `journeys look` compares the journey list with the pages in the checkout.
-  const LOCAL_ONLY = /\bbsf (models|--version|recompile-prepare|sandbox (start|trial|freeze|check)|spec check|budget measure|repo-prose|prose-budget|journeys look)\b/;
+  const LOCAL_ONLY = /\bbsf (models|--version|recompile-prepare|sandbox (start|trial|freeze|check)|spec check|budget measure|repo-prose|prose-budget|journeys look|credentials check|setup (ready|submit|status))\b/;
   const files = readdirSync(WORKFLOWS).filter((f) => /^factory-.*\.(yml|md)$/.test(f));
   for (const file of files) {
     it(file, () => {
