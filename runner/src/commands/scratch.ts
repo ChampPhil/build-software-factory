@@ -65,9 +65,15 @@ export function readScratch(root: string): ScratchFile {
   if (!existsSync(path)) return { schema: "sandbox-scratch/1", notes: [] };
   try {
     const parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<ScratchFile>;
-    const notes = Array.isArray(parsed.notes)
-      ? parsed.notes.filter((n): n is { added: string; at: string } => typeof n?.added === "string" && typeof n?.at === "string")
-      : [];
+    const rawNotes: unknown = parsed.notes;
+    const notes: { added: string; at: string }[] = [];
+    if (Array.isArray(rawNotes)) {
+      for (const item of rawNotes) {
+        if (typeof item !== "object" || item === null) continue;
+        const note = item as { added?: unknown; at?: unknown };
+        if (typeof note.added === "string" && typeof note.at === "string") notes.push({ added: note.added, at: note.at });
+      }
+    }
     return { schema: "sandbox-scratch/1", notes };
   } catch {
     return { schema: "sandbox-scratch/1", notes: [] };
