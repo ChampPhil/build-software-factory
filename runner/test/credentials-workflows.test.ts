@@ -60,6 +60,18 @@ describe("missing credentials are caught before a job mints a token or starts a 
     expect(existsSync(join(ROOT, "templates/compiled/factory-setup-agent.lock.yml"))).toBe(true);
   });
 
+  it("setup writer round is a YAML number so GitHub can start the workflow", () => {
+    // A quoted string here is a workflow_call type: number mismatch. GitHub
+    // then reports startup_failure with no jobs, and setup status still says
+    // it is waiting on the writer.
+    const callers = ["factory-setup-journeys.yml", "factory-setup-rules.yml", "factory-setup-recipe.yml"];
+    for (const file of callers) {
+      const text = readFileSync(join(WORKFLOWS, file), "utf8");
+      expect(text, file).toMatch(/^ {6}round: \d+$/m);
+      expect(text, file).not.toMatch(/^ {6}round: "\d+"$/m);
+    }
+  });
+
   it("a job that only needs the App does not mention the model key", () => {
     // Reusable workflows may only name secrets they declare. A settle job
     // that only mints an App token cannot read ANTHROPIC_API_KEY.

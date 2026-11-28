@@ -99,7 +99,7 @@ jobs:
     with:
       budget_key: ${{ github.run_id }}-${{ github.run_attempt }}-writer
       model: ${{ needs.plan.outputs.model_builder }}
-      round: "1"
+      round: 1
       amend: ${{ needs.plan.outputs.amend }}
     secrets:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
