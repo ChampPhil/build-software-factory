@@ -1,15 +1,8 @@
-# Phase 2 of setup: design the sandbox, prove it, freeze it.
+# Setup starts here and hands each step its own workflow.
 #
-# Each round, the setup agent reads the repo and writes a complete candidate —
-# context files and a sandbox manifest — and the runner, which has Docker,
-# brings up exactly what the candidate declares and measures the tier it
-# actually reaches. A round runs only while the measured tier falls short of
-# what the agent claimed, three at most. The best measured round is frozen
-# into one pull request: the factory exists once someone merges it.
-#
-# Also the only way the sandbox changes afterwards: a role that could not
-# exercise what a change needed files a report, and this runs again with it.
-# Such an amendment merges itself when it is safe to (bsf sandbox land).
+# The journey list and the standard rules run beside each other. The recipe
+# starts when both are saved. A failed step is started again on its own.
+# The same failure twice stops. This file does not write the recipe.
 name: factory-setup
 
 on:
@@ -113,294 +106,15 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 
-  plan:
+  # Starts the journey list and the standard rules, or a repair of the recipe.
+  # It does not write the recipe and it does not boot it.
+  start:
+    name: Checking the settings
     needs: ready
     if: needs.ready.outputs.ready == 'true'
     runs-on: ubuntu-latest
-    outputs:
-      model_builder: ${{ steps.models.outputs.model_builder }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - name: Fetch the factory runner from the default branch
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          ref: ${{ github.event.repository.default_branch }}
-          path: .factory-trusted
-          sparse-checkout: |
-            .factory/bin
-            .factory/definition
-            .factory/sandbox
-          sparse-checkout-cone-mode: false
-          persist-credentials: false
-      - name: Put the trusted runner on PATH
-        shell: bash
-        run: |
-          mkdir -p "$RUNNER_TEMP/bsf"
-          cp -R .factory-trusted/.factory/bin/. "$RUNNER_TEMP/bsf/"
-          mkdir -p "$RUNNER_TEMP/bsf-trusted/.factory"
-          for d in definition sandbox; do
-            if [ -d ".factory-trusted/.factory/$d" ]; then cp -R ".factory-trusted/.factory/$d" "$RUNNER_TEMP/bsf-trusted/.factory/"; fi
-          done
-          echo "BSF_TRUSTED_ROOT=$RUNNER_TEMP/bsf-trusted" >> "$GITHUB_ENV"
-          rm -rf .factory-trusted
-          echo "$RUNNER_TEMP/bsf" >> "$GITHUB_PATH"
-          chmod +x "$RUNNER_TEMP/bsf/"*
-          "$RUNNER_TEMP/bsf/bsf" --version
-      # Setup uses the builder's model: it reads code and writes working
-      # configuration, which is the builder's kind of work.
-      - name: Read each role's model from factory.yaml
-        id: models
-        run: bsf models
-
-  # An empty earlier round, so Computer 0 and Computer B (rounds 8 and 9)
-  # can start together. The agent refuses to start a round after the first
-  # when no earlier artifact exists.
-  seed-round:
-    name: Getting the setup computers ready to start
-    needs: plan
-    if: needs.plan.result == 'success' && inputs.amend == ''
-    runs-on: ubuntu-latest
-    steps:
-      - name: Leave an empty earlier round so the two computers can start together
-        shell: bash
-        run: |
-          mkdir -p "$RUNNER_TEMP/seed"
-          echo "seed" > "$RUNNER_TEMP/seed/README"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: seed-round-0
-          path: ${{ runner.temp }}/seed
-          if-no-files-found: error
-
-  # Computer 0. The top journeys, before anyone builds the private copy.
-  computer-0:
-    name: Computer 0. Reading the product for the top journeys
-    needs: [plan, seed-round]
-    if: needs.plan.result == 'success' && needs.seed-round.result == 'success'
-    permissions:
-      actions: read
-      checks: read
-      contents: read
-      id-token: write
-      issues: write
-      pull-requests: write
-    uses: ./.github/workflows/factory-setup-agent.lock.yml
-    with:
-      budget_key: ${{ github.run_id }}-${{ github.run_attempt }}-computer-0
-      model: ${{ needs.plan.outputs.model_builder }}
-      round: 8
-      amend: '{"focus":"journeys"}'
-    secrets: inherit
-
-  computer-0-budget:
-    needs: computer-0
-    if: always()
-    permissions:
-      contents: read
-    uses: ./.github/workflows/factory-budget-settle.yml
-    with:
-      key: ${{ github.run_id }}-${{ github.run_attempt }}-computer-0
-      ran: ${{ needs.computer-0.result == 'skipped' && 'false' || 'true' }}
-    secrets:
-      FACTORY_APP_PRIVATE_KEY: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
-
-  # Computer B, beside Computer 0. The standard rules only.
-  computer-b:
-    name: Computer B. Proving the standard rules
-    needs: [plan, seed-round]
-    if: needs.plan.result == 'success' && needs.seed-round.result == 'success'
-    permissions:
-      actions: read
-      checks: read
-      contents: read
-      id-token: write
-      issues: write
-      pull-requests: write
-    uses: ./.github/workflows/factory-setup-agent.lock.yml
-    with:
-      budget_key: ${{ github.run_id }}-${{ github.run_attempt }}-computer-b
-      model: ${{ needs.plan.outputs.model_builder }}
-      round: 9
-      amend: '{"focus":"standards"}'
-    secrets: inherit
-
-  computer-b-budget:
-    needs: computer-b
-    if: always()
-    permissions:
-      contents: read
-    uses: ./.github/workflows/factory-budget-settle.yml
-    with:
-      key: ${{ github.run_id }}-${{ github.run_attempt }}-computer-b
-      ran: ${{ needs.computer-b.result == 'skipped' && 'false' || 'true' }}
-    secrets:
-      FACTORY_APP_PRIVATE_KEY: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
-
-  publish-journeys:
-    name: Computer 0. Handing the journey list to the private-copy computer
-    needs: [computer-0, computer-0-budget]
-    if: needs.computer-0.result == 'success'
-    runs-on: ubuntu-latest
-    outputs:
-      journeys: ${{ steps.read.outputs.journeys }}
-    steps:
-      - name: Read the journey list
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: setup-round-8
-          path: ${{ runner.temp }}/round8
-      - name: Pass the list to Computer A
-        id: read
-        shell: bash
-        run: |
-          file="$RUNNER_TEMP/round8/context/journeys.md"
-          if [ ! -s "$file" ]; then echo "Computer 0 did not write the journey list"; exit 1; fi
-          {
-            echo "journeys<<JOURNEYS_EOF"
-            cat "$file"
-            echo "JOURNEYS_EOF"
-          } >> "$GITHUB_OUTPUT"
-
-  design-1:
-    name: Computer A. Writing the launch and how each journey is tested
-    needs: [plan, publish-journeys]
-    # An amendment skips Computer 0, so the journey job is skipped and this
-    # computer still runs, on the amendment text. A failed journey list does
-    # not: setup does not build a private copy for a list that was never written.
-    if: always() && needs.plan.result == 'success' && (needs.publish-journeys.result == 'success' || (needs.publish-journeys.result == 'skipped' && inputs.amend != ''))
-    # What the compiled agent's own jobs request; checked against the lock.
-    permissions:
-      actions: read
-      checks: read
-      contents: read
-      id-token: write
-      issues: write
-      pull-requests: write
-    uses: ./.github/workflows/factory-setup-agent.lock.yml
-    with:
-      budget_key: ${{ github.run_id }}-${{ github.run_attempt }}-design-1
-      model: ${{ needs.plan.outputs.model_builder }}
-      round: 1
-      amend: ${{ needs.publish-journeys.result == 'success' && needs.publish-journeys.outputs.journeys || inputs.amend }}
-    secrets: inherit
-
-  # Charge design-1's budget hold with what gh-aw measured, before the next
-  # agent step can start.
-  design-1-budget:
-    needs: design-1
-    if: always()
-    permissions:
-      contents: read
-    uses: ./.github/workflows/factory-budget-settle.yml
-    with:
-      key: ${{ github.run_id }}-${{ github.run_attempt }}-design-1
-      ran: ${{ needs.design-1.result == 'skipped' && 'false' || 'true' }}
-    secrets:
-      FACTORY_APP_PRIVATE_KEY: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
-
-  trial-1:
-    name: Computer A. Booting the private copy and clicking the listed journeys
-    needs: [design-1, design-1-budget]
-    uses: ./.github/workflows/factory-setup-trial.yml
-    with:
-      round: 1
-    secrets: inherit
-
-  design-2:
-    name: Computer A. Fixing the one journey the last try could not click
-    needs: [plan, trial-1]
-    if: needs.trial-1.outputs.met != 'true'
-    # What the compiled agent's own jobs request; checked against the lock.
-    permissions:
-      actions: read
-      checks: read
-      contents: read
-      id-token: write
-      issues: write
-      pull-requests: write
-    uses: ./.github/workflows/factory-setup-agent.lock.yml
-    with:
-      budget_key: ${{ github.run_id }}-${{ github.run_attempt }}-design-2
-      model: ${{ needs.plan.outputs.model_builder }}
-      round: 2
-      amend: ${{ inputs.amend }}
-    secrets: inherit
-
-  # Charge design-2's budget hold with what gh-aw measured, before the next
-  # agent step can start.
-  design-2-budget:
-    needs: design-2
-    if: always()
-    permissions:
-      contents: read
-    uses: ./.github/workflows/factory-budget-settle.yml
-    with:
-      key: ${{ github.run_id }}-${{ github.run_attempt }}-design-2
-      ran: ${{ needs.design-2.result == 'skipped' && 'false' || 'true' }}
-    secrets:
-      FACTORY_APP_PRIVATE_KEY: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
-
-  trial-2:
-    name: Computer A. Booting the private copy and clicking again
-    needs: [design-2, design-2-budget]
-    uses: ./.github/workflows/factory-setup-trial.yml
-    with:
-      round: 2
-    secrets: inherit
-
-  design-3:
-    name: Computer A. One last try at the journey that did not click
-    needs: [plan, trial-2]
-    if: needs.trial-2.outputs.met != 'true'
-    # What the compiled agent's own jobs request; checked against the lock.
-    permissions:
-      actions: read
-      checks: read
-      contents: read
-      id-token: write
-      issues: write
-      pull-requests: write
-    uses: ./.github/workflows/factory-setup-agent.lock.yml
-    with:
-      budget_key: ${{ github.run_id }}-${{ github.run_attempt }}-design-3
-      model: ${{ needs.plan.outputs.model_builder }}
-      round: 3
-      amend: ${{ inputs.amend }}
-    secrets: inherit
-
-  # Charge design-3's budget hold with what gh-aw measured, before the next
-  # agent step can start.
-  design-3-budget:
-    needs: design-3
-    if: always()
-    permissions:
-      contents: read
-    uses: ./.github/workflows/factory-budget-settle.yml
-    with:
-      key: ${{ github.run_id }}-${{ github.run_attempt }}-design-3
-      ran: ${{ needs.design-3.result == 'skipped' && 'false' || 'true' }}
-    secrets:
-      FACTORY_APP_PRIVATE_KEY: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
-
-  trial-3:
-    name: Computer A. Booting the private copy and clicking the last try
-    needs: [design-3, design-3-budget]
-    uses: ./.github/workflows/factory-setup-trial.yml
-    with:
-      round: 3
-    secrets: inherit
-
-  # Runs whenever at least one round was designed and tried. Freezes the best
-  # measured round and opens the setup pull request.
-  freeze:
-    name: Opening the setup pull request with the launch, the notes, and the proof
-    needs: [trial-1, trial-2, trial-3, computer-b, computer-b-budget]
-    if: always() && needs.trial-1.result == 'success' && (needs.computer-b.result == 'success' || needs.computer-b.result == 'skipped')
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          persist-credentials: false
       - name: Fetch the factory runner from the default branch
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -419,199 +133,6 @@ jobs:
           echo "$RUNNER_TEMP/bsf" >> "$GITHUB_PATH"
           chmod +x "$RUNNER_TEMP/bsf/"*
           "$RUNNER_TEMP/bsf/bsf" --version
-      - name: Fetch every round
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          pattern: '*-round-*'
-          path: ${{ runner.temp }}/rounds
-      - name: Freeze the best measured round
-        id: freeze
-        shell: bash
-        env:
-          ROUNDS_DIR: ${{ runner.temp }}/rounds
-        run: |
-          rounds=""
-          for n in 1 2 3; do
-            c="$ROUNDS_DIR/setup-round-$n/manifest.json"; t="$ROUNDS_DIR/trial-round-$n/trial.json"
-            if [ -f "$c" ] && [ -f "$t" ]; then rounds="${rounds:+$rounds,}$c:$t"; fi
-          done
-          bsf sandbox freeze --rounds "$rounds" --out "$RUNNER_TEMP/manifest.json"
-      - name: Mint a token to open the setup pull request
-        id: token
-        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1
-        with:
-          app-id: ${{ vars.FACTORY_APP_CLIENT_ID }}
-          private-key: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
-          permission-contents: write
-          permission-pull-requests: write
-          # write: factory/pr-report on the PR; issues: the continued proof.
-          permission-checks: write
-          permission-issues: write
-          owner: ${{ github.repository_owner }}
-          repositories: ${{ github.event.repository.name }}
-      - name: Open the setup pull request
-        shell: bash
-        env:
-          GH_TOKEN: ${{ steps.token.outputs.token }}
-          ROUNDS_DIR: ${{ runner.temp }}/rounds
-          CHOSEN: ${{ steps.freeze.outputs.chosen }}
-          TIER: ${{ steps.freeze.outputs.tier }}
-          AMEND: ${{ inputs.amend }}
-          FACTORY_SANDBOX_ENV: ${{ secrets.FACTORY_SANDBOX_ENV }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: |
-          set -euo pipefail
-          design="$ROUNDS_DIR/setup-round-$CHOSEN"
-          # Main's sandbox, before this round replaces it: an amendment merges
-          # itself only if it proves at least what this one did.
-          if [ -f .factory/sandbox/manifest.json ]; then cp .factory/sandbox/manifest.json "$RUNNER_TEMP/main-manifest.json"; fi
-          mkdir -p .factory/sandbox .factory/definition/context
-          cp "$RUNNER_TEMP/manifest.json" .factory/sandbox/manifest.json
-          # The agent invents plausible-looking values for the keys a sandbox
-          # needs; a secret scanner cannot tell them from real ones and would
-          # block this PR over a value that was never a secret.
-          bsf sandbox scrub --file .factory/sandbox/manifest.json
-          # Which files are the UI, so a video is asked for only when one changes.
-          bsf sandbox ui-paths --file .factory/sandbox/manifest.json
-          # Whether this repository can require checks, decided now so the dashboard's
-          # first load already knows (no rollup has run yet).
-          if [ -f .factory/definition/factory.yaml ]; then bsf enforcement detect --file .factory/definition/factory.yaml; fi
-          if [ -d "$design/stubs" ]; then rm -rf .factory/sandbox/stubs; cp -R "$design/stubs" .factory/sandbox/stubs; fi
-          if [ -f "$design/research-domains.txt" ]; then cp "$design/research-domains.txt" .factory/sandbox/research-domains.txt; fi
-          # An amendment changes the sandbox only; the context stays the
-          # user's once it has been merged.
-          # fundamentals.md carries the person's own "Product intent (from you)"
-          # block; it is merged around, never rewritten.
-          if [ -z "$AMEND" ] && [ -d "$design/context" ]; then
-            for f in "$design/context/"*.md; do
-              dest=".factory/definition/context/$(basename "$f")"
-              if [ "$(basename "$f")" = "fundamentals.md" ]; then
-                bsf context merge-intent --existing "$dest" --incoming "$f" --out "$RUNNER_TEMP/fundamentals.merged.md"
-                cp "$RUNNER_TEMP/fundamentals.merged.md" "$dest"
-              else
-                cp "$f" "$dest"
-              fi
-            done
-          fi
-          # Computer 0's list. Computer A's copy wins when it added the
-          # "how the sandbox tests it" line under each journey.
-          if [ -z "$AMEND" ] && [ -f "$ROUNDS_DIR/setup-round-8/context/journeys.md" ]; then
-            cp "$ROUNDS_DIR/setup-round-8/context/journeys.md" .factory/definition/context/journeys.md
-          fi
-          if [ -z "$AMEND" ] && [ -f "$design/context/journeys.md" ]; then
-            cp "$design/context/journeys.md" .factory/definition/context/journeys.md
-          fi
-          # The standard rules (Computer B) and any patch the design round
-          # still carried. Neither may reach the factory's own files.
-          apply_guardrails() {
-            local patch="$1"
-            if [ ! -s "$patch" ]; then return 0; fi
-            if grep -E '^(\+\+\+|---) [ab]/(\.github|\.factory)/' "$patch"; then
-              echo "::warning::$patch touches .github/ or .factory/; it is left out"
-            elif git apply --index "$patch"; then
-              echo "applied $patch"
-            else
-              echo "::warning::$patch did not apply; it is left out"
-            fi
-          }
-          if [ -z "$AMEND" ]; then
-            apply_guardrails "$ROUNDS_DIR/setup-round-9/guardrails.patch"
-            apply_guardrails "$design/guardrails.patch"
-          fi
-          # The clean step. Setup is not finished while a count is above zero.
-          # Gardening, afterwards, is only for new drift.
-          guard=""
-          if [ -z "$AMEND" ]; then
-            if ! bsf sandbox start; then echo "the private copy did not start; the counts are still recorded"; fi
-            if ! bsf guardrails record > "$RUNNER_TEMP/baseline.txt"; then
-              echo "guardrail counts were not recorded"
-              exit 1
-            fi
-            guard="$(head -1 "$RUNNER_TEMP/baseline.txt")"
-            bsf guardrails require-zero
-            if [ -f "$design/guardrails.json" ]; then
-              guard="$guard. Rules: $(jq -r '"\(.installed // [] | length) installed, \(.skipped // [] | length) left out"' "$design/guardrails.json")"
-            fi
-          fi
-          # The checker starts the sandbox and serves the app exactly like this
-          # before its agent runs. A sandbox that cannot do it is not shipped.
-          bsf sandbox dry-run
-          # One setup PR at a time: a re-run updates the open one rather than
-          # opening a second for the person to sort out.
-          existing=""
-          if [ -z "$AMEND" ]; then
-            existing=$(gh api "repos/${GITHUB_REPOSITORY}/pulls?state=open&per_page=100" \
-              --jq '[.[] | select(.head.ref | startswith("factory/setup-"))] | sort_by(.number) | .[0] | "\(.number) \(.head.ref)"' 2>/dev/null || true)
-            [ "$existing" = "null null" ] && existing=""
-          fi
-          git config user.name "factory[bot]"
-          git config user.email "factory[bot]@users.noreply.github.com"
-          if [ -n "$existing" ]; then
-            existing_pr="${existing%% *}"; branch="${existing#* }"
-            git checkout -q -B "$branch"
-          else
-            existing_pr=""; branch="factory/setup-${GITHUB_RUN_ID}"
-            git checkout -b "$branch"
-          fi
-          git add .factory
-          if git diff --cached --quiet; then echo "nothing changed"; exit 0; fi
-          if [ -z "$AMEND" ]; then title="Set up the software factory"; else title="Amend the factory's sandbox"; fi
-          git commit -q -m "$title (sandbox tier: $TIER)"
-          git push -q --force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "$branch"
-          # The PR is rendered from the setup agent's report, with the trial's
-          # screenshot of the app in the frozen sandbox first: proof and
-          # diagrams before prose, the full detail one link away.
-          jq -n --arg tier "$TIER" --arg guard "$guard" --arg run "$RUN_URL" '{
-            focus: ([
-              { title: "What the sandbox can exercise", detail: ("It reached tier " + $tier + " when the runner brought it up and measured it. .factory/sandbox/manifest.json says what it runs, what it can and cannot exercise, and every round that was tried.") },
-              { title: "No credential of yours is in it", detail: "Every value is local, fake, a throwaway service, or a named test-mode secret." }
-            ] + (if $guard == "" then [] else [{ title: "Guardrails", detail: ($guard + "; setup removes the violations they flag in its cleanup pull request or requests, so nothing is baselined.") }] end)),
-            links: [{ label: "Every round, and its logs", url: $run }]
-          }' > "$RUNNER_TEMP/report-extra.json"
-          bsf report setup --dir "$design/report" --trial-dir "$ROUNDS_DIR/trial-round-$CHOSEN" --tier "$TIER" \
-            --extra "$RUNNER_TEMP/report-extra.json" --out "$RUNNER_TEMP/pr-body.md"
-          if [ -n "$existing_pr" ]; then
-            pr="$existing_pr"
-            gh api -X PATCH "repos/${GITHUB_REPOSITORY}/pulls/$pr" -f title="$title" -F "body=@$RUNNER_TEMP/pr-body.md" > /dev/null
-            echo "updated #$pr (the open setup PR)"
-          else
-            pr=$(gh api "repos/${GITHUB_REPOSITORY}/pulls" -f title="$title" -f head="$branch" \
-              -f base="${{ github.event.repository.default_branch }}" -F "body=@$RUNNER_TEMP/pr-body.md" --jq .number)
-            echo "opened #$pr"
-          fi
-          if [ -f "$RUNNER_TEMP/pr-body.md.continued.md" ]; then
-            gh api "repos/${GITHUB_REPOSITORY}/issues/$pr/comments" -F "body=@$RUNNER_TEMP/pr-body.md.continued.md" > /dev/null
-          fi
-          report_rc=0
-          bsf report check --pr "$pr" --problems "$RUNNER_TEMP/pr-body.md.problems.json" \
-            --degraded "$RUNNER_TEMP/pr-body.md.degraded.json" || report_rc=$?
-          # An amendment repairs the sandbox without a person when it is safe
-          # to: only .factory/sandbox/ changes, no new host or secret, and at
-          # least what main's sandbox proved. Then the changes that were stuck
-          # on the old sandbox are verified again. First setup is reviewed.
-          bsf sandbox land --pr "$pr" --main "$RUNNER_TEMP/main-manifest.json" --candidate "$RUNNER_TEMP/manifest.json"
-          exit "$report_rc"
-
-  # An amendment that never reached a trial (the budget refused its first
-  # round, or the runner failed) tried nothing: its reports wait again and
-  # the attempt is not counted, so a sandbox is never put to a person for
-  # want of money.
-  release:
-    needs: [trial-1, freeze]
-    if: always() && inputs.amend != '' && needs.trial-1.result != 'success'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Fetch the factory runner from the default branch
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          ref: ${{ github.event.repository.default_branch }}
-          sparse-checkout: |
-            .factory/bin
-          sparse-checkout-cone-mode: false
-          persist-credentials: false
-      - name: Put the runner on PATH
-        shell: bash
-        run: echo "$GITHUB_WORKSPACE/.factory/bin" >> "$GITHUB_PATH"
       - name: Mint a token
         id: token
         uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1
@@ -619,10 +140,43 @@ jobs:
           app-id: ${{ vars.FACTORY_APP_CLIENT_ID }}
           private-key: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
           permission-contents: write
+          permission-actions: write
+          permission-issues: write
           owner: ${{ github.repository_owner }}
           repositories: ${{ github.event.repository.name }}
-      - name: Put the reports back
+      - name: Settings still waiting
+        id: env
+        env:
+          FACTORY_SANDBOX_ENV: ${{ secrets.FACTORY_SANDBOX_ENV }}
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          AMEND: ${{ inputs.amend }}
+        run: |
+          if [ -z "$AMEND" ]; then bsf setup reset; fi
+          inputs=$(jq -cn --arg amend "$AMEND" '{amend:$amend}')
+          if bsf env scan --hold factory-setup.yml --inputs "$inputs"; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            {
+              echo "### Settings are waiting"
+              echo
+              echo "The dashboard has the list. Nothing starts until every name has an answer."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Start the next step
+        if: steps.env.outputs.ready == 'true'
         env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
           AMEND: ${{ inputs.amend }}
-        run: bsf sandbox release
+          REF: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          if [ -n "$AMEND" ]; then
+            jq -n --arg ref "$REF" --arg amend "$AMEND" '{ref:$ref, inputs:{amend:$amend}}' \
+              | gh api -X POST "repos/${GITHUB_REPOSITORY}/actions/workflows/factory-setup-recipe.yml/dispatches" --input -
+          else
+            jq -n --arg ref "$REF" '{ref:$ref}' \
+              | gh api -X POST "repos/${GITHUB_REPOSITORY}/actions/workflows/factory-setup-journeys.yml/dispatches" --input -
+            jq -n --arg ref "$REF" '{ref:$ref}' \
+              | gh api -X POST "repos/${GITHUB_REPOSITORY}/actions/workflows/factory-setup-rules.yml/dispatches" --input -
+          fi

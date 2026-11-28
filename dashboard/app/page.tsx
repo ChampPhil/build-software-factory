@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useActions, useBudget, useFirstRequest, useRunFiles, useSetupSentence, useStandingGoals, useWorkItems } from "@/lib/data";
+import { useActions, useBudget, useFirstRequest, useRunFiles, useSetupSentence, useStandingGoals, useWaitingSettings, useWorkItems } from "@/lib/data";
 import { oneTimeSetupUsd, spendAsideFromSetup, spendFromBudget } from "@/lib/spend";
 import { failedFactoryAudit, type AuditWorkflowRun } from "@/lib/audit";
 import { liveGoals } from "@/lib/routing";
@@ -9,7 +9,7 @@ import { readSettings } from "@/lib/settings";
 import { countWord, day, hourLocal, needsFrom, pct, pipeName, requestIds, titleOf, usd, whenLine, ago, clock } from "@/lib/view";
 import type { WorkItemDoc } from "@/lib/types";
 import { useApp } from "@/components/app";
-import { NeedCard } from "@/components/needs";
+import { NeedCard, SettingsBlock } from "@/components/needs";
 import { RunLine } from "@/components/run-view";
 import { RequestForm } from "@/components/request-form";
 import { EmptyFactoryNote } from "@/components/empty-factory";
@@ -53,6 +53,9 @@ export default function Briefing() {
   const untouched = ledger.state === "ready" && (L === null || (L.open.length === 0 && L.recent.length === 0));
   const first = useFirstRequest(client, untouched);
 
+  const settings = useWaitingSettings(client, app.version);
+  const budgetFile = useBudget(client);
+  const waitingSettings = settings.state === "ready" ? (settings.data?.waiting ?? 0) : 0;
   const needs = needsFrom({
     ledger: L,
     pulls: pulls.state === "ready" ? pulls.data : [],
@@ -131,7 +134,6 @@ export default function Briefing() {
   const queue = L?.merge_queue ?? [];
   const m = index.state === "ready" ? index.data?.metrics : undefined;
   const budget = m?.budget_usd ?? 0;
-  const budgetFile = useBudget(client);
   const budgetSpent = budgetFile.state === "ready" ? spendFromBudget(budgetFile.data?.spent_usd) : null;
   const setupUsd = oneTimeSetupUsd(budgetFile.state === "ready" ? budgetFile.data?.spent_usd : undefined);
   const shownSpend = budgetSpent ?? m?.spend_usd ?? 0;
@@ -163,7 +165,8 @@ export default function Briefing() {
       <div className="cols">
         <div className="main-col">
           <h2 className="part">Waiting on you</h2>
-          {needs.length === 0 && audit === null ? (
+          {waitingSettings > 0 && <SettingsBlock count={waitingSettings} />}
+          {needs.length === 0 && audit === null && waitingSettings === 0 ? (
             <p className="all-clear">
               When something needs you, it shows up here first: a question to answer, a change to merge, or a request that got stuck.{" "}
               <button className="link" type="button" onClick={() => app.compose()}>

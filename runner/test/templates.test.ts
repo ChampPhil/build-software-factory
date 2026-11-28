@@ -384,9 +384,11 @@ describe("trigger workflows", () => {
 
   it("there is one trigger workflow per row of doc 07's table", () => {
     const expected = [
-      "factory-audit.yml", "factory-budget-settle.yml", "factory-conflicts.yml", "factory-drop.yml", "factory-garden.yml", "factory-gates.yml",
-      "factory-intake.yml", "factory-journeys.yml", "factory-merge.yml", "factory-policy.yml", "factory-recompile.yml",
-      "factory-review.yml", "factory-rollup.yml", "factory-run.yml", "factory-setup-trial.yml", "factory-setup.yml", "factory-sync.yml",
+      "factory-audit.yml", "factory-budget-settle.yml", "factory-conflicts.yml", "factory-drop.yml", "factory-env-decide.yml",
+      "factory-garden.yml", "factory-gates.yml", "factory-intake.yml", "factory-journeys.yml", "factory-merge.yml",
+      "factory-policy.yml", "factory-recompile.yml", "factory-review.yml", "factory-rollup.yml", "factory-run.yml",
+      "factory-setup-boot.yml", "factory-setup-journeys.yml", "factory-setup-pr.yml", "factory-setup-recipe.yml",
+      "factory-setup-rules.yml", "factory-setup-save.yml", "factory-setup-trial.yml", "factory-setup.yml", "factory-sync.yml",
     ];
     expect(readdirSync(WORKFLOWS).filter((f) => f.endsWith(".yml")).sort()).toEqual(expected);
   });
@@ -744,7 +746,7 @@ describe("the budget in the workflows", () => {
     }
   });
   it("a trial replaces the stubs folder instead of copying into it (an amendment's new stubs must land at the path the manifest names)", () => {
-    for (const f of ["factory-setup-trial.yml", "factory-setup.yml"]) {
+    for (const f of ["factory-setup-trial.yml", "factory-setup-pr.yml"]) {
       const text = readFileSync(join(TEMPLATES, "workflows", f), "utf8");
       const copy = text.split("\n").find((l) => l.includes("cp -R") && l.toLowerCase().includes("design") && l.includes("/stubs"));
       expect(copy, `${f} copies no stubs`).toBeDefined();

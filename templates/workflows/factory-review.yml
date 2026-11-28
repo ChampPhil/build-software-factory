@@ -33,6 +33,7 @@ jobs:
     outputs:
       model_scorer: ${{ steps.models.outputs.model_scorer }}
       due: ${{ steps.check.outputs.due }}
+      env_ready: ${{ steps.env.outputs.ready }}
       reason: ${{ steps.check.outputs.reason }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -76,12 +77,24 @@ jobs:
         with:
           app-id: ${{ vars.FACTORY_APP_CLIENT_ID }}
           private-key: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
-          permission-contents: read
-          permission-actions: read
+          permission-contents: write
+          permission-actions: write
           # Scoped to this repository: an App token otherwise reaches every repo
           # the installation covers.
           owner: ${{ github.repository_owner }}
           repositories: ${{ github.event.repository.name }}
+      # Before the scorer, which is the model. A waiting setting queues this run.
+      - name: Settings still waiting
+        id: env
+        env:
+          FACTORY_SANDBOX_ENV: ${{ secrets.FACTORY_SANDBOX_ENV }}
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+        run: |
+          if bsf env scan --hold factory-review.yml --inputs '{"force":"${{ inputs.force }}"}'; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
       # Skips below the minimum run count, so a quiet week does not spend a
       # review's budget grading four runs.
       - name: Is a review due?
@@ -93,7 +106,7 @@ jobs:
 
   score:
     needs: due
-    if: needs.due.outputs.due == 'true'
+    if: needs.due.outputs.due == 'true' && needs.due.outputs.env_ready == 'true'
     # What the compiled role's own jobs request. A caller must grant at
     # least this, or GitHub refuses to start the run; derived from the lock
     # file and checked by a test, so a gh-aw upgrade cannot silently break it.

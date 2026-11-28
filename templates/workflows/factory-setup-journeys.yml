@@ -1,0 +1,204 @@
+# The journey list. Its own workflow. A failure runs this workflow again, not setup from the start.
+name: factory-setup-journeys
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: factory-setup-journeys
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      model_builder: ${{ steps.models.outputs.model_builder }}
+      amend: ${{ steps.ask.outputs.amend }}
+      ready: ${{ steps.env.outputs.ready }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Fetch the factory runner from the default branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: .factory-trusted
+          sparse-checkout: |
+            .factory/bin
+            .factory/definition
+            .factory/sandbox
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Put the trusted runner on PATH
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/bsf"
+          cp -R .factory-trusted/.factory/bin/. "$RUNNER_TEMP/bsf/"
+          mkdir -p "$RUNNER_TEMP/bsf-trusted/.factory"
+          for d in definition sandbox; do
+            if [ -d ".factory-trusted/.factory/$d" ]; then cp -R ".factory-trusted/.factory/$d" "$RUNNER_TEMP/bsf-trusted/.factory/"; fi
+          done
+          echo "BSF_TRUSTED_ROOT=$RUNNER_TEMP/bsf-trusted" >> "$GITHUB_ENV"
+          rm -rf .factory-trusted
+          echo "$RUNNER_TEMP/bsf" >> "$GITHUB_PATH"
+          chmod +x "$RUNNER_TEMP/bsf/"*
+          "$RUNNER_TEMP/bsf/bsf" --version
+      - name: Mint a token
+        id: token
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1
+        with:
+          app-id: ${{ vars.FACTORY_APP_CLIENT_ID }}
+          private-key: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-actions: write
+          permission-issues: write
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+      - name: Settings still waiting
+        id: env
+        env:
+          FACTORY_SANDBOX_ENV: ${{ secrets.FACTORY_SANDBOX_ENV }}
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+        run: |
+          if bsf env scan --hold factory-setup-journeys.yml; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Read each role's model from factory.yaml
+        id: models
+        if: steps.env.outputs.ready == 'true'
+        run: bsf models
+      - name: Say which sign-in was skipped
+        id: ask
+        if: steps.env.outputs.ready == 'true'
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+        run: |
+          skipped=$(bsf env skipped)
+          amend=$(jq -cn --argjson skipped "$skipped" '{focus:"journeys"} + $skipped')
+          {
+            echo "amend<<EOF"
+            echo "$amend"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+  seed:
+    needs: plan
+    if: needs.plan.outputs.ready == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Leave an empty previous round
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/seed"
+          echo "seed" > "$RUNNER_TEMP/seed/README"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: seed-round-0
+          path: ${{ runner.temp }}/seed
+          if-no-files-found: error
+
+  writer:
+    name: Write the journey list
+    needs: [plan, seed]
+    if: needs.plan.outputs.ready == 'true' && needs.seed.result == 'success'
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+      id-token: write
+      issues: write
+      pull-requests: write
+    uses: ./.github/workflows/factory-setup-agent.lock.yml
+    with:
+      budget_key: ${{ github.run_id }}-${{ github.run_attempt }}-writer
+      model: ${{ needs.plan.outputs.model_builder }}
+      round: "8"
+      amend: ${{ needs.plan.outputs.amend }}
+    secrets:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      FACTORY_APP_PRIVATE_KEY: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
+      COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+
+  writer-budget:
+    needs: writer
+    if: always()
+    permissions:
+      contents: read
+    uses: ./.github/workflows/factory-budget-settle.yml
+    with:
+      key: ${{ github.run_id }}-${{ github.run_attempt }}-writer
+      ran: ${{ needs.writer.result == 'skipped' && 'false' || 'true' }}
+    secrets:
+      FACTORY_APP_PRIVATE_KEY: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
+
+  save:
+    needs: [writer, writer-budget]
+    if: always() && needs.writer.result != 'skipped'
+    uses: ./.github/workflows/factory-setup-save.yml
+    with:
+      artifact: setup-round-8
+      marker: journeys.done
+    secrets:
+      FACTORY_APP_PRIVATE_KEY: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
+
+  check:
+    name: Keep the journey list and start the recipe when the rules are saved too
+    needs: [writer, save]
+    if: always() && needs.writer.result != 'skipped'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Fetch the factory runner from the default branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: .factory-trusted
+          sparse-checkout: |
+            .factory/bin
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Put the trusted runner on PATH
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/bsf"
+          cp -R .factory-trusted/.factory/bin/. "$RUNNER_TEMP/bsf/"
+          rm -rf .factory-trusted
+          echo "$RUNNER_TEMP/bsf" >> "$GITHUB_PATH"
+          chmod +x "$RUNNER_TEMP/bsf/"*
+          "$RUNNER_TEMP/bsf/bsf" --version
+      - name: Mint a token
+        id: token
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1
+        with:
+          app-id: ${{ vars.FACTORY_APP_CLIENT_ID }}
+          private-key: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-actions: write
+          permission-issues: write
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+      - name: Accept the list or run this step again
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          SAVE: ${{ needs.save.result }}
+        run: |
+          set -euo pipefail
+          git fetch "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" factory/setup-state:refs/remotes/origin/factory/setup-state || true
+          git checkout -B factory/setup-state origin/factory/setup-state 2>/dev/null || true
+          if [ "$SAVE" != "success" ]; then
+            bsf setup failed --step journeys --summary "the journey list was not saved" --retry factory-setup-journeys.yml
+            exit 1
+          fi
+          if bsf setup journeys --file .factory/setup-state/context/journeys.md; then
+            bsf setup advance --from journeys --state .factory/setup-state
+          else
+            bsf setup failed --step journeys --summary "the journey list is missing a signed-in journey" --retry factory-setup-journeys.yml
+            exit 1
+          fi

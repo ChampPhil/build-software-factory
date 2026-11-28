@@ -80,7 +80,7 @@ merged, and the secret or the app is not in place yet, that run is not the
 job. Do not follow it. Do not treat it as setup. If that early run is still
 going and it blocks the real one, cancel the early run only. Do not cancel
 a later run that still has to commit the checkers. Start the job yourself,
-with `gh workflow run factory-setup.yml`, only after both are true.
+with `gh workflow run factory-setup.yml`, only after the key, the app, and the development environment are in place. A later failure follows that one step's workflow. It does not start `factory-setup.yml` again.
 
 ## How you get there
 

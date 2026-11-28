@@ -489,6 +489,29 @@ export class GitHubClient {
     await this.send("POST", `repos/${this.repo}/actions/runs/${runId}/cancel`);
   }
 
+  /**
+   * The public key GitHub uses to seal an Actions secret.
+   *
+   * Returns the key and its id. The secret value never comes back.
+   */
+  async actionsPublicKey(): Promise<{ key: string; key_id: string }> {
+    return this.get(`repos/${this.auth.repo}/actions/secrets/public-key`);
+  }
+
+  /**
+   * Replace one Actions secret with a value sealed for GitHub.
+   *
+   * name: the secret, FACTORY_SANDBOX_ENV for the development environment.
+   * encryptedValue: the sealed box, base64. The plain value is not sent.
+   * keyId: the id from actionsPublicKey.
+   */
+  async putActionsSecret(name: string, encryptedValue: string, keyId: string): Promise<void> {
+    await this.send("PUT", `repos/${this.auth.repo}/actions/secrets/${encodeURIComponent(name)}`, {
+      encrypted_value: encryptedValue,
+      key_id: keyId,
+    });
+  }
+
   async dispatchWorkflow(workflow: string, ref: string, inputs: Record<string, string> = {}): Promise<void> {
     await this.send("POST", `repos/${this.auth.repo}/actions/workflows/${workflow}/dispatches`, {
       ref,

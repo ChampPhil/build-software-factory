@@ -10,6 +10,7 @@ import { dirname, join } from "node:path";
 import { resolveRead } from "../lib/config.js";
 import { validate } from "../lib/schema.js";
 import { SUPERVISOR_SOURCE } from "./supervisor-source.js";
+import { bootProblems, namesFromBootLog, vendorLoginWaiting } from "./boot-checks.js";
 
 /**
  * `bsf sandbox start` — bring up the frozen sandbox for a role.
@@ -330,6 +331,10 @@ export interface TrialReport {
   readonly sign_in?: { readonly ok: boolean; readonly detail: string };
   /** Each dependency's probe against the running app. */
   readonly probes?: readonly ProbeOutcome[];
+  /** Names the running app asked for. The person answers these on the screen. */
+  readonly return_to_screen?: readonly string[];
+  /** Development keys a vendor rejected. The screen asks for a replacement. */
+  readonly rejected_names?: readonly string[];
 }
 
 export interface CheckOutcome {
@@ -451,6 +456,8 @@ export async function trialSandbox(opts: {
   readonly workspace: string;
   readonly out: string;
   readonly secretBlob?: string;
+  /** Names marked to fake. Null skips the stand-in check, for a trial that has no decisions yet. */
+  readonly fakeKeys?: readonly string[] | null;
   readonly appWaitMs?: number;
   readonly screenshot?: (url: string, file: string) => boolean;
   readonly log?: (line: string) => void;
@@ -471,6 +478,7 @@ export async function trialSandbox(opts: {
 
   const { env, missing } = sandboxEnv(m, opts.secretBlob);
   const runEnv = { ...shellBase(), ...env };
+  const problems = bootProblems(m, opts.workspace, parseDotenv(opts.secretBlob ?? ""), opts.fakeKeys ?? null);
 
   const run = (step: StepOutcome["step"], command: string | null): boolean => {
     if (command === null) {
@@ -492,6 +500,8 @@ export async function trialSandbox(opts: {
 
   if (missing.length > 0) {
     steps.push({ step: "install", command: null, ok: false, exit: null, seconds: 0, tail: `values not set: ${missing.join(", ")}` });
+  } else if (problems.length > 0) {
+    steps.push({ step: "install", command: null, ok: false, exit: null, seconds: 0, tail: problems.join("\n") });
   } else {
     for (const svc of m.services) {
       clearContainer(`bsf-${svc.name}`);
@@ -636,6 +646,22 @@ export async function trialSandbox(opts: {
     probes = (m.dependencies ?? []).map((d) => ({ dependency: d.name, path: d.probe?.path ?? "", signed_in: d.probe?.signed_in ?? false, ok: false, detail: "the app did not answer, so nothing was probed" }));
   }
 
+  // A page that is still a vendor's login box is a failed boot. The boot
+  // does not type into it. Names the app asked for go back to the screen.
+  if (url !== null && appStatus !== null) {
+    try {
+      const res = await fetch(url);
+      const page = await res.text();
+      if (vendorLoginWaiting(page)) {
+        steps.push({
+          step: "test", command: null, ok: false, exit: null, seconds: 0,
+          tail: "a page is still waiting on a vendor login. The boot does not type into that page.",
+        });
+      }
+    } catch { /* the status was already recorded */ }
+  }
+  const named = namesFromBootLog(steps.map((s) => s.tail).join("\n"));
+
   // renders still needs a page under 500 plus a screenshot. A 500 means the
   // process answered and the page failed, which is not a rendered screen.
   const reached = reachedTier(steps, appStatus !== null && appStatus < 500, shot !== null);
@@ -666,6 +692,8 @@ export async function trialSandbox(opts: {
     ...(checks.length === 0 ? {} : { checks }),
     ...(signIn === undefined ? {} : { sign_in: signIn }),
     ...(probes === undefined ? {} : { probes }),
+    ...(named.missing.length === 0 ? {} : { return_to_screen: named.missing }),
+    ...(named.rejected.length === 0 ? {} : { rejected_names: named.rejected }),
   };
   writeFileSync(opts.out, `${JSON.stringify(report, null, 2)}\n`);
   log(summary);

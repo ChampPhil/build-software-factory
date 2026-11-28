@@ -127,15 +127,29 @@ jobs:
           app-id: ${{ vars.FACTORY_APP_CLIENT_ID }}
           private-key: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
           permission-contents: write
+          permission-actions: write
           owner: ${{ github.repository_owner }}
           repositories: ${{ github.event.repository.name }}
+      # Before any model runs. A name with no decision leaves this item queued.
+      - name: Settings still waiting
+        id: env
+        env:
+          FACTORY_SANDBOX_ENV: ${{ secrets.FACTORY_SANDBOX_ENV }}
+          GH_TOKEN: ${{ steps.write-token.outputs.token }}
+          INPUTS: ${{ toJson(github.event.inputs) }}
+        run: |
+          if bsf env scan --hold factory-run.yml --inputs "$INPUTS"; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
       # Moves the item off queued, so intake and rollup stop dispatching it,
       # and records the run as live, which is what the concurrency cap counts.
       # Not when the budget cannot cover this run's largest step: the item
       # stays queued, unclaimed, and dispatch leaves it until it fits.
       - name: Claim the work item for this run
         id: start
-        if: steps.plan.outputs.budget_wait != 'true'
+        if: steps.plan.outputs.budget_wait != 'true' && steps.env.outputs.ready == 'true'
         env:
           GH_TOKEN: ${{ steps.write-token.outputs.token }}
           WORK_ITEM: ${{ inputs.work_item }}

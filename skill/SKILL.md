@@ -133,7 +133,24 @@ The chores, in this order:
 page. Do not use browser tools, computer use, or any automation on their
 desktop for this chore. They open the one link. The background loop
 resumes when the app is installed.
-4. **One question.** Do the pull requests setup itself opens merge on their
+4. **The development environment.** The private copy runs with a development
+   environment. Its credentials are what they paste into the GitHub secret
+   `FACTORY_SANDBOX_ENV`. They paste their whole local env file there, not in
+   the chat. Agents cannot see the values. Run
+   `node scripts/env-screen.mjs --development --repo <owner>/<repo>`
+   in the background. When every name the code reads is already in a local
+   env file, the script saves that file as the secret and exits 0. It does
+   not ask, and it does not mark anything to fake. When it exits 2, it has
+   printed names only. For each of those names they choose use it, fake it,
+   or ignore this key. Use it means the value is in the env file they paste
+   into the secret. Fake it is for a real production credential. Ignore this
+   key means the name is not an app setting, and the factory remembers that.
+   A journey that logs in on someone else's site is on this screen too. They
+   connect the test account once, or paste the token that vendor gives for
+   tests. If they skip it, that journey comes off the finish line. The rest
+   of setup still finishes. Do not open Google, Clerk's login page, or any
+   other vendor's login.
+5. **One question.** Do the pull requests setup itself opens merge on their
    own? Ask it in everyday words, after the app is installed. If they only
    said yes to setup, the answer is yes: those pull requests merge on their
    own. Say that in one sentence so it is not a silent assumption. If they
@@ -148,8 +165,10 @@ Never write "you chose automatic merge" for them.
 
 ## The long job waits
 
-The long GitHub setup job starts only after the secret exists and the app
-is installed on this repository. A bootstrap pull request merging must not
+The long GitHub setup job starts only after the secret exists, the
+development environment is saved, and the app is installed on this
+repository. A missing name that is neither used, faked, nor ignored means
+the job does not start. A bootstrap pull request merging must not
 start that job. If a run appears because that pull request merged, and the
 secret or the app was not in place yet, that run has not started the job.
 Do not follow it. Do not treat its failure as the end. If that early run is
@@ -170,6 +189,20 @@ already everyday words. Do not add Computer 0, Computer A, Computer B, or
 any other name for the machines. A minute with no line means the watch is
 stuck. Start it again on the live run. Relaying the line is not the end of
 the turn: if the run has stopped, start the repair in that same turn.
+
+A failed step runs again on its own. Do not run `factory-setup.yml` again,
+and do not start the journey list again, to repair a later step. The step's
+own workflow starts the one retry. If a newer run of that step appears,
+follow it. If an open issue is titled "Setup stopped", stop. The same
+failure happened twice. Do not keep paying for the same boot.
+
+| What failed | The one workflow to follow |
+| --- | --- |
+| The journey list | `factory-setup-journeys.yml` |
+| The standard rules | `factory-setup-rules.yml` |
+| The recipe | `factory-setup-recipe.yml` |
+| The boot | `factory-setup-boot.yml` |
+| The pull request | `factory-setup-pr.yml` |
 
 Do not cancel a second factory-setup run that still has to commit the
 checkers. Cancel a second run only when it is a duplicate of a run that
@@ -243,6 +276,7 @@ just so a check can see the recipe.
 | They do | You do |
 | --- | --- |
 | Paste `ANTHROPIC_API_KEY` on GitHub, not in the chat | Give them that one page, then watch for the secret |
+| Paste the local env file into `FACTORY_SANDBOX_ENV`, not in the chat | Run the screen. It does not print the values |
 | Press **Create**, then **Install**, on this repository only | Everything around it, via `scripts/create-app.mjs` |
 | Say if they want to merge setup's own pull requests by hand | Otherwise those merge on their own. The other pipelines wait for a person |
 | Merge a setup pull request, only if they said they would | Watch that pull request and wake when it merges |

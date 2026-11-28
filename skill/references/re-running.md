@@ -154,6 +154,10 @@ For each one:
 
 ## Failure handling, in any mode
 
+- **Repair one step.** A failed journey list, rule check, recipe, boot, or
+  pull request follows that step's own workflow. Do not run
+  `factory-setup.yml` again, and do not start the journey list again, to
+  repair a later step. If an issue titled "Setup stopped" is open, stop.
 - **Repair and continue.** A failed lock-in of the private copy is repaired
   and rerun. Do not ship a private-copy-only pull request and postpone the
   checkers. Do not cancel a second factory-setup run that still has to

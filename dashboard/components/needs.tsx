@@ -361,4 +361,30 @@ function CandidateCard({ c }: { c: Extract<Need, { kind: "candidate" }>["candida
   );
 }
 
+/**
+ * The one block on the waiting list.
+ *
+ * count: how many settings have no decision. Zero hides the block.
+ */
+export function SettingsBlock({ count }: { count: number }) {
+  if (count <= 0) return null;
+  const word = count === 1 ? "setting is" : "settings are";
+  return (
+    <article className="item ask">
+      <div className="head">
+        <div className="where">
+          <span className="tag you">Your answer moves this on</span>
+        </div>
+        <h3>{count} {word} waiting</h3>
+      </div>
+      <div className="body">
+        <p>A factory job is paused until each one is used, faked, or ignored. The queued work starts on its own once the list is clear.</p>
+        <div className="acts">
+          <Link className="btn" href="/env">Open the settings screen</Link>
+        </div>
+      </div>
+    </article>
+  );
+}
+
 export { pipeName };

@@ -1,0 +1,110 @@
+# Save one setup step onto the branch the next step reads.
+#
+# The journey list and the standard rules push to the same branch at the same
+# time, so the push retries when the other one lands first. The commit has no
+# secret values. A workflow started tomorrow can read it.
+name: factory-setup-save
+
+on:
+  workflow_call:
+    inputs:
+      artifact:
+        description: The round the writer just uploaded
+        required: true
+        type: string
+      marker:
+        description: A file to touch when this step's output is present
+        required: false
+        default: ""
+        type: string
+    outputs:
+      saved:
+        description: The recipe was in the round
+        value: ${{ jobs.save.outputs.saved }}
+
+permissions:
+  contents: read
+
+jobs:
+  save:
+    runs-on: ubuntu-latest
+    outputs:
+      saved: ${{ steps.commit.outputs.saved }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Fetch the factory runner from the default branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: .factory-trusted
+          sparse-checkout: |
+            .factory/bin
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Put the trusted runner on PATH
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/bsf"
+          cp -R .factory-trusted/.factory/bin/. "$RUNNER_TEMP/bsf/"
+          rm -rf .factory-trusted
+          echo "$RUNNER_TEMP/bsf" >> "$GITHUB_PATH"
+          chmod +x "$RUNNER_TEMP/bsf/"*
+          "$RUNNER_TEMP/bsf/bsf" --version
+      - name: Mint a token
+        id: token
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1
+        with:
+          app-id: ${{ vars.FACTORY_APP_CLIENT_ID }}
+          private-key: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
+          permission-contents: write
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+      - name: Download the round
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ${{ inputs.artifact }}
+          path: ${{ runner.temp }}/round
+      - name: Commit the step
+        id: commit
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          MARKER: ${{ inputs.marker }}
+        run: |
+          set -euo pipefail
+          git fetch "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" factory/setup-state:refs/remotes/origin/factory/setup-state || true
+          if git rev-parse --verify --quiet origin/factory/setup-state >/dev/null; then
+            git checkout -B factory/setup-state origin/factory/setup-state
+          else
+            git checkout -B factory/setup-state
+          fi
+          mkdir -p .factory/setup-state
+          bsf setup publish --from "$RUNNER_TEMP/round" --into .factory/setup-state
+          if [ "$MARKER" = "rules.done" ]; then
+            if [ -f .factory/setup-state/guardrails.patch ] || [ -f .factory/setup-state/guardrails.json ]; then
+              echo done > .factory/setup-state/rules.done
+            fi
+          elif [ -n "$MARKER" ]; then
+            echo done > ".factory/setup-state/$MARKER"
+          fi
+          if [ -f .factory/setup-state/manifest.json ]; then echo "saved=true" >> "$GITHUB_OUTPUT"; else echo "saved=false" >> "$GITHUB_OUTPUT"; fi
+          git config user.name "factory[bot]"
+          git config user.email "factory[bot]@users.noreply.github.com"
+          git add .factory/setup-state
+          if git diff --cached --quiet; then
+            echo "nothing new to save"
+            exit 0
+          fi
+          git commit -q -m "Save a setup step"
+          url="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          for i in 1 2 3 4 5; do
+            if git push "$url" HEAD:factory/setup-state; then exit 0; fi
+            git fetch "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" factory/setup-state:refs/remotes/origin/factory/setup-state
+            git rebase origin/factory/setup-state || git rebase --abort || true
+            sleep "$i"
+          done
+          echo "the setup branch could not be updated" >&2
+          exit 1

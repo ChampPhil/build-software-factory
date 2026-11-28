@@ -300,7 +300,16 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
       /practice TEXT on any issue or PR.
   bsf sandbox ui-paths [--file PATH]   (record which files are the UI)
   bsf enforcement detect [--file PATH] (record whether this repo can require checks)
-  bsf sandbox scrub [--file PATH]   (replace secret-shaped placeholder values)
+  bsf sandbox secrets [--file PATH]  (refuse a recipe that pastes a password)
+  bsf env scan [--root DIR] [--hold WORKFLOW] [--inputs JSON] [--names-file PATH]
+  bsf env list [--root DIR] [--names-file PATH]
+  bsf env apply|resume|skipped [--root DIR]
+  bsf setup publish --from DIR --into DIR
+  bsf setup journeys --file PATH [--root DIR]
+  bsf setup advance --from journeys|rules|recipe [--state DIR]
+  bsf setup failed --step NAME --summary TEXT [--retry WORKFLOW] [--then pr]
+  bsf setup judge --trial PATH [--journeys PATH]
+  bsf setup reset
   bsf sandbox dry-run   (start the sandbox and serve the app, as the checker will)
   bsf sandbox start
       Bring up the frozen sandbox: its services, its closed environment, its install.
@@ -555,6 +564,10 @@ async function main(argv: readonly string[]): Promise<number> {
       return dashboardLinkCommand(args);
     case "sandbox":
       return sandboxCommandCli(second, args);
+    case "env":
+      return (await import("./commands/env-command.js")).envCommand(second, args);
+    case "setup":
+      return (await import("./commands/setup-command.js")).setupCommand(second, args);
     case "practice":
       return practiceCommand(second, command.slice(2));
     case "recompile-prepare":
@@ -2780,15 +2793,20 @@ async function sandboxCommandCli(second: string | undefined, args: Args): Promis
     process.stdout.write(`ui paths: ${found.length === 0 ? "none found" : found.join(", ")}\n`);
     return 0;
   }
-  if (second === "scrub") {
-    // `bsf sandbox scrub [--file PATH]`: replace credential-shaped placeholder values
-    // in the manifest, so a secret scanner has nothing to refuse the PR over.
+  if (second === "secrets") {
+    // `bsf sandbox secrets [--file PATH]`: refuse a recipe that pastes a
+    // password into a value field. The file is not rewritten. A path stays
+    // a path. The push does not run when this fails.
     const file = typeof args["file"] === "string" ? args["file"] : ".factory/sandbox/manifest.json";
     if (!existsSync(file)) die(`${file} does not exist`);
-    const { scrubPlaceholders } = await import("./lib/placeholders.js");
-    const out = scrubPlaceholders(readFileSync(file, "utf8"));
-    if (out.replaced > 0) writeFileSync(file, out.text);
-    process.stdout.write(`scrubbed ${out.replaced} secret-shaped value${out.replaced === 1 ? "" : "s"} in ${file}\n`);
+    const { pastedSecrets } = await import("./lib/placeholders.js");
+    const parsed = JSON.parse(readFileSync(file, "utf8")) as { env?: unknown };
+    const problems = pastedSecrets(Array.isArray(parsed.env) ? parsed.env : []);
+    if (problems.length > 0) {
+      for (const line of problems) process.stderr.write(`${line}\n`);
+      return 1;
+    }
+    process.stdout.write("the recipe names secrets; it does not paste them\n");
     return 0;
   }
   if (second === "dry-run") {
@@ -2872,11 +2890,23 @@ async function sandboxCommandCli(second: string | undefined, args: Args): Promis
     const candidate = args["candidate"];
     const out = args["out"];
     if (typeof candidate !== "string" || typeof out !== "string") die("usage: bsf sandbox trial --candidate PATH --out PATH");
+    let fakeKeys: readonly string[] | null = null;
+    const repo = process.env["GITHUB_REPOSITORY"];
+    if (repo !== undefined && repo !== "") {
+      try {
+        const { DataRefStore } = await import("./lib/dataref.js");
+        const { GitHub } = await import("./lib/github.js");
+        const { parseDecisions, DECISIONS_PATH } = await import("./commands/env-state.js");
+        const text = await new DataRefStore(new GitHub({ repo })).read(DECISIONS_PATH);
+        if (text !== null) fakeKeys = parseDecisions(JSON.parse(text)).fake;
+      } catch { /* no decisions yet: the stand-in check stays off */ }
+    }
     const r = await trialSandbox({
       manifestPath: candidate,
       workspace: process.env["GITHUB_WORKSPACE"] ?? process.cwd(),
       out,
       ...(process.env["FACTORY_SANDBOX_ENV"] === undefined ? {} : { secretBlob: process.env["FACTORY_SANDBOX_ENV"] }),
+      fakeKeys,
     });
     setOutput("reached", r.reached);
     setOutput("claimed", r.claimed);

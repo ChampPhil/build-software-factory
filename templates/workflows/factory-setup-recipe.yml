@@ -1,0 +1,203 @@
+# Write the recipe. Saving it is success, even when the writer could not boot the app. The boot still runs.
+name: factory-setup-recipe
+
+on:
+  workflow_dispatch:
+    inputs:
+      amend:
+        description: A repair note. Empty on the first setup.
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: factory-setup-recipe
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      model_builder: ${{ steps.models.outputs.model_builder }}
+      amend: ${{ steps.ask.outputs.amend }}
+      ready: ${{ steps.env.outputs.ready }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Fetch the factory runner from the default branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: .factory-trusted
+          sparse-checkout: |
+            .factory/bin
+            .factory/definition
+            .factory/sandbox
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Put the trusted runner on PATH
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/bsf"
+          cp -R .factory-trusted/.factory/bin/. "$RUNNER_TEMP/bsf/"
+          mkdir -p "$RUNNER_TEMP/bsf-trusted/.factory"
+          for d in definition sandbox; do
+            if [ -d ".factory-trusted/.factory/$d" ]; then cp -R ".factory-trusted/.factory/$d" "$RUNNER_TEMP/bsf-trusted/.factory/"; fi
+          done
+          echo "BSF_TRUSTED_ROOT=$RUNNER_TEMP/bsf-trusted" >> "$GITHUB_ENV"
+          rm -rf .factory-trusted
+          echo "$RUNNER_TEMP/bsf" >> "$GITHUB_PATH"
+          chmod +x "$RUNNER_TEMP/bsf/"*
+          "$RUNNER_TEMP/bsf/bsf" --version
+      - name: Mint a token
+        id: token
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1
+        with:
+          app-id: ${{ vars.FACTORY_APP_CLIENT_ID }}
+          private-key: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-actions: write
+          permission-issues: write
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+      - name: Settings still waiting
+        id: env
+        env:
+          FACTORY_SANDBOX_ENV: ${{ secrets.FACTORY_SANDBOX_ENV }}
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          AMEND: ${{ inputs.amend }}
+        run: |
+          inputs=$(jq -cn --arg amend "$AMEND" '{amend:$amend}')
+          if bsf env scan --hold factory-setup-recipe.yml --inputs "$inputs"; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Read each role's model from factory.yaml
+        id: models
+        if: steps.env.outputs.ready == 'true'
+        run: bsf models
+      - name: Hand the writer the journeys and the last boot, never the secret values
+        id: ask
+        if: steps.env.outputs.ready == 'true'
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          FACTORY_SANDBOX_ENV: ${{ secrets.FACTORY_SANDBOX_ENV }}
+          AMEND: ${{ inputs.amend }}
+        run: |
+          git fetch "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" factory/setup-state || true
+          journeys=$(git show FETCH_HEAD:.factory/setup-state/context/journeys.md 2>/dev/null || true)
+          trial=$(git show FETCH_HEAD:.factory/setup-state/trial.json 2>/dev/null | head -c 4000 || true)
+          fakes=$(bsf env list | jq -r '[.names[] | select(.decision=="fake") | .name] | join(", ")' || true)
+          {
+            echo "amend<<EOF"
+            echo "Names marked to fake, and only these, may have a local stand-in: ${fakes}"
+            echo
+            echo "$journeys"
+            echo
+            echo "$trial"
+            if [ -n "$AMEND" ]; then echo "$AMEND"; fi
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+  writer:
+    name: Write the recipe
+    needs: plan
+    if: needs.plan.outputs.ready == 'true'
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+      id-token: write
+      issues: write
+      pull-requests: write
+    uses: ./.github/workflows/factory-setup-agent.lock.yml
+    with:
+      budget_key: ${{ github.run_id }}-${{ github.run_attempt }}-writer
+      model: ${{ needs.plan.outputs.model_builder }}
+      round: "1"
+      amend: ${{ needs.plan.outputs.amend }}
+    secrets:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      FACTORY_APP_PRIVATE_KEY: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
+      COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+
+  writer-budget:
+    needs: writer
+    if: always()
+    permissions:
+      contents: read
+    uses: ./.github/workflows/factory-budget-settle.yml
+    with:
+      key: ${{ github.run_id }}-${{ github.run_attempt }}-writer
+      ran: ${{ needs.writer.result == 'skipped' && 'false' || 'true' }}
+    secrets:
+      FACTORY_APP_PRIVATE_KEY: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
+
+  save:
+    needs: [writer, writer-budget]
+    if: always() && needs.writer.result != 'skipped'
+    uses: ./.github/workflows/factory-setup-save.yml
+    with:
+      artifact: setup-round-1
+    secrets:
+      FACTORY_APP_PRIVATE_KEY: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
+
+  next:
+    name: Boot the saved recipe
+    needs: [writer, save]
+    if: always() && needs.writer.result != 'skipped'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Fetch the factory runner from the default branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: .factory-trusted
+          sparse-checkout: |
+            .factory/bin
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Put the trusted runner on PATH
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/bsf"
+          cp -R .factory-trusted/.factory/bin/. "$RUNNER_TEMP/bsf/"
+          rm -rf .factory-trusted
+          echo "$RUNNER_TEMP/bsf" >> "$GITHUB_PATH"
+          chmod +x "$RUNNER_TEMP/bsf/"*
+          "$RUNNER_TEMP/bsf/bsf" --version
+      - name: Mint a token
+        id: token
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1
+        with:
+          app-id: ${{ vars.FACTORY_APP_CLIENT_ID }}
+          private-key: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-actions: write
+          permission-issues: write
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+      - name: Start the boot when the recipe was saved
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          SAVED: ${{ needs.save.outputs.saved }}
+        run: |
+          set -euo pipefail
+          git fetch "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" factory/setup-state:refs/remotes/origin/factory/setup-state || true
+          git checkout -B factory/setup-state origin/factory/setup-state 2>/dev/null || true
+          if [ "$SAVED" = "true" ]; then
+            bsf setup advance --from recipe --state .factory/setup-state
+          else
+            bsf setup failed --step recipe --summary "the recipe was not saved" --retry factory-setup-recipe.yml
+            exit 1
+          fi
