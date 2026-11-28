@@ -52,7 +52,7 @@ starts at 0 by design.
 
 From `rules/<language>.yaml`, each configured on a tool the repo already has
 (or on the minimum one §0 just installed):
-formatter, type strictness, secrets scanning, dependency cycles, suppression
+formatter, type strictness, dependency cycles, suppression
 control (a reason required, counted, capped).
 
 Write the pack's `base_config` for each tool first — parser, source type,

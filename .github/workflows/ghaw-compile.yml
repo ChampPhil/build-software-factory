@@ -11,11 +11,12 @@ on:
   push:
     branches: [main]
     paths: ["templates/workflows/**", "tests/live/workflows/**", ".github/workflows/ghaw-compile.yml", "runner/src/cli.ts"]
+  # Every pull request, with no path filter: main requires this check, and a
+  # required check that never starts leaves a pull request waiting forever.
   pull_request:
-    paths: ["templates/workflows/**", "tests/live/workflows/**", ".github/workflows/ghaw-compile.yml", "runner/src/cli.ts"]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   compile:
@@ -76,26 +77,30 @@ jobs:
           # Lint only what the templates authored; the lock files are gh-aw's.
           /tmp/actionlint -color $(ls .github/workflows/factory-*.yml | grep -v '\.lock\.yml$')
 
-      # Ship the compiled roles with the skill. Setup copies these into a
+      # The compiled roles ship with the skill. Setup copies them into a
       # user's repo, so for the default engine and sandbox posture the user
       # never needs gh-aw installed; only a different engine or posture, both
       # compile-time literals, needs a recompile, which runs in their Actions.
-      # A push made with GITHUB_TOKEN starts no workflow, so this cannot loop.
-      - name: Commit the compiled roles beside the templates
-        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+      #
+      # This used to commit the fresh locks to main after a merge. Main now
+      # refuses a push that has not passed its checks, so the pull request has
+      # to carry the right locks itself, and this step is what holds it to
+      # that. A prompt-only change needs `node scripts/lock-hash.mjs --write`.
+      # A change to a settings block needs the files in the artifact below.
+      - name: The committed locks are what the compiler produces
         run: |
-          mkdir -p templates/compiled
-          rm -f templates/compiled/*.lock.yml
-          cp /tmp/scratch/.github/workflows/*.lock.yml templates/compiled/
-          mkdir -p tests/live/compiled && rm -f tests/live/compiled/*.lock.yml
-          cp /tmp/live/.github/workflows/*.lock.yml tests/live/compiled/
-          git add templates/compiled tests/live/compiled
-          if git diff --cached --quiet; then echo "compiled roles unchanged"; exit 0; fi
-          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
-            commit -m "Recompile the role templates with gh-aw $(gh aw version 2>/dev/null | head -1)"
-          git push
-        env:
-          GH_TOKEN: ${{ github.token }}
+          mkdir -p /tmp/want/templates /tmp/want/live
+          cp /tmp/scratch/.github/workflows/*.lock.yml /tmp/want/templates/
+          cp /tmp/live/.github/workflows/*.lock.yml /tmp/want/live/
+          stale=0
+          diff -r templates/compiled /tmp/want/templates > /tmp/locks.diff || stale=1
+          diff -r tests/live/compiled /tmp/want/live >> /tmp/locks.diff || stale=1
+          if [ "$stale" = "1" ]; then
+            head -c 20000 /tmp/locks.diff
+            echo "::error::templates/compiled or tests/live/compiled is stale. For a prompt-only change run: node scripts/lock-hash.mjs --write. Otherwise copy the lock files from this run's ghaw-compiled artifact."
+            exit 1
+          fi
+          echo "the committed locks match"
 
       - name: Keep the compiled output and the log
         if: always()
@@ -104,5 +109,6 @@ jobs:
           name: ghaw-compiled
           path: |
             /tmp/scratch/.github/workflows/*.lock.yml
+            /tmp/live/.github/workflows/*.lock.yml
             /tmp/compile.log
           if-no-files-found: warn

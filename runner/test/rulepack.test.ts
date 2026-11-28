@@ -101,11 +101,15 @@ describe("the rule packs", () => {
         expect(new Set(ids).size).toBe(ids.length);
       });
 
-      it("declares a formatter and a secrets scanner, which every pack owes", () => {
+      it("declares a formatter and a linter, which every pack owes", () => {
         const kinds = new Set(pack.tools.map((t) => t.kind));
         expect(kinds).toContain("formatter");
-        expect(kinds).toContain("secrets");
         expect(kinds).toContain("linter");
+      });
+
+      it("declares no secret scanner, because the host already scans", () => {
+        // GitHub scans pushes for secrets. The pack's own entry was never run.
+        expect(pack.tools.map((t) => String(t.kind))).not.toContain("secrets");
       });
 
       it("names the linter's own baseline file where it has one", () => {
