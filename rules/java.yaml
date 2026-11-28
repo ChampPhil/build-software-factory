@@ -39,15 +39,6 @@ tools:
     fix: mvn -q spotless:apply
     native_baseline: null
 
-  - id: gitleaks
-    kind: secrets
-    detect: [".gitleaks.toml"]
-    config_file: .gitleaks.toml
-    install: "# gitleaks runs as a pinned action in CI"
-    check: gitleaks detect --no-banner --redact
-    fix: null
-    native_baseline: null
-
 rules:
   - id: no-raw-types
     concern: >-

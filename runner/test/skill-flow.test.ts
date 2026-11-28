@@ -9,28 +9,30 @@ const phase = (n: string) => readFileSync(join(ROOT, `skill/references/${n}`), "
 const WF = join(ROOT, "templates/workflows");
 
 describe("the skill's first message and human steps (fixes 9, 10, 11)", () => {
-  it("opens with the three parts and sends the dashboard link separately", () => {
-    expect(skill).toContain("What you are getting");
-    expect(skill).toContain("What I'll do");
-    expect(skill).toContain("What I need from you now");
+  it("opens with only the pitch and keeps the dashboard link for the closing message", () => {
+    expect(skill).toContain("Your first message is only the pitch.");
+    expect(skill).toContain("No checklist of chores.");
     expect(skill).toContain("https://buildsoftwarefactory.com");
-    expect(skill).toContain("separate\nfollow-up message");
+    expect(skill).toContain("Would you like to set up your autonomous software factory?");
+    expect(skill).toContain("link belongs in the closing message");
   });
 
-  it("front-loads the key, the App, the install and the one question, in that order", () => {
-    const a = skill.indexOf("**A. The Anthropic key.**");
-    const b = skill.indexOf("**B. Create the App.**");
-    const c = skill.indexOf("**C. Install it.**");
-    const d = skill.indexOf("**D. One question");
+  it("names the key, the App, the install, the env file and the one question, in that order", () => {
+    const a = skill.indexOf("1. **The Anthropic key.**");
+    const b = skill.indexOf("2. **Create the GitHub App.**");
+    const c = skill.indexOf("3. **Install it on this repository only.**");
+    const d = skill.indexOf("4. **The development environment.**");
+    const e = skill.indexOf("5. **One question.**");
     expect(a).toBeGreaterThan(0);
-    expect(a < b && b < c && c < d).toBe(true);
+    expect(a < b && b < c && c < d && d < e).toBe(true);
     expect(skill).toContain("settings/secrets/actions/new");
     expect(skill).toContain("ANTHROPIC_API_KEY");
     expect(skill).toContain("console.anthropic.com/settings/keys");
+    expect(skill).toContain("Do not list the later chores in the same message.");
   });
 
   it("never ends a turn waiting for the person to say something it can see itself", () => {
-    expect(skill).toContain("Never end a turn on \"tell me when you're done\"");
+    expect(skill).toMatch(/Do not end a turn on\s+"tell me when you're done"/);
     expect(skill).toContain("scripts/wait-for.mjs");
     expect(skill).toContain("## Setup does not stop");
     expect(skill).toContain("fix it in the same turn");
@@ -43,18 +45,20 @@ describe("one setup, no baselines (fixes 12, 14, 15)", () => {
     for (const text of [skill, phase("phase-3-guardrails.md"), phase("phase-4-clean.md")]) {
       expect(/baseline everything|Baseline everything|else is baselined|rest is baselined|baselined and\s+seeded/.test(text)).toBe(false);
     }
-    expect(phase("phase-3-guardrails.md")).toContain("Nothing is baselined");
+    // The counts are a record of what is left, never permission to leave it.
+    expect(phase("phase-3-guardrails.md")).toMatch(/It is not\s+permission to leave a violation in place/);
+    expect(phase("phase-3-guardrails.md")).toMatch(/Keep going\s+until every count is zero/);
     expect(phase("phase-3-guardrails.md")).toContain("local correction hook");
   });
 
-  it("uses git rather than asking the person, and reuses a running setup", () => {
-    expect(skill).toContain("git cat-file -e origin/main:assessment.md");
-    expect(skill).toContain("gh run list --workflow factory-setup.yml");
-    expect(skill).toContain("Duplicate of #<older>");
+  it("uses git rather than asking the person, and keeps the run that still has work to do", () => {
+    expect(skill).toContain("Do with `gh` and `git` anything that can be done with them.");
+    expect(skill).toContain("gh pr view N --json state");
+    expect(skill).toContain("Do not close that one as a duplicate.");
   });
 
-  it("keeps the person's words as their own block and speaks as one setup", () => {
-    expect(skill).toContain("Product intent (from you)");
+  it("keeps the person's words as their own and speaks as one setup", () => {
+    expect(skill).toMatch(/Write their answers into the product intent in their own words/);
     expect(skill).toContain('You speak as one "setup"');
   });
 

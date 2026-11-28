@@ -37,15 +37,6 @@ tools:
     fix: rubocop --only Layout --autocorrect
     native_baseline: .rubocop_todo.yml
 
-  - id: gitleaks
-    kind: secrets
-    detect: [".gitleaks.toml"]
-    config_file: .gitleaks.toml
-    install: "# gitleaks runs as a pinned action in CI"
-    check: gitleaks detect --no-banner --redact
-    fix: null
-    native_baseline: null
-
 rules:
   - id: no-rescue-without-a-class
     concern: >-

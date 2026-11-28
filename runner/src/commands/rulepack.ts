@@ -17,7 +17,7 @@ const exec = promisify(execFile);
 
 export interface RulePackTool {
   readonly id: string;
-  readonly kind: "linter" | "formatter" | "typechecker" | "secrets" | "deps" | "coverage";
+  readonly kind: "linter" | "formatter" | "typechecker" | "deps" | "coverage";
   readonly detect?: readonly string[];
   readonly config_file?: string;
   readonly base_config?: Record<string, unknown>;

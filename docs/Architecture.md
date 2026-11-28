@@ -34,7 +34,7 @@ The factory reuses mature tools wherever one fits its constraints (free, nothing
 | Violation baselines and ratchets | Each linter's **native baseline** (ESLint bulk suppressions in `eslint-suppressions.json`, Oxlint suppressions, Semgrep `--baseline-commit`, and the equivalents in other rule packs); **Betterer** for checks without one | The cross-tool weakening check and suppression caps |
 | Mutation testing on changed lines | **StrykerJS** (incremental / changed-line ranges), **Stryker.NET** `--since`, **cargo-mutants** `--in-diff`, **Infection** `--git-diff-lines`, and each rule pack's equivalent | Nothing |
 | Diff coverage | **diff-cover** | Nothing |
-| Secret scanning and transcript redaction | **gitleaks** rules (MIT); gh-aw's built-in output redaction | Nothing |
+| Secret scanning and transcript redaction | **GitHub's own secret scanning and push protection**; gh-aw's built-in output redaction | Nothing |
 | Dependency-graph and clone rules | Existing checkers per rule pack (for example **dependency-cruiser**, **jscpd**) | Nothing |
 | Runtime verification evidence | **Playwright** (screenshots, video, traces) and **Playwright MCP** for the verifier agent's browser | Nothing |
 | Sandbox definition | The **devcontainer** spec (`devcontainer.json`) | Generating one when the repo has none |
@@ -57,7 +57,7 @@ Everything lives in one public repo, `build-software-factory`, Apache 2.0 licens
 | `/skill` | The setup skill: `SKILL.md`, phase scripts (`assess`, `mine-corrections`, `install`, `baseline`, `switch-on`), reference notes | A skill folder the user adds to their agent CLI |
 | `/runner` | The factory's deterministic runtime, a TypeScript CLI (`bsf`): intake, ledger, pipeline orchestration (dispatching the role workflows and collecting their results), gates orchestration, policy, merge-queue fallback, rollup, audit, settings sync, budget. It never runs an agent itself | A versioned GitHub Action, pinned by commit SHA in each user's workflows (`build-software-factory/runner@<sha>`) |
 | `/adapters` | One entry per agent CLI (`claude-code`, `cursor-cli`, `kilo-code`, `pi`, `hermes-agent`): its gh-aw engine (or custom engine definition) and memex source | Bundled into `/runner` and `/templates` |
-| `/rules` | Language rule packs for TypeScript, JavaScript, Python, Go, Java, Rust, C#, Ruby: configuration for existing tools (linters and their native baselines, Semgrep rules, dependency-graph and clone checkers, mutation testers, coverage reporters, gitleaks) | Bundled into `/runner`; copied into user repos at setup |
+| `/rules` | Language rule packs for TypeScript, JavaScript, Python, Go, Java, Rust, C#, Ruby: configuration for existing tools (linters and their native baselines, Semgrep rules, dependency-graph and clone checkers, mutation testers, coverage reporters) | Bundled into `/runner`; copied into user repos at setup |
 | `/templates` | Everything setup installs into a user repo: thin trigger workflows, one gh-aw workflow source per role (`.md`), default config, roles, rubrics, hooks | Copied by the skill |
 | `/schema` | JSON Schemas for every file format ([Schemas](Schemas.md)) | Bundled into `/runner` and `/dashboard` |
 | `/dashboard` | The Next.js static-export dashboard | Deployed to Cloudflare Pages |

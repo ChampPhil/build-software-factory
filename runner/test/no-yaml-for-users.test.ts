@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
+import { fileURLToPath } from "node:url";
 
 /**
  * The no-YAML rule: a user never opens or edits a definition file, and nothing
@@ -12,12 +13,15 @@ import { join, relative } from "node:path";
  * fine; telling a person to open or change it is not.
  */
 
-const ROOT = new URL("../../", import.meta.url).pathname;
+// `fileURLToPath`, not `.pathname`: on Windows the pathname is `/C:/…`, which
+// `join` turns into a path that does not exist.
+const ROOT = fileURLToPath(new URL("../../", import.meta.url));
 
 function walk(dir: string, keep: (p: string) => boolean, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
     if (name === "node_modules" || name === ".next" || name === "out" || name === "dist") continue;
-    const p = join(dir, name);
+    // Forward slashes on every platform, so the filters below can name a folder.
+    const p = join(dir, name).split("\\").join("/");
     if (statSync(p).isDirectory()) walk(p, keep, out);
     else if (keep(p)) out.push(p);
   }

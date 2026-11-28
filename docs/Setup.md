@@ -102,7 +102,7 @@ The skill produces a reproducible, isolated sandbox where an agent can build the
 
 The skill builds static rules and verification from the assessment, extending what the repo already has instead of replacing it.
 
-1. **Universal rules** from the language rule pack, each configured on an existing tool: formatter, type strictness, secrets scanning (gitleaks), dependency cycles (for example dependency-cruiser), suppression control (reason required, counted, capped).
+1. **Universal rules** from the language rule pack, each configured on an existing tool: formatter, type strictness, dependency cycles (for example dependency-cruiser), suppression control (reason required, counted, capped).
 2. **Codebase rules** from the dominant patterns: for each recurring concern, ban the minority patterns and enforce the dominant one (for example "network calls only through `apiClient`").
 3. **Structure rules:** one folder per feature with dependency-graph checks between feature folders, where the codebase already leans that way.
 4. **Accepted correction candidates**, each turned into what the ordered check chose: an API change (queued as a cleanup PR), a static rule, a verification scenario added to the runbook and test suite, or a context line in `fundamentals.md` or `history.md`. Critical logic (money, permissions, concurrency) flagged in candidates gets a targeted formal check.

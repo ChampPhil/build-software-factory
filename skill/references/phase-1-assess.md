@@ -48,7 +48,7 @@ deleted on merge so it is not unrequested markdown), and the first
 ## Find the gaps
 
 - Missing guardrails per kind: no formatter, no dependency rules, no type
-  strictness, no secrets scanning.
+  strictness.
 - Coverage per area, and areas with no tests at all.
 - **Two patterns for one concern.** Two ways of calling the API is nuance an
   agent will get wrong. Copy-pasted code is worth finding too.
