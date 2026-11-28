@@ -18,6 +18,10 @@ import { runConflictsCommand } from "./commands/conflicts.js";
 import { runSyncCommand } from "./commands/sync-settings.js";
 import { runAuditCommand, blockingFindings } from "./commands/audit.js";
 import { scanAssetHosts } from "./commands/asset-hosts.js";
+import { readEnvDecisions, scanConfigNames, undecidedNames } from "./commands/env-names.js";
+import { publishSetupStep } from "./commands/setup-publish.js";
+import { signedInJourneyProblem } from "./commands/boot-checks.js";
+import { parseDotenv } from "./commands/sandbox.js";
 import { scanProse, renderProse, budgetVerdict, budgetBytes, alwaysLoaded } from "./commands/repo-prose.js";
 import { planUninstall, applyUninstall, formatPlan, removeLocalFactory, removeLocalFactoryBranches, LOCAL_FACTORY_DIR } from "./commands/uninstall.js";
 import { readBrainstorm, render as renderBrainstorm } from "./commands/brainstorm.js";
@@ -180,6 +184,12 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
   bsf audit [--commit SHA]
   bsf scan-asset-hosts [--root DIR] [--why]
       The external hosts this repo's own pages load. Each needs a sandbox stub.
+  bsf env scan [--root DIR]
+      Configuration names the code reads that nobody has decided yet.
+      Exit 2 when any remain. Prints names and file:line, never secret values.
+  bsf setup publish --from DIR --into DIR
+      Copy one setup step into the branch the next step reads.
+      Refuses a recipe that pastes a password. Copies nothing secret.
   bsf repo-prose [--root DIR] [--out PATH] [--json]
       The conventions this repository writes down for agents — AGENTS.md,
       CLAUDE.md, CONTRIBUTING.md, .claude/skills/ and anything policy.yaml
@@ -536,6 +546,13 @@ async function main(argv: readonly string[]): Promise<number> {
       return auditCommand(args);
     case "scan-asset-hosts":
       return scanAssetHostsCommand(args);
+    case "env":
+      if (second !== "scan") die("usage: bsf env scan [--root DIR]");
+      return envScanCommand(args);
+    case "setup":
+      if (second === "publish") return setupPublishCommand(args);
+      if (second === "journeys") return setupJourneysCommand(args);
+      die("usage: bsf setup publish --from DIR --into DIR | bsf setup journeys --file PATH [--root DIR]");
     case "repo-prose":
       return repoProseCommand(args);
     case "prose-budget":
@@ -2334,6 +2351,71 @@ async function proseBudgetCommand(args: Args): Promise<number> {
  * what the factory concludes. Miss one and the page renders blank, and every
  * screenshot the factory attaches is a picture of nothing.
  */
+/**
+ * `bsf env scan` — configuration names still waiting on the person.
+ *
+ * A name is decided when it is a key in FACTORY_SANDBOX_ENV, or marked fake
+ * or ignore in .factory/env-decisions.json. The secret's values are never
+ * printed. Exit 2 means factory work should wait.
+ */
+/**
+ * `bsf setup publish` — copy one step's files into the setup-state directory.
+ *
+ * from: the artifact directory. into: where the branch stores earlier steps.
+ * A pasted password refuses the copy. The command prints the paths it copied.
+ */
+/**
+ * `bsf setup journeys` — an app with sign-in needs a signed-in journey.
+ *
+ * file: the journey list. root: the checkout, read for auth libraries.
+ * Exit 1 when the list has no sign-in. The list text is not rewritten.
+ */
+function setupJourneysCommand(args: Args): number {
+  const file = typeof args["file"] === "string" ? args["file"] : "";
+  const root = typeof args["root"] === "string" ? args["root"] : process.cwd();
+  if (file === "" || !existsSync(file)) die("usage: bsf setup journeys --file PATH [--root DIR]");
+  const problem = signedInJourneyProblem(readFileSync(file, "utf8"), root);
+  if (problem === null) {
+    process.stdout.write("the journey list includes a signed-in journey, or this app has no sign-in\n");
+    return 0;
+  }
+  process.stderr.write(`${problem}\n`);
+  return 1;
+}
+
+function setupPublishCommand(args: Args): number {
+  const from = typeof args["from"] === "string" ? args["from"] : "";
+  const into = typeof args["into"] === "string" ? args["into"] : "";
+  if (from === "" || into === "") die("usage: bsf setup publish --from DIR --into DIR");
+  try {
+    const copied = publishSetupStep(from, into);
+    for (const path of copied) process.stdout.write(`${path}\n`);
+    if (copied.length === 0) process.stderr.write("nothing to publish\n");
+    return 0;
+  } catch (err) {
+    process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
+    return 1;
+  }
+}
+
+function envScanCommand(args: Args): number {
+  const root = typeof args["root"] === "string" ? args["root"] : process.cwd();
+  const scan = scanConfigNames(root);
+  const decisions = readEnvDecisions(root);
+  const have = new Set(Object.keys(parseDotenv(process.env["FACTORY_SANDBOX_ENV"] ?? "")));
+  for (const name of decisions.fake) have.add(name);
+  for (const name of decisions.ignore) have.add(name);
+  const open = undecidedNames(scan, have);
+  for (const file of scan.dynamic) process.stdout.write(`dynamic\t${file}\n`);
+  for (const row of open) process.stdout.write(`${row.name}\t${row.where}\n`);
+  if (open.length === 0) {
+    process.stderr.write("every configuration name has a decision\n");
+    return 0;
+  }
+  process.stderr.write(`${open.length} configuration name(s) have no decision. Factory work waits until each is used, faked, or ignored.\n`);
+  return 2;
+}
+
 function scanAssetHostsCommand(args: Args): number {
   const root = typeof args["root"] === "string" ? args["root"] : process.cwd();
   const scan = scanAssetHosts(root);
@@ -2780,16 +2862,22 @@ async function sandboxCommandCli(second: string | undefined, args: Args): Promis
     process.stdout.write(`ui paths: ${found.length === 0 ? "none found" : found.join(", ")}\n`);
     return 0;
   }
-  if (second === "scrub") {
-    // `bsf sandbox scrub [--file PATH]`: replace credential-shaped placeholder values
-    // in the manifest, so a secret scanner has nothing to refuse the PR over.
+  if (second === "secrets" || second === "scrub") {
+    // `bsf sandbox secrets [--file PATH]`: refuse a recipe that pastes a
+    // password into an env value. The file is not rewritten. `scrub` is the
+    // old name and does the same thing, so an older workflow cannot rewrite
+    // a path into "not-a-real-key".
     const file = typeof args["file"] === "string" ? args["file"] : ".factory/sandbox/manifest.json";
     if (!existsSync(file)) die(`${file} does not exist`);
-    const { scrubPlaceholders } = await import("./lib/placeholders.js");
-    const out = scrubPlaceholders(readFileSync(file, "utf8"));
-    if (out.replaced > 0) writeFileSync(file, out.text);
-    process.stdout.write(`scrubbed ${out.replaced} secret-shaped value${out.replaced === 1 ? "" : "s"} in ${file}\n`);
-    return 0;
+    const { pastedSecrets } = await import("./lib/placeholders.js");
+    const manifest = JSON.parse(readFileSync(file, "utf8")) as { env?: unknown };
+    const problems = pastedSecrets(Array.isArray(manifest.env) ? manifest.env : []);
+    if (problems.length === 0) {
+      process.stdout.write("recipe env values are names or plain values, not pasted passwords\n");
+      return 0;
+    }
+    for (const p of problems) process.stderr.write(`${p}\n`);
+    return 1;
   }
   if (second === "dry-run") {
     // `bsf sandbox dry-run`: do exactly what the checker does before its

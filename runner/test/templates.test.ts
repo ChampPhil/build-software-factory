@@ -386,7 +386,7 @@ describe("trigger workflows", () => {
     const expected = [
       "factory-audit.yml", "factory-budget-settle.yml", "factory-conflicts.yml", "factory-drop.yml", "factory-garden.yml", "factory-gates.yml",
       "factory-intake.yml", "factory-journeys.yml", "factory-merge.yml", "factory-policy.yml", "factory-recompile.yml",
-      "factory-review.yml", "factory-rollup.yml", "factory-run.yml", "factory-setup-trial.yml", "factory-setup.yml", "factory-sync.yml",
+      "factory-review.yml", "factory-rollup.yml", "factory-run.yml", "factory-setup-boot.yml", "factory-setup-journeys.yml", "factory-setup-pr.yml", "factory-setup-recipe.yml", "factory-setup-rules.yml", "factory-setup-save.yml", "factory-setup-trial.yml", "factory-setup.yml", "factory-sync.yml",
     ];
     expect(readdirSync(WORKFLOWS).filter((f) => f.endsWith(".yml")).sort()).toEqual(expected);
   });

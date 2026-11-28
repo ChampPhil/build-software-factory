@@ -1,0 +1,70 @@
+# Commit one setup step onto factory/setup-state.
+#
+# A later workflow reads this branch. The artifact from the run that produced
+# the step is gone once that run ends, so re-running the later step would
+# otherwise redo the earlier work. Secret values are not committed. A recipe
+# that pastes a password is refused and nothing is pushed.
+name: factory-setup-save
+
+on:
+  workflow_call:
+    inputs:
+      artifact:
+        description: The artifact this step uploaded
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  save:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: Fetch the factory runner from the default branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: .factory-trusted
+          sparse-checkout: |
+            .factory/bin
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Put the trusted runner on PATH
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/bsf"
+          cp -R .factory-trusted/.factory/bin/. "$RUNNER_TEMP/bsf/"
+          rm -rf .factory-trusted
+          echo "$RUNNER_TEMP/bsf" >> "$GITHUB_PATH"
+          chmod +x "$RUNNER_TEMP/bsf/"*
+      - name: Fetch this step
+        id: download
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ${{ inputs.artifact }}
+          path: ${{ runner.temp }}/step
+      - name: Commit it on the setup branch
+        if: steps.download.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          branch=factory/setup-state
+          git fetch origin "$branch" || true
+          if git rev-parse --verify --quiet "origin/$branch" >/dev/null; then
+            git checkout -B "$branch" "origin/$branch"
+          else
+            git checkout -B "$branch"
+          fi
+          bsf setup publish --from "$RUNNER_TEMP/step" --into .factory/setup-state
+          git add .factory/setup-state
+          if git diff --cached --quiet; then
+            echo "nothing new to save"
+            exit 0
+          fi
+          git -c user.email="41898282+github-actions[bot]@users.noreply.github.com" -c user.name="github-actions[bot]" commit -m "Save a setup step"
+          git push origin "HEAD:$branch"

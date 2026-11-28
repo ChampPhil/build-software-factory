@@ -1,7 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { intentBlock, mergeProductIntent, INTENT_HEADING } from "../src/lib/product-intent.js";
-import { scrubPlaceholders, looksLikeSecret, NOT_A_KEY } from "../src/lib/placeholders.js";
-import { validate } from "../src/lib/schema.js";
+import { looksLikePastedSecret, pastedSecrets } from "../src/lib/placeholders.js";
 
 const PERSON = [
   INTENT_HEADING,
@@ -44,59 +43,25 @@ describe("the person's product intent survives the setup workflow", () => {
   });
 });
 
-describe("secret-shaped placeholders in the sandbox manifest", () => {
-  it("recognises the shapes scanners refuse", () => {
-    expect(looksLikeSecret("AKIAIOSFODNN7EXAMPLE")).toBe(true);
-    expect(looksLikeSecret("sk_test_4eC39HqLyjWDarjtT1zdp7dc")).toBe(true);
-    expect(looksLikeSecret("a".repeat(40))).toBe(true);
+describe("pasted passwords in the sandbox recipe", () => {
+  it("recognises vendor password prefixes and leaves paths alone", () => {
+    expect(looksLikePastedSecret("AKIAIOSFODNN7EXAMPLE")).toBe(true);
+    expect(looksLikePastedSecret("sk_test_4eC39HqLyjWDarjtT1zdp7dc")).toBe(true);
+    expect(looksLikePastedSecret("a".repeat(40))).toBe(false);
+    expect(looksLikePastedSecret("/api/backend/customer-workspaces/owned")).toBe(false);
+    expect(looksLikePastedSecret("http://127.0.0.1:5432")).toBe(false);
   });
 
-  it("leaves URLs, paths, ports and ordinary words alone", () => {
-    for (const v of ["http://localhost:3000", "postgres://u:p@localhost/db", "/var/lib/data", "development", "3000", "tcp://127.0.0.1:5432"]) {
-      expect(looksLikeSecret(v)).toBe(false);
-    }
-  });
-
-  it("replaces them anywhere in the manifest and counts them", () => {
-    const text = JSON.stringify({ env: { AWS_KEY: "AKIAIOSFODNN7EXAMPLE", MODE: "test" }, nested: [{ k: "sk_live_abcdefghijkl" }] });
-    const out = scrubPlaceholders(text);
-    expect(out.replaced).toBe(2);
-    expect(out.text).toContain(NOT_A_KEY);
-    expect(out.text).not.toContain("AKIA");
-    expect(out.text).toContain('"MODE": "test"');
-  });
-
-  it("keeps a long env name and a long secret name, and still scrubs the value", () => {
-    const envName = "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY";
-    const secretName = `A${"B".repeat(33)}`;
-    const token = "a".repeat(40);
-    expect(envName.length).toBeGreaterThanOrEqual(32);
-    expect(secretName.length).toBeGreaterThanOrEqual(32);
-    const manifest = {
-      schema: "sandbox/1",
-      tier: "static",
-      tier_reason: null,
-      commands: { install: null, build: null, run: null, test: null },
-      app_url: null,
-      env: [
-        { name: envName, kind: "inert", value: token, why: "the publishable key the page reads" },
-        { name: "CLERK_SECRET_KEY", kind: "test_mode", secret: secretName, why: "the test-mode secret's name" },
-      ],
-      services: [],
-      egress: [],
-      stubs: [],
-      dropped: [],
-      capabilities: { exercised: ["x"], not_exercised: [] },
-      episode: [{ attempt: 1, tried: "t", observed: "o", changed: null }],
-      frozen_at: "2026-11-20T00:00:00Z",
-    };
-    const out = scrubPlaceholders(JSON.stringify(manifest));
-    const parsed = JSON.parse(out.text) as { env: { name: string; value?: string; secret?: string }[] };
-    expect(out.replaced).toBe(1);
-    expect(parsed.env[0]?.name).toBe(envName);
-    expect(parsed.env[0]?.value).toBe(NOT_A_KEY);
-    expect(parsed.env[1]?.secret).toBe(secretName);
-    const checked = validate("sandbox", parsed);
-    if (!checked.ok) throw new Error(JSON.stringify(checked.errors, null, 2));
+  it("reports an env value that is a password and does not rewrite the recipe", () => {
+    const problems = pastedSecrets([
+      { name: "AWS_KEY", kind: "self", value: "AKIAIOSFODNN7EXAMPLE", why: "x" },
+      { name: "MODE", kind: "self", value: "test", why: "x" },
+      { name: "CLERK_SECRET_KEY", kind: "test_mode", secret: "CLERK_SECRET_KEY", why: "x" },
+      { name: "OPENAI_API_KEY", kind: "test_mode", value: "plain-word", why: "x" },
+    ]);
+    expect(problems.some((p) => p.includes("AWS_KEY"))).toBe(true);
+    expect(problems.some((p) => p.includes("OPENAI_API_KEY"))).toBe(true);
+    expect(problems.some((p) => p.includes("MODE"))).toBe(false);
+    expect(problems.some((p) => p.startsWith("CLERK_SECRET_KEY"))).toBe(false);
   });
 });

@@ -1,0 +1,69 @@
+# Open the setup pull request from the branch.
+#
+# Re-run this workflow when the pull request was rejected or a password was
+# found in the recipe. It does not boot again. A password sends the work
+# back: this workflow fails, and the recipe workflow runs again.
+name: factory-setup-pr
+
+on:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  open:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: factory/setup-state
+          fetch-depth: 0
+      - name: Fetch the factory runner from the default branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: .factory-trusted
+          sparse-checkout: |
+            .factory/bin
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Put the trusted runner on PATH
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/bsf"
+          cp -R .factory-trusted/.factory/bin/. "$RUNNER_TEMP/bsf/"
+          rm -rf .factory-trusted
+          echo "$RUNNER_TEMP/bsf" >> "$GITHUB_PATH"
+          chmod +x "$RUNNER_TEMP/bsf/"*
+      - name: Refuse a password, then open the pull request
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          recipe=.factory/setup-state/manifest.json
+          trial=.factory/setup-state/trial.json
+          if [ ! -f "$recipe" ] || [ ! -f "$trial" ]; then
+            echo "The recipe and the boot log must both be on the setup branch."
+            exit 1
+          fi
+          bsf sandbox secrets --file "$recipe"
+          met=$(jq -r '.reached == .claimed' "$trial")
+          if [ "$met" != "true" ]; then
+            echo "The boot did not meet the finish line. Do not open the pull request."
+            exit 1
+          fi
+          bsf sandbox freeze --rounds "$recipe:$trial" --out "$RUNNER_TEMP/manifest.json"
+          bsf sandbox secrets --file "$RUNNER_TEMP/manifest.json"
+          mkdir -p .factory/sandbox
+          cp "$RUNNER_TEMP/manifest.json" .factory/sandbox/manifest.json
+          if [ -d .factory/setup-state/stubs ]; then rm -rf .factory/sandbox/stubs; cp -R .factory/setup-state/stubs .factory/sandbox/stubs; fi
+          branch="factory/setup-${GITHUB_RUN_ID}"
+          git checkout -b "$branch"
+          git add .factory/sandbox
+          git -c user.email="41898282+github-actions[bot]@users.noreply.github.com" -c user.name="github-actions[bot]" commit -m "Set up the software factory"
+          git push origin "HEAD:$branch"
+          gh pr create --title "Set up the software factory" --body "The private copy met the finish line. The recipe is on this branch and contains no pasted passwords." --base "${{ github.event.repository.default_branch }}"

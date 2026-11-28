@@ -10,6 +10,7 @@ import { dirname, join } from "node:path";
 import { resolveRead } from "../lib/config.js";
 import { validate } from "../lib/schema.js";
 import { SUPERVISOR_SOURCE } from "./supervisor-source.js";
+import { bootProblems } from "./boot-checks.js";
 
 /**
  * `bsf sandbox start` — bring up the frozen sandbox for a role.
@@ -471,6 +472,10 @@ export async function trialSandbox(opts: {
 
   const { env, missing } = sandboxEnv(m, opts.secretBlob);
   const runEnv = { ...shellBase(), ...env };
+  const problems = bootProblems(m, opts.workspace, parseDotenv(opts.secretBlob ?? ""));
+  if (problems.length > 0) {
+    steps.push({ step: "install", command: null, ok: false, exit: null, seconds: 0, tail: problems.join("\n") });
+  }
 
   const run = (step: StepOutcome["step"], command: string | null): boolean => {
     if (command === null) {
@@ -492,7 +497,7 @@ export async function trialSandbox(opts: {
 
   if (missing.length > 0) {
     steps.push({ step: "install", command: null, ok: false, exit: null, seconds: 0, tail: `values not set: ${missing.join(", ")}` });
-  } else {
+  } else if (steps.every((s) => s.ok)) {
     for (const svc of m.services) {
       clearContainer(`bsf-${svc.name}`);
       const args = ["run", "-d", "--rm", "--name", `bsf-${svc.name}`, "-p", `127.0.0.1:${svc.port}:${svc.port}`];
