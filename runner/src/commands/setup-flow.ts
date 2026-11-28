@@ -7,7 +7,9 @@
  *     earlier work was redone. This copies the step's files into
  *     .factory/setup-state, which is committed on the branch factory/setup-state.
  *     Secret values are not copied. A recipe that pastes a password is refused
- *     and left uncopied.
+ *     and left uncopied. A journey list that drops a heading already on the
+ *     finish line is not copied over the saved list. The rest of the step,
+ *     including the recipe, is still saved. The writer cannot delete a journey.
  *
  * Key terms:
  *     - Setup state: the files earlier steps already produced. Journeys,
@@ -17,9 +19,11 @@
  *
  * Exports:
  *     - publishSetupStep: copy the allowlisted files, or report why not.
+ *     - PublishResult: the paths copied, and the journey note when a heading
+ *       was restored.
  */
 
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { pastedSecrets } from "../lib/placeholders.js";
 import { deletedJourneyProblem } from "./boot-checks.js";
@@ -36,17 +40,27 @@ const ALLOWED = new Set([
   "journeys.done",
 ]);
 
+export interface PublishResult {
+  readonly copied: readonly string[];
+  /**
+   * Set when the incoming journey list dropped a finish-line heading.
+   * The saved list was kept. The recipe was still copied.
+   */
+  readonly journeysKept: string | null;
+}
+
 /**
  * Copy one step's files into the setup-state directory.
  *
  * from: the directory the step wrote (an artifact download).
  * into: the setup-state directory in the checkout, usually
  * .factory/setup-state. Created if needed.
- * Returns the relative paths copied. Throws when the recipe pastes a
- * password, or when the incoming journey list drops a heading the previous
- * list had. Nothing is copied in those cases.
+ * Returns the paths copied. Throws when the recipe pastes a password, and
+ * then nothing is copied. When the incoming journey list drops a heading
+ * the saved list had, that file is not copied and the saved list stays.
+ * A heading the writer added, which the saved list did not have, is appended.
  */
-export function publishSetupStep(from: string, into: string): string[] {
+export function publishSetupStep(from: string, into: string): PublishResult {
   if (!existsSync(from)) throw new Error(`${from} does not exist`);
   const manifest = join(from, "manifest.json");
   if (existsSync(manifest)) {
@@ -56,10 +70,16 @@ export function publishSetupStep(from: string, into: string): string[] {
   }
   const incomingJourneys = join(from, "context", "journeys.md");
   const existingJourneys = join(into, "context", "journeys.md");
+  let journeysKept: string | null = null;
+  let journeysFile: string | null = null;
   if (existsSync(incomingJourneys) && existsSync(existingJourneys)) {
-    const original = finishLineJourneys(readFileSync(existingJourneys, "utf8"));
-    const problem = deletedJourneyProblem(original, readFileSync(incomingJourneys, "utf8"));
-    if (problem !== null) throw new Error(problem);
+    const originalText = readFileSync(existingJourneys, "utf8");
+    const incomingText = readFileSync(incomingJourneys, "utf8");
+    const problem = deletedJourneyProblem(finishLineJourneys(originalText), incomingText);
+    if (problem !== null) {
+      journeysKept = `${problem}. The saved journey list was kept.`;
+      journeysFile = withAddedJourneys(originalText, incomingText);
+    }
   }
   const copied: string[] = [];
   const walk = (dir: string): void => {
@@ -67,6 +87,7 @@ export function publishSetupStep(from: string, into: string): string[] {
       if (name === ".env" || name.startsWith(".env.")) continue;
       const path = join(dir, name);
       const rel = relative(from, path).replace(/\\/g, "/");
+      if (rel === "context/journeys.md" && journeysKept !== null) continue;
       const info = statSync(path);
       if (info.isDirectory()) {
         if (rel === "context" || rel === "stubs" || rel === "report" || rel.startsWith("context/") || rel.startsWith("stubs/") || rel.startsWith("report/")) walk(path);
@@ -82,5 +103,54 @@ export function publishSetupStep(from: string, into: string): string[] {
     }
   };
   walk(from);
-  return copied.sort();
+  if (journeysFile !== null) {
+    mkdirSync(join(into, "context"), { recursive: true });
+    writeFileSync(existingJourneys, journeysFile);
+    copied.push("context/journeys.md");
+  }
+  return { copied: copied.sort(), journeysKept };
+}
+
+/**
+ * The saved journey list, plus any heading the writer added.
+ *
+ * original: the journey list already on the finish line.
+ * incoming: the list the writer produced, which dropped at least one heading.
+ * Returns the original text, with each new incoming section appended. A
+ * renamed heading is not treated as the old one. The old section stays.
+ */
+function withAddedJourneys(original: string, incoming: string): string {
+  const had = new Set(finishLineJourneys(original).map((h) => h.toLowerCase()));
+  const added = sectionBlocks(incoming).filter((block) => !had.has(block.heading.toLowerCase()));
+  if (added.length === 0) return original.endsWith("\n") ? original : `${original}\n`;
+  const base = original.endsWith("\n") ? original : `${original}\n`;
+  return `${base}\n${added.map((block) => block.text).join("\n\n")}\n`;
+}
+
+/**
+ * One level-two section, heading plus the lines under it.
+ *
+ * markdown: a journey list.
+ * Returns each ## section. The text before the first heading is left out.
+ */
+function sectionBlocks(markdown: string): readonly { readonly heading: string; readonly text: string }[] {
+  const blocks: { heading: string; text: string }[] = [];
+  let heading: string | null = null;
+  let lines: string[] = [];
+  const flush = (): void => {
+    if (heading === null) return;
+    blocks.push({ heading, text: [`## ${heading}`, ...lines].join("\n").trimEnd() });
+  };
+  for (const line of markdown.split(/\r?\n/)) {
+    const match = /^##\s+(.+?)\s*$/.exec(line);
+    if (match?.[1] !== undefined) {
+      flush();
+      heading = match[1].trim();
+      lines = [];
+      continue;
+    }
+    if (heading !== null) lines.push(line);
+  }
+  flush();
+  return blocks;
 }
