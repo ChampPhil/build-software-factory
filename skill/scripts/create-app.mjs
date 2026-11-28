@@ -14,10 +14,11 @@
  *   4. Store them on the repo, and send the user to install the App.
  *
  * Step 2 needs something listening, so this starts a local server and prints
- * one localhost link. It does not open a browser. The person opens that link
- * once, and the page posts the manifest to GitHub. A second request for the
- * same link gets a page that posts nothing: a second post is what makes
- * GitHub say it could not find the manifest. After Create, GitHub redirects
+ * one localhost link. It does not open a browser. Every open of that link
+ * posts the manifest to GitHub, so each open is a Create page. The person
+ * presses Create on one of them. GitHub's "could not find the manifest"
+ * page is a visit to GitHub's own address with no form, not a second open
+ * of this link. After Create, GitHub redirects
  * the same tab back here, and this server redirects that same tab to the
  * install page. It does not open the install page in a new tab. All three
  * steps must finish within an hour.
@@ -290,28 +291,6 @@ function errorPage(message) {
   });
 }
 
-/**
- * The page a second visit to the start address gets.
- *
- * GitHub accepts the app manifest only as the body of one form POST. A
- * second tab that submits that form again, or that opens GitHub's create
- * address without the body, is the tab that says the manifest could not be
- * found. This page submits nothing, so the extra tab stays on this computer.
- *
- * @returns {string} HTML telling the person to use the tab already open.
- */
-function alreadySentPage() {
-  return statusPage({
-    ok: true,
-    chip: "Already open",
-    heading: "Use the tab already open",
-    body:
-      "<p>This address was already opened. Opening it again does not send another manifest.</p>" +
-      "<p>Go back to the GitHub tab and press <strong>Create GitHub App</strong>. " +
-      "If you closed that tab, stop this script and run it again, then open the new link once.</p>",
-  });
-}
-
 /* ------------------------------------------------- installing, and checking it */
 
 /**
@@ -509,22 +488,14 @@ function runFlow({ manifest, state, args, kind }) {
       installed = r;
     });
 
-    // The manifest form is served once. A later GET of the same address is how
-    // a reminder click, or a second paste of the link, used to submit a second
-    // manifest and leave GitHub's "could not find the manifest" tab beside the
-    // real one.
-    let startServed = false;
-
+    // Every open posts the manifest. A second open is another Create page,
+    // and the person presses Create on one of them. A download of this
+    // address does not press Create, so it must not be the only chance.
     const server = createServer(async (req, res) => {
       const url = new URL(req.url, `http://localhost:${args.port}`);
 
       if (url.pathname === "/" || url.pathname === "/start") {
         res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-        if (startServed) {
-          res.end(alreadySentPage());
-          return;
-        }
-        startServed = true;
         res.end(postPage({ manifest, state, org: args.org }));
         return;
       }
@@ -617,9 +588,9 @@ function runFlow({ manifest, state, args, kind }) {
       for (const [k, v] of Object.entries(manifest.default_permissions)) log(`    ${k}: ${v}`);
       if (!args.recompiler) log("    workflows: not requested — so it can never edit your gates");
       log("");
-      // Print the link. Do not open a tab: the person opens this once, and a
-      // second open is the manifest error page.
-      log(`  Open this link once and press Create GitHub App. This script does not open a tab:\n    ${start}`);
+      // Print the link. Do not open a tab. Opening it again is another
+      // Create page. The person presses Create on one of them.
+      log(`  Open this link and press Create GitHub App. Opening it again is fine. This script does not open a tab:\n    ${start}`);
       log("");
       log("  Waiting… (GitHub's manifest flow expires after an hour)");
     });

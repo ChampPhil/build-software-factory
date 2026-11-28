@@ -114,13 +114,13 @@ The chores, in this order:
 2. **Create the GitHub App.** Run
    `node scripts/create-app.mjs --repo <owner>/<repo>`
    in the background. It prints one link and does not open a browser. Put
-   that link in the message once. They open it and press **Create**. You
-   do not. If the script says the GitHub CLI cannot reach the API, run it
+   that link in the message. They open it and press **Create**. You
+   do not. Opening the link again goes to the Create page again. They
+   press **Create** on one of those tabs. Do not download the link to
+   check it. If the script says the GitHub CLI cannot reach the API, run it
    again. A signed-in `gh` is enough; the next call usually works. Do not
-   send the link again while the script is still waiting. A
-   reminder says to use the tab already open, and does not include the
-   link. A second open is the page that says the manifest could not be
-   found.
+   start a second copy of the script while the first is still waiting.
+   Only one can listen.
 3. **Install it on this repository only.** After they press **Create**,
    that same tab moves to the install page. The page is already on **Only
    select repositories**, with this repository selected. They press

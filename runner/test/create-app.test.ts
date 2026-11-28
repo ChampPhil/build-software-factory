@@ -54,8 +54,8 @@ async function startServer(): Promise<void> {
   for (let i = 0; i < 40; i++) {
     await new Promise((r) => setTimeout(r, 150));
     try {
-      // /nope, not /start. The start page is served once; this probe must
-      // not use up that one response before the assertions read it.
+      // /nope, not /start. The readiness check must not be a visit to the
+      // page the person opens.
       const res = await fetch(`http://localhost:${PORT}/nope`, { redirect: "manual" });
       if (res.status === 404) return;
     } catch { /* not up yet */ }
@@ -178,12 +178,12 @@ describe("create-app.mjs local server", () => {
     expect(formBody).not.toContain("&quot;workflows&quot;");
   });
 
-  it("a second visit does not send another manifest", async () => {
+  it("a second visit sends the manifest again", async () => {
     const res = await get("/start");
     expect(res.status).toBe(200);
-    expect(res.body).not.toContain('name="manifest"');
-    expect(res.body).toContain("Use the tab already open");
-    expect(res.body).toContain("does not send another manifest");
+    expect(res.body).toContain('name="manifest"');
+    expect(res.body).toContain('action="https://github.com/settings/apps/new"');
+    expect(res.body).not.toContain("Use the tab already open");
   });
 
   it("404s an unknown path", async () => {
