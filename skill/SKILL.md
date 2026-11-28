@@ -138,13 +138,13 @@ resumes when the app is installed.
    `FACTORY_SANDBOX_ENV`. They paste their whole local env file there, not in
    the chat. Agents cannot see the values. Run
    `node scripts/env-screen.mjs --development --repo <owner>/<repo>`
-   in the background. When every name the code reads is already in a local
-   env file, the script saves that file as the secret and exits 0. It does
-   not ask, and it does not mark anything to fake. When it exits 2, it has
-   printed names only. For each of those names they choose use it, fake it,
-   or ignore this key. Use it means the value is in the env file they paste
-   into the secret. Fake it is for a real production credential. Ignore this
-   key means the name is not an app setting, and the factory remembers that.
+   in the background. It saves the local env files as the secret. It does
+   not ask, and it does not mark anything to fake. A name the code reads
+   that is not in those files is ignored and remembered. The settings screen
+   can undo that later. Use it means the value is in the env file they paste
+   into the secret. Fake it is for a real production credential, and this
+   flag does not choose it. Ignore this key means the name is not an app
+   setting this development environment uses.
    A journey that logs in on someone else's site is on this screen too. They
    connect the test account once, or paste the token that vendor gives for
    tests. If they skip it, that journey comes off the finish line. The rest
