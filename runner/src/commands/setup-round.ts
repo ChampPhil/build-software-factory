@@ -303,7 +303,7 @@ export function savedJourneys(stateDir: string | null, root: string): readonly J
     if (!existsSync(path)) continue;
     try {
       const parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<JourneysFile>;
-      if (Array.isArray(parsed.journeys)) return parsed.journeys;
+      if (parsed.journeys !== undefined) return parsed.journeys;
     } catch { /* unreadable: try the next place */ }
   }
   const markdown = join(root, ".factory/definition/context/journeys.md");

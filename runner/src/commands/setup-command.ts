@@ -62,7 +62,10 @@ const USAGE = [
  * stopped or the command line is wrong.
  */
 export async function setupCommand(second: string | undefined, args: Record<string, string | boolean>): Promise<number> {
-  const text = (name: string): string => (typeof args[name] === "string" ? (args[name] as string) : "");
+  const text = (name: string): string => {
+    const value = args[name];
+    return typeof value === "string" ? value : "";
+  };
   const root = text("root") === "" ? process.cwd() : text("root");
 
   if (second === "submit") {
