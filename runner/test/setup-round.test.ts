@@ -77,6 +77,37 @@ describe("checkRound", () => {
     expect(readFileSync(join(state, "keep.txt"), "utf8")).toBe("keep\n");
   });
 
+  it("refuses a recipe that omits a name the browser bundle reads", () => {
+    const { dir } = round();
+    writeFileSync(join(dir, "app.ts"), 'const k = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY_FOR_ISSUING_MARKETING_CARDS;\n');
+    writeFileSync(join(dir, "manifest.json"), JSON.stringify(manifest()));
+    writeFileSync(join(dir, "recipe-journeys.json"), JSON.stringify({
+      schema: "recipe-journeys/1",
+      tests: { "See home": { how_the_sandbox_tests_it: "open /home", check: "home-page" } },
+    }));
+    const check = checkRound("recipe", dir, { root: dir, saved: [journey], skippedSignIn: [] });
+    expect(check.ok).toBe(false);
+    if (!check.ok) {
+      expect(check.code).toBe("shape");
+      expect(check.problems.join("\n")).toMatch(/NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY_FOR_ISSUING_MARKETING_CARDS/);
+    }
+  });
+
+  it("refuses a recipe that runs a thinner test than the repo already declares", () => {
+    const { dir } = round();
+    writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "app", scripts: { test: "vitest run" } }));
+    writeFileSync(join(dir, "manifest.json"), JSON.stringify(manifest({
+      commands: { install: "true", build: "true", run: "true", test: "vitest run src/one.test.ts" },
+    })));
+    writeFileSync(join(dir, "recipe-journeys.json"), JSON.stringify({
+      schema: "recipe-journeys/1",
+      tests: { "See home": { how_the_sandbox_tests_it: "open /home", check: "home-page" } },
+    }));
+    const check = checkRound("recipe", dir, { root: dir, saved: [journey], skippedSignIn: [] });
+    expect(check.ok).toBe(false);
+    if (!check.ok) expect(check.problems.join("\n")).toMatch(/thinner slice/);
+  });
+
   it("saves a valid journey list as JSON and as markdown", () => {
     const { dir, state } = round();
     writeFileSync(join(dir, "journeys.json"), JSON.stringify({ schema: "journeys/1", journeys: [journey] }));

@@ -346,7 +346,10 @@ A value that only the owner's machine can reach (`localhost`, `127.0.0.1` for
 something this boot did not start, a file on their disk, a Windows drive path)
 is replaced by something this boot starts. Names the browser bundle reads
 (`NEXT_PUBLIC_`, `VITE_`, `PUBLIC_`, `REACT_APP_`) are set for the build, not
-only for the server.
+only for the server. `bsf setup submit` refuses a recipe that omits those
+names, that runs a thinner test than the repo already declares, that starts
+a store with no seeded marker, or that invents a fake website. Correct those
+at submit. The boot does not skip install and then start the server.
 
 Do not open a vendor's login page and do not type into one. The boot uses the
 test token or the connection from the first screen. A page that is still

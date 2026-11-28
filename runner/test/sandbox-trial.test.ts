@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mkdtempSync, writeFileSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { trialSandbox, reachedTier } from "../src/commands/sandbox.js";
@@ -49,6 +49,25 @@ describe("a trial measures the tier; it does not take the manifest's word", () =
     expect(r.reached).toBe("renders");
     expect(r.app_status).toBe(200);
     expect(JSON.parse(readFileSync(out, "utf8")).reached).toBe("renders");
+  });
+
+  it("does not start the app when the recipe is not ready, so a skipped install is not a run miss", async () => {
+    const port = 44903;
+    const ran = "ran-without-install.txt";
+    const server = `node -e "require('fs').writeFileSync('${ran}','yes');require('http').createServer((q,r)=>{r.writeHead(200);r.end('ok')}).listen(${port},'127.0.0.1')"`;
+    const { dir, path, out } = setup(
+      manifest({
+        commands: { install: "true", build: OWN, run: server, test: "echo skip" },
+        app_url: `http://127.0.0.1:${port}/`,
+      }),
+    );
+    writeFileSync(join(dir, "app.ts"), 'process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY_FOR_ISSUING_MARKETING_CARDS;\n');
+    const r = await trialSandbox({ manifestPath: path, workspace: dir, out, appWaitMs: 3000, screenshot: () => true, log: () => {} });
+    expect(r.steps.find((s) => s.step === "install")?.ok).toBe(false);
+    expect(r.steps.find((s) => s.step === "install")?.tail).toMatch(/does not set them at build/);
+    expect(r.steps.find((s) => s.step === "run")).toBeUndefined();
+    expect(existsSync(join(dir, ran))).toBe(false);
+    expect(r.summary).not.toMatch(/the app did not answer|not proven:/);
   });
 
   it("starts the app when a test already failed, and names both", async () => {
