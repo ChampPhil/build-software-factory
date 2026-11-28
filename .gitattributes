@@ -1,3 +1,10 @@
+# Every text file is stored with LF and checked out with LF, on every machine.
+# Without this, a Windows checkout with core.autocrlf on rewrote whole files as
+# CRLF, a commit of one changed line showed thousands of changed lines, and
+# the tests that read these files saw `\r\n` on Linux. This line has to come
+# first: the rules below override it for the files that must stay as they are.
+* text=auto eol=lf
+
 # The Windows launcher is run by `cmd`, which mis-parses a batch file whose
 # lines end with LF alone — a line can end mid-token and the file silently does
 # the wrong thing. `-text` keeps the CRLF the bundler writes, on checkout and
