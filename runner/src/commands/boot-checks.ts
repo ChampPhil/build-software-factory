@@ -287,14 +287,18 @@ export function stubWithoutFake(manifest: SandboxManifest, fake: readonly string
  * A library, or a repo with no server, does not get a fake website.
  *
  * manifest: the recipe.
- * Returns a sentence when the recipe claims a rendered page but does not
- * actually start a server. Null when it starts one, or it claims only a
- * build and tests.
+ * Returns a sentence when the recipe starts a one-line file server instead
+ * of the repo's own server. Null when it does not start a server, or the
+ * start command is the repo's own.
  */
 export function fakeWebsiteProblem(manifest: SandboxManifest): string | null {
-  const server = manifest.commands.run != null && manifest.commands.run.trim() !== "" && (manifest.app_url ?? "") !== "";
-  if (server) return null;
-  if (manifest.tier === "renders") return "a repo with no server does not get a fake website; run its tests";
+  const run = (manifest.commands.run ?? "").trim();
+  if (run === "") return null;
+  // A one-line file server is a website the repo did not have. The repo's own
+  // start command is a real server, and a recipe with no server just runs tests.
+  if (/http\.server|npx serve\b|busybox httpd/i.test(run)) {
+    return "a repo with no server does not get a fake website; run its tests";
+  }
   return null;
 }
 

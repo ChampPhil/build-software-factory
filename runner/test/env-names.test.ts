@@ -48,6 +48,8 @@ describe("the boot checks", () => {
     } as unknown as SandboxManifest;
     expect(stubWithoutFake(manifest, [])).toContain("fake");
     expect(stubWithoutFake(manifest, null)).toBeNull();
-    expect(fakeWebsiteProblem(manifest)).toContain("fake website");
+    const invented = { ...manifest, commands: { ...manifest.commands, run: "python -m http.server 3000" } };
+    expect(fakeWebsiteProblem(invented)).toContain("fake website");
+    expect(fakeWebsiteProblem(manifest)).toBeNull();
   });
 });

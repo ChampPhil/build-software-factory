@@ -133,7 +133,7 @@ jobs:
 
   check:
     name: Keep the standard rules and start the recipe when the journeys are saved too
-    needs: [writer, save]
+    needs: [writer, writer-budget, save]
     if: always() && needs.writer.result != 'skipped'
     runs-on: ubuntu-latest
     steps:
