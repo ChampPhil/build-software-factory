@@ -2,11 +2,11 @@
 
 These are your notes. The person does not hear a phase number or a file name.
 
-The Anthropic secret, the development env secret `FACTORY_SANDBOX_ENV`, and
-the GitHub App were done at the start, before the long job. Do not ask for
-them again. If one is missing, that is the one chore, with a watch. Do not
-start or follow the long job until all three are true. A bootstrap pull
-request merging does not count.
+The Anthropic secret and the GitHub App were done at the start, before the
+long job. Do not ask for them again. If the secret is missing, or the app
+is not installed on this repository only, that is the one chore, with a
+watch. Do not start or follow the long job until both are true. A bootstrap
+pull request merging does not count.
 
 Set up everything the factory needs to record itself and measure its work from
 the first run.

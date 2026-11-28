@@ -146,10 +146,6 @@ jobs:
           echo "$RUNNER_TEMP/bsf" >> "$GITHUB_PATH"
           chmod +x "$RUNNER_TEMP/bsf/"*
           "$RUNNER_TEMP/bsf/bsf" --version
-      - name: Configuration names still waiting
-        env:
-          FACTORY_SANDBOX_ENV: ${{ secrets.FACTORY_SANDBOX_ENV }}
-        run: bsf env scan
       # Setup uses the builder's model: it reads code and writes working
       # configuration, which is the builder's kind of work.
       - name: Read each role's model from factory.yaml
@@ -208,16 +204,6 @@ jobs:
     secrets:
       FACTORY_APP_PRIVATE_KEY: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
 
-  save-journeys:
-    needs: [computer-0, computer-0-budget]
-    if: needs.computer-0.result == 'success'
-    permissions:
-      contents: write
-    uses: ./.github/workflows/factory-setup-save.yml
-    with:
-      artifact: setup-round-8
-    secrets: inherit
-
   # Computer B, beside Computer 0. The standard rules only.
   computer-b:
     name: Computer B. Proving the standard rules
@@ -249,16 +235,6 @@ jobs:
       ran: ${{ needs.computer-b.result == 'skipped' && 'false' || 'true' }}
     secrets:
       FACTORY_APP_PRIVATE_KEY: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
-
-  save-rules:
-    needs: [computer-b, computer-b-budget]
-    if: needs.computer-b.result == 'success'
-    permissions:
-      contents: write
-    uses: ./.github/workflows/factory-setup-save.yml
-    with:
-      artifact: setup-round-9
-    secrets: inherit
 
   publish-journeys:
     name: Computer 0. Handing the journey list to the private-copy computer
@@ -322,22 +298,9 @@ jobs:
     secrets:
       FACTORY_APP_PRIVATE_KEY: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
 
-  save-recipe:
-    needs: [design-1, design-1-budget]
-    if: always() && needs.design-1.result != 'skipped'
-    permissions:
-      contents: write
-    uses: ./.github/workflows/factory-setup-save.yml
-    with:
-      artifact: setup-round-1
-    secrets: inherit
-
   trial-1:
     name: Computer A. Booting the private copy and clicking the listed journeys
     needs: [design-1, design-1-budget]
-    # Saving the recipe is success. A writer that says it could not boot here
-    # must not cancel the trial.
-    if: always() && needs.design-1.result != 'skipped'
     uses: ./.github/workflows/factory-setup-trial.yml
     with:
       round: 1
@@ -380,7 +343,6 @@ jobs:
   trial-2:
     name: Computer A. Booting the private copy and clicking again
     needs: [design-2, design-2-budget]
-    if: always() && needs.design-2.result != 'skipped'
     uses: ./.github/workflows/factory-setup-trial.yml
     with:
       round: 2
@@ -423,7 +385,6 @@ jobs:
   trial-3:
     name: Computer A. Booting the private copy and clicking the last try
     needs: [design-3, design-3-budget]
-    if: always() && needs.design-3.result != 'skipped'
     uses: ./.github/workflows/factory-setup-trial.yml
     with:
       round: 3
@@ -509,7 +470,7 @@ jobs:
           # The agent invents plausible-looking values for the keys a sandbox
           # needs; a secret scanner cannot tell them from real ones and would
           # block this PR over a value that was never a secret.
-          bsf sandbox secrets --file .factory/sandbox/manifest.json
+          bsf sandbox scrub --file .factory/sandbox/manifest.json
           # Which files are the UI, so a video is asked for only when one changes.
           bsf sandbox ui-paths --file .factory/sandbox/manifest.json
           # Whether this repository can require checks, decided now so the dashboard's
