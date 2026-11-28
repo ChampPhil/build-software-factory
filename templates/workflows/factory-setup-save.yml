@@ -17,6 +17,9 @@ on:
         required: false
         default: ""
         type: string
+    secrets:
+      FACTORY_APP_PRIVATE_KEY:
+        required: true
     outputs:
       saved:
         description: The recipe was in the round
@@ -85,10 +88,10 @@ jobs:
           bsf setup publish --from "$RUNNER_TEMP/round" --into .factory/setup-state
           if [ "$MARKER" = "rules.done" ]; then
             if [ -f .factory/setup-state/guardrails.patch ] || [ -f .factory/setup-state/guardrails.json ]; then
-              echo done > .factory/setup-state/rules.done
+              echo "done" > .factory/setup-state/rules.done
             fi
           elif [ -n "$MARKER" ]; then
-            echo done > ".factory/setup-state/$MARKER"
+            echo "done" > ".factory/setup-state/$MARKER"
           fi
           if [ -f .factory/setup-state/manifest.json ]; then echo "saved=true" >> "$GITHUB_OUTPUT"; else echo "saved=false" >> "$GITHUB_OUTPUT"; fi
           git config user.name "factory[bot]"

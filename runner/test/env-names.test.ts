@@ -16,8 +16,9 @@ describe("the configuration scan", () => {
     writeFileSync(join(root, ".env.example"), "CLERK_SECRET_KEY=\nUSER=\n");
     const once = scanConfigNames(root);
     const twice = scanConfigNames(root);
-    expect(once.names.map((n) => n.name)).toEqual(twice.names.map((n) => n.name));
-    expect(once.names.some((n) => n.name === "CLERK_SECRET_KEY")).toBe(true);
+    const namesOf = (scan: { names: ReadonlyMap<string, string> }): string[] => [...scan.names.keys()].sort();
+    expect(namesOf(once)).toEqual(namesOf(twice));
+    expect(once.names.has("CLERK_SECRET_KEY")).toBe(true);
     expect(once.dynamic.length).toBe(1);
     const wait = buildWait(once, emptyDecisions(), new Set(["CLERK_SECRET_KEY"]), []);
     expect(wait.names.find((n) => n.name === "CLERK_SECRET_KEY")?.decision).toBe("use");
