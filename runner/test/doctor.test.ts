@@ -206,7 +206,7 @@ describe("what only the API can tell us", () => {
       repo: "owner/repo",
       get: async (path: string) => {
         if (path.includes("actions/secrets")) {
-          return over["secrets"] ?? { secrets: [{ name: "FACTORY_APP_PRIVATE_KEY" }, { name: "ANTHROPIC_API_KEY" }] };
+          return over["secrets"] ?? { secrets: [{ name: "FACTORY_APP_PRIVATE_KEY" }, { name: "ANTHROPIC_API_KEY" }, { name: "COPILOT_GITHUB_TOKEN" }] };
         }
         if (path.includes("actions/variables")) {
           return (
@@ -310,7 +310,7 @@ describe("requirements are read from the installed workflows", () => {
     // with them.
     // beforeEach has installed the templates into root.
     const r = referencedInWorkflows(root);
-    expect(r.secrets).toEqual(["ANTHROPIC_API_KEY", "FACTORY_APP_PRIVATE_KEY", "FACTORY_SANDBOX_ENV", "RECOMPILER_APP_PRIVATE_KEY"]);
+    expect(r.secrets).toEqual(["ANTHROPIC_API_KEY", "COPILOT_GITHUB_TOKEN", "FACTORY_APP_PRIVATE_KEY", "FACTORY_SANDBOX_ENV", "RECOMPILER_APP_PRIVATE_KEY"]);
     expect(r.vars).toEqual(["FACTORY_APP_CLIENT_ID", "RECOMPILER_APP_CLIENT_ID"]);
     expect(r.optionalVars).toEqual([]);
   });

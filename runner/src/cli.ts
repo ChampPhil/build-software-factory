@@ -303,7 +303,11 @@ const USAGE = `bsf ${VERSION} — Build Software Factory runner
   bsf sandbox secrets [--file PATH]  (refuse a recipe that pastes a password)
   bsf env scan [--root DIR] [--hold WORKFLOW] [--inputs JSON] [--names-file PATH]
   bsf env list [--root DIR] [--names-file PATH]
-  bsf env apply|resume|skipped [--root DIR]
+  bsf env apply [--root DIR]
+  bsf env resume [--root DIR]
+  bsf env skipped [--root DIR]
+  bsf journeys look
+  bsf guardrails require-zero [--file PATH]
   bsf setup publish --from DIR --into DIR
   bsf setup journeys --file PATH [--root DIR]
   bsf setup advance --from journeys|rules|recipe [--state DIR]

@@ -38,8 +38,12 @@ const topLevel = new Set(
  * word. Both forms count: `second === "static"` accepts it, and
  * `second !== "check"` rejects everything else, so "check" is the subcommand.
  */
+const commandSources = readdirSync(join(ROOT, "runner/src/commands"))
+  .filter((name) => name.endsWith(".ts"))
+  .map((name) => readFileSync(join(ROOT, "runner/src/commands", name), "utf8"))
+  .join("\n");
 const subcommands = new Set(
-  [...CLI.matchAll(/second [=!]== "([a-z][a-z-]*)"/g)].map((m) => m[1] as string),
+  [...`${CLI}\n${commandSources}`.matchAll(/second [=!]== "([a-z][a-z-]*)"/g)].map((m) => m[1] as string),
 );
 
 /** Every `bsf ...` invocation in every template. */

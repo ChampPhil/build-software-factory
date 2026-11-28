@@ -150,7 +150,7 @@ jobs:
 
   next:
     name: Boot the saved recipe
-    needs: [writer, save]
+    needs: [writer, writer-budget, save]
     if: always() && needs.writer.result != 'skipped'
     runs-on: ubuntu-latest
     steps:
