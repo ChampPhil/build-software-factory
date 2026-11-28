@@ -62,8 +62,12 @@ describe("bsf env apply", () => {
     writeFileSync(join(root, "src", "app.ts"), "const a = process.env.CLERK_SECRET_KEY;\nconst b = process.env.OTHER_KEY;\n");
     const prev = process.env["DECISIONS"];
     const resume = process.env["RESUME"];
+    const repo = process.env["GITHUB_REPOSITORY"];
     process.env["DECISIONS"] = JSON.stringify({ use: ["CLERK_SECRET_KEY"] });
     process.env["RESUME"] = "false";
+    // A local apply must not write the factory's data ref. CI sets
+    // GITHUB_REPOSITORY, which would send this fixture at GitHub.
+    delete process.env["GITHUB_REPOSITORY"];
     try {
       const code = await envCommand("apply", { root });
       expect(code).toBe(0);
@@ -72,6 +76,8 @@ describe("bsf env apply", () => {
       else process.env["DECISIONS"] = prev;
       if (resume === undefined) delete process.env["RESUME"];
       else process.env["RESUME"] = resume;
+      if (repo === undefined) delete process.env["GITHUB_REPOSITORY"];
+      else process.env["GITHUB_REPOSITORY"] = repo;
     }
   });
 });
