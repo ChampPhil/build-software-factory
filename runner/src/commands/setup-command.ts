@@ -74,8 +74,9 @@ function publishCommand(args: Record<string, string | boolean>): number {
     return 2;
   }
   try {
-    const copied = publishSetupStep(from, into);
-    process.stdout.write(copied.length === 0 ? "nothing to save\n" : `saved ${copied.join(", ")}\n`);
+    const result = publishSetupStep(from, into);
+    process.stdout.write(result.copied.length === 0 ? "nothing to save\n" : `saved ${result.copied.join(", ")}\n`);
+    if (result.journeysKept !== null) process.stderr.write(`${result.journeysKept}\n`);
     return 0;
   } catch (err) {
     process.stderr.write(`${(err as Error).message}\n`);

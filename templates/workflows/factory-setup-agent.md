@@ -287,8 +287,9 @@ the name in `episode` and do not invent the value. Do not install guardrails.
 text (it contains `How a person gets there`). Do these in order, and do not
 install guardrails:
 
-1. Read the journey list. Do not drop or shrink a journey to make the boot pass.
-   Deleting a heading does not get past the boot.
+1. Read the journey list. Copy each existing `##` heading exactly. Do not drop,
+   rename, or shrink a journey to make the boot pass. A heading you omit is
+   restored from the saved list, and the recipe is still saved.
 2. If the repo already has a way to start its local services, use that. Do not
    invent a second database beside the one the repo starts. `commands.seed`
    writes a marker into the empty store this boot creates, and one journey's
