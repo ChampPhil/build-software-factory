@@ -92,6 +92,12 @@ jobs:
               fi
             done
           fi
+          if [ -f .factory/definition/context/fundamentals.md ]; then
+            if ! bsf assess fundamentals --root .; then
+              bsf setup failed --step pr --summary "fundamentals.md copies the README or AGENTS.md" --retry factory-setup-recipe.yml --then pr
+              exit 1
+            fi
+          fi
           apply_guardrails() {
             local patch="$1"
             if [ ! -s "$patch" ]; then return 0; fi

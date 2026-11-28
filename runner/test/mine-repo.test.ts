@@ -164,8 +164,11 @@ describe("findReverts and findFixCommits", () => {
     const mining = await mineRepo(root);
     const sources = new Set(mining.asCorrections.map((c) => c.source));
     expect(sources).toContain("revert");
-    expect(sources).toContain("fix_commit");
     expect(sources).toContain("prose_rule");
+    // "fix: a was wrong" is evidence. It is not admitted as a correction
+    // until a classifier quotes a rule out of it.
+    expect(sources.has("fix_commit")).toBe(false);
+    expect(mining.fixes.length).toBeGreaterThan(0);
     // A revert is a decision already taken, so it does not go through the
     // classifier that scores a chat turn.
     const revert = mining.asCorrections.find((c) => c.source === "revert");

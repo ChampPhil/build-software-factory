@@ -282,8 +282,9 @@ export interface RepoMining {
 }
 
 /**
- * Everything the repository itself records, expressed in the same shape as a
- * mined session correction so one clustering pass covers all six sources.
+ * Reverts and written rules, in the same shape as a chat correction.
+ * Fix commits stay on `fixes`. A subject like "fix login" is evidence for
+ * the classifier, not a correction by itself.
  */
 export async function mineRepo(root: string, days = 365): Promise<RepoMining> {
   const [reverts, fixes] = await Promise.all([findReverts(root, days), findFixCommits(root)]);
@@ -299,17 +300,9 @@ export async function mineRepo(root: string, days = 365): Promise<RepoMining> {
       confidence: 0.9,
       signals: ["revert"],
     })),
-    // The subject alone, with no boilerplate prefix: the prefix's own words
-    // are shared by every fix, so prefixing them clustered all 44 fixes in
-    // gh-aw into one meaningless group.
-    ...fixes.map((f) => ({
-      text: f.subject,
-      source: "fix_commit",
-      session: f.commit.slice(0, 8),
-      at: f.at,
-      confidence: 0.6,
-      signals: ["fix_within_window"],
-    })),
+    // A fix subject such as "fix login" is evidence that something broke.
+    // It is not a rule. It stays on `fixes` for the survey and is offered
+    // to the classifier, which admits it only when the words state a rule.
     ...prose.map((p) => ({
       text: p.text,
       source: "prose_rule",
