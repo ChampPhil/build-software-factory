@@ -30,7 +30,11 @@
  *   - Brief: `amend.json` in the round, written before the writer starts. It
  *     names the focus and carries the saved journey list, so the writer's
  *     own check can be done without reaching outside the run.
- *   - Recipe: `manifest.json`, the sandbox definition.
+ *   - Recipe: `manifest.json`, the sandbox definition. For recipe,
+ *     one-journey, and amendment, `checkRound` also runs the static
+ *     recipe checks (thinner tests, client-bundle names, store marker,
+ *     fake website) so those fail at submit instead of after a boot that
+ *     skipped install and still started the server.
  *   - Check (of a journey): the name of a recipe dependency whose probe
  *     shows the journey was clicked (see `setup-shapes.ts`).
  *   - State folder: `.factory/setup-state/` on the branch
@@ -49,7 +53,7 @@ import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statS
 import { join } from "node:path";
 import { MAX_ATTEMPTS, readAttempts, readJsonAnswer, recordAttempt, shapeProblems, type Shape } from "../lib/structured.js";
 import { pastedSecrets } from "../lib/placeholders.js";
-import { appHasSignIn } from "./boot-checks.js";
+import { appHasSignIn, staticRecipeProblems } from "./boot-checks.js";
 import { loadManifestAt, type SandboxManifest } from "./sandbox.js";
 import type { SetupStep } from "./setup-record.js";
 import {
@@ -193,6 +197,8 @@ export function checkRound(focus: Focus, dir: string, ctx: RoundContext): RoundC
   if (loaded.kind === "invalid") return bad("shape", loaded.errors.map((e) => `manifest.json ${e}`));
   const pasted = pastedSecrets(loaded.manifest.env);
   if (pasted.length > 0) return bad("password-in-recipe", pasted);
+  const notReady = staticRecipeProblems(loaded.manifest, ctx.root);
+  if (notReady.length > 0) return bad("shape", notReady.map((p) => `manifest.json ${p}`));
   if (focus === "amendment") return { ok: true, journeys: null };
 
   if (focus === "recipe") {

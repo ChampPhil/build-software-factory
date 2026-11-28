@@ -22,7 +22,11 @@
  *       type into it.
  *
  * Exports:
- *     - bootProblems: every reason this recipe is not ready.
+ *     - staticRecipeProblems: reasons the recipe is not ready that need no
+ *       secret blob. The writer's `bsf setup submit` runs these so a missing
+ *       NEXT_PUBLIC name or a thinner test is refused before the boot.
+ *     - bootProblems: every reason this recipe is not ready, including the
+ *       ones that need the secret blob.
  *     - signedInJourneyProblem: the journey list is missing a sign-in.
  *     - vendorLoginWaiting: the page is still a vendor's login.
  *     - namesFromBootLog: a name the running app asked for and did not get,
@@ -303,6 +307,34 @@ export function fakeWebsiteProblem(manifest: SandboxManifest): string | null {
 }
 
 /**
+ * Reasons the recipe is not ready that can be seen without the secret blob.
+ *
+ * These are the checks a writer can correct from `bsf setup submit`: a
+ * thinner test than the repo already declares, a store with no seeded
+ * marker, a browser-bundle name missing from the recipe, or a fake
+ * website. The boot still runs `bootProblems`, which includes these plus
+ * the ones that need FACTORY_SANDBOX_ENV. Putting them on submit stops
+ * the boot from skipping install and then starting `next start` on a
+ * tree that was never built.
+ *
+ * manifest: the recipe.
+ * root: the checkout, for the declared test scripts and the client names.
+ * Returns one sentence per problem.
+ */
+export function staticRecipeProblems(manifest: SandboxManifest, root: string): readonly string[] {
+  const problems: string[] = [];
+  const thin = thinnerTest(repoTestCommands(root), manifest.commands.test);
+  if (thin !== null) problems.push(thin);
+  const marker = storeMarkerProblem(manifest);
+  if (marker !== null) problems.push(marker);
+  const client = clientBuildProblem(manifest, root);
+  if (client !== null) problems.push(client);
+  const site = fakeWebsiteProblem(manifest);
+  if (site !== null) problems.push(site);
+  return problems;
+}
+
+/**
  * Reasons the recipe is not ready to boot.
  *
  * manifest: the recipe.
@@ -319,19 +351,12 @@ export function bootProblems(
 ): readonly string[] {
   const problems: string[] = [];
   problems.push(...pastedSecrets(manifest.env));
-  const thin = thinnerTest(repoTestCommands(root), manifest.commands.test);
-  if (thin !== null) problems.push(thin);
+  problems.push(...staticRecipeProblems(manifest, root));
   const env = resolveNames(manifest, secret);
   const left = [...new Set([...localValuesLeft(secret, env), ...localValuesInConfig(root, secret)])];
   if (left.length > 0) problems.push(`these values only work on the person's computer and were not replaced: ${left.join(", ")}`);
-  const marker = storeMarkerProblem(manifest);
-  if (marker !== null) problems.push(marker);
-  const client = clientBuildProblem(manifest, root);
-  if (client !== null) problems.push(client);
   const stub = stubWithoutFake(manifest, fake);
   if (stub !== null) problems.push(stub);
-  const site = fakeWebsiteProblem(manifest);
-  if (site !== null) problems.push(site);
   return problems;
 }
 

@@ -498,10 +498,21 @@ export async function trialSandbox(opts: {
     return ok;
   };
 
-  if (missing.length > 0) {
-    steps.push({ step: "install", command: null, ok: false, exit: null, seconds: 0, tail: `values not set: ${missing.join(", ")}` });
-  } else if (problems.length > 0) {
-    steps.push({ step: "install", command: null, ok: false, exit: null, seconds: 0, tail: problems.join("\n") });
+  // Static recipe problems (thinner tests, missing NEXT_PUBLIC names) used
+  // to mark install failed and still start `commands.run`. The writer then
+  // spent the next round "fixing" `next start` with no `.next`, or
+  // `python -m uvicorn` with no packages, while the real miss sat in the
+  // install tail. Skip the listen when install never ran.
+  const skippedInstall = missing.length > 0 || problems.length > 0;
+  if (skippedInstall) {
+    steps.push({
+      step: "install",
+      command: null,
+      ok: false,
+      exit: null,
+      seconds: 0,
+      tail: missing.length > 0 ? `values not set: ${missing.join(", ")}` : problems.join("\n"),
+    });
   } else {
     for (const svc of m.services) {
       clearContainer(`bsf-${svc.name}`);
@@ -591,15 +602,15 @@ export async function trialSandbox(opts: {
     }
   }
 
-  // Start the app even when an earlier step failed. A red test used to
-  // skip the listen, so the next round could not tell a broken server from
-  // a test that was already wrong. Any HTTP status means a process answered.
+  // Start the app even when a test already failed, so the next writer can
+  // tell a broken server from a red suite. Do not start it when install
+  // never ran: `next start` on an unbuilt tree is not a signal about run.
   let appStatus: number | null = null;
   let shot: string | null = null;
   let signIn: { ok: boolean; detail: string } | undefined;
   let probes: readonly ProbeOutcome[] | undefined;
   const url = m.app_url ?? null;
-  if (m.commands.run !== null && url !== null) {
+  if (!skippedInstall && m.commands.run !== null && url !== null) {
     log(`trial run: ${m.commands.run}`);
     const child = spawn("bash", ["-c", m.commands.run], { cwd: opts.workspace, env: runEnv, detached: true });
     let output = "";
@@ -641,8 +652,10 @@ export async function trialSandbox(opts: {
     try { if (child.pid !== undefined) process.kill(-child.pid, "SIGTERM"); } catch { /* already gone */ }
   }
   // Declared but never reached, because the app did not answer: not proven.
-  if (m.sign_in !== undefined && signIn === undefined) signIn = { ok: false, detail: "the app did not answer, so no session was minted" };
-  if (probes === undefined && (m.dependencies ?? []).length > 0) {
+  // Skip this when install never ran: those sentences made the writer chase
+  // a dead server instead of the static recipe miss that skipped install.
+  if (!skippedInstall && m.sign_in !== undefined && signIn === undefined) signIn = { ok: false, detail: "the app did not answer, so no session was minted" };
+  if (!skippedInstall && probes === undefined && (m.dependencies ?? []).length > 0) {
     probes = (m.dependencies ?? []).map((d) => ({ dependency: d.name, path: d.probe?.path ?? "", signed_in: d.probe?.signed_in ?? false, ok: false, detail: "the app did not answer, so nothing was probed" }));
   }
 
@@ -671,7 +684,7 @@ export async function trialSandbox(opts: {
       ? `reached ${reached}${reached === m.tier ? ", as claimed" : `; the manifest claimed ${m.tier}`}`
       : `reached ${reached}: ${failedSteps.map((s) => `${s.step} failed${s.command === null ? "" : ` (${s.command})`}`).join("; ")}`;
   const listen =
-    m.commands.run === null || url === null
+    skippedInstall || m.commands.run === null || url === null
       ? ""
       : appStatus === null
         ? `; the app did not answer at ${url}`
