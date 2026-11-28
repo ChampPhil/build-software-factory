@@ -25,14 +25,13 @@ import { planUninstall, applyUninstall, formatPlan, removeLocalFactory, removeLo
 import { readBrainstorm, render as renderBrainstorm } from "./commands/brainstorm.js";
 import { byFileOf } from "./commands/gates.js";
 import { parseYaml } from "./lib/yaml.js";
-import type { CandidatesFile, Policy } from "./lib/types.js";
+import type { Policy } from "./lib/types.js";
 import { runDoctor, formatReport } from "./commands/doctor.js";
 import { findDashboard, serveDashboard } from "./commands/serve.js";
 import { checkConsistencyOutcomes } from "./commands/consistency.js";
 import { allFindings, describeOutcomes } from "./lib/applicability.js";
 import {
   submitContribution,
-  mergeContribution,
   type Contribution,
 } from "./commands/contribute.js";
 import {

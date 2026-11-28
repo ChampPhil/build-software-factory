@@ -96,9 +96,11 @@ jobs:
           HAS_APP_ID: ${{ vars.FACTORY_APP_CLIENT_ID != '' }}
           HAS_APP_KEY: ${{ secrets.FACTORY_APP_PRIVATE_KEY != '' }}
         run: |
-          echo "model=$HAS_MODEL" >> "$GITHUB_OUTPUT"
-          echo "app_id=$HAS_APP_ID" >> "$GITHUB_OUTPUT"
-          echo "app_key=$HAS_APP_KEY" >> "$GITHUB_OUTPUT"
+          {
+            echo "model=$HAS_MODEL"
+            echo "app_id=$HAS_APP_ID"
+            echo "app_key=$HAS_APP_KEY"
+          } >> "$GITHUB_OUTPUT"
       - name: Is the App installed and the model key set?
         id: doctor
         if: steps.finished.outputs.done != 'true'
@@ -138,7 +140,7 @@ jobs:
   start:
     name: Checking the settings
     needs: ready
-    if: needs.ready.outputs.ready == 'true' && vars.FACTORY_APP_CLIENT_ID != '' && secrets.FACTORY_APP_PRIVATE_KEY != '' && secrets.ANTHROPIC_API_KEY != ''
+    if: needs.ready.outputs.ready == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
