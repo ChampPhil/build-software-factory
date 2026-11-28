@@ -1,6 +1,6 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { describe, it, expect } from "vitest";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, existsSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, existsSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { createRequire } from "node:module";
@@ -63,7 +63,10 @@ describe("default factory.yaml", () => {
     // schema/factory.json, and `bsf models` on a user's machine reads the
     // copy inside skill/runner/runner.tgz.
     const dir = mkdtempSync(join(tmpdir(), "bsf-packed-schema-"));
-    execFileSync("tar", ["-xzf", join(ROOT, "skill/runner/runner.tgz"), "-C", dir, "schema"]);
+    // A relative archive path so GNU tar on Windows does not treat `C:` as a host.
+    const archive = join(dir, "runner.tgz");
+    copyFileSync(join(ROOT, "skill/runner/runner.tgz"), archive);
+    execFileSync("tar", ["-xzf", "runner.tgz", "schema"], { cwd: dir });
     const ajvMod = require("ajv/dist/2020.js") as { default?: new (opts: object) => AjvLike } | (new (opts: object) => AjvLike);
     const Ajv2020 = typeof ajvMod === "function" ? ajvMod : ajvMod.default;
     if (Ajv2020 === undefined) throw new Error("ajv did not export a constructor");
@@ -388,7 +391,7 @@ describe("trigger workflows", () => {
       "factory-garden.yml", "factory-gates.yml", "factory-intake.yml", "factory-journeys.yml", "factory-merge.yml",
       "factory-policy.yml", "factory-recompile.yml", "factory-review.yml", "factory-rollup.yml", "factory-run.yml",
       "factory-setup-boot.yml", "factory-setup-journeys.yml", "factory-setup-pr.yml", "factory-setup-recipe.yml",
-      "factory-setup-rules.yml", "factory-setup-save.yml", "factory-setup-trial.yml", "factory-setup.yml", "factory-sync.yml",
+      "factory-setup-rules.yml", "factory-setup-trial.yml", "factory-setup.yml", "factory-sync.yml",
     ];
     expect(readdirSync(WORKFLOWS).filter((f) => f.endsWith(".yml")).sort()).toEqual(expected);
   });
@@ -746,35 +749,16 @@ describe("the budget in the workflows", () => {
     }
   });
   it("a trial replaces the stubs folder instead of copying into it (an amendment's new stubs must land at the path the manifest names)", () => {
-    for (const f of ["factory-setup-trial.yml", "factory-setup-pr.yml"]) {
-      const text = readFileSync(join(TEMPLATES, "workflows", f), "utf8");
-      const copy = text.split("\n").find((l) => l.includes("cp -R") && l.toLowerCase().includes("design") && l.includes("/stubs"));
-      expect(copy, `${f} copies no stubs`).toBeDefined();
-      expect(copy, `${f} copies stubs without clearing the old folder first`).toMatch(/rm -rf \.factory\/sandbox\/stubs/);
-    }
+    const trial = readFileSync(join(TEMPLATES, "workflows", "factory-setup-trial.yml"), "utf8");
+    const copy = trial.split("\n").find((l) => l.includes("cp -R") && l.toLowerCase().includes("design") && l.includes("/stubs"));
+    expect(copy, "factory-setup-trial.yml copies no stubs").toBeDefined();
+    expect(copy, "factory-setup-trial.yml copies stubs without clearing the old folder first").toMatch(/rm -rf \.factory\/sandbox\/stubs/);
+    const pr = readFileSync(join(ROOT, "runner/src/commands/setup-pr.ts"), "utf8");
+    expect(pr).toMatch(/rmSync\(join\(root, "\.factory\/sandbox\/stubs"/);
   });
   it("a factory upgrade does not design setup again once a sandbox is frozen, but a manual run still can", () => {
-    const wf = parseYaml(readFileSync(join(TEMPLATES, "workflows/factory-setup.yml"), "utf8")) as {
-      jobs: { ready: { steps: { name?: string; id?: string; if?: string; run?: string }[] } };
-    };
-    const steps = wf.jobs.ready.steps;
-    const guard = steps.find((st) => st.id === "finished");
-    expect(guard, "no finished-check step").toBeDefined();
-    expect(guard?.if).toBe("github.event_name == 'push'");
-    for (const id of ["doctor"]) {
-      expect(steps.find((st) => st.id === id)?.if).toBe("steps.finished.outputs.done != 'true'");
-    }
-    const run = (withManifest: boolean): string => {
-      const dir = mkdtempSync(join(tmpdir(), "bsf-fin-"));
-      mkdirSync(join(dir, ".factory-trusted/.factory/sandbox"), { recursive: true });
-      if (withManifest) writeFileSync(join(dir, ".factory-trusted/.factory/sandbox/manifest.json"), "{}");
-      const out = join(dir, "out");
-      writeFileSync(out, "");
-      writeFileSync(join(dir, "summary"), "");
-      spawnSync("bash", ["-c", guard?.run ?? ""], { cwd: dir, env: { ...process.env, GITHUB_OUTPUT: out, GITHUB_STEP_SUMMARY: join(dir, "summary") } });
-      return readFileSync(out, "utf8");
-    };
-    expect(run(true)).toContain("done=true");
-    expect(run(false)).not.toContain("done=true");
+    const wf = readFileSync(join(TEMPLATES, "workflows/factory-setup.yml"), "utf8");
+    expect(wf).toContain("bsf setup ready --trusted .factory-trusted");
+    expect(wf).not.toMatch(/if: github\.event_name == 'push'/);
   });
 });

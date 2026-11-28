@@ -1,16 +1,12 @@
 # Setup starts here and hands each step its own workflow.
 #
 # The journey list and the standard rules run beside each other. The recipe
-# starts when both are saved. A failed step is started again on its own.
-# The same failure twice stops. This file does not write the recipe.
+# starts when both are saved. A failed step is started again on its own,
+# with the full reason. The same failure twice, or three failures in a row,
+# stops. This file does not write the recipe.
 name: factory-setup
 
 on:
-  # Merging the bootstrap PR is what starts this. It used to be dispatch-only,
-  # so after the merge nothing happened and the person had to go back to their
-  # agent and tell it to carry on — twice over, once here and once after the
-  # App install. A merge is an event; there is no reason to wait for a human to
-  # relay it.
   push:
     branches: [main, master]
     paths:
@@ -32,17 +28,10 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Is there anything to run with? The App and the model key arrive after the
-  # bootstrap PR is merged, so a push can land here before either exists. The
-  # failure then was a full agent run dying deep inside a reusable workflow on
-  # a missing secret — minutes of runner time and an error that named
-  # `workflow_call`, not the thing the person had not done yet. `bsf doctor`
-  # already knows how to ask; it takes seconds, and it says what is missing in
-  # words the person can act on.
   ready:
     runs-on: ubuntu-latest
     outputs:
-      ready: ${{ steps.doctor.outputs.ready }}
+      ready: ${{ steps.go.outputs.ready }}
     steps:
       - name: Fetch the factory runner from the default branch
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -56,89 +45,25 @@ jobs:
             .github/workflows
           sparse-checkout-cone-mode: false
           persist-credentials: false
-      # A push gets here when the runner or the definition changes, which
-      # includes every factory upgrade. Once a sandbox is frozen, setup has
-      # already happened: designing it again costs model credits for nothing
-      # and can replace a sandbox that works. Redoing it is a deliberate act
-      # (run factory-setup by hand), and a sandbox that needs to change goes
-      # through an amendment.
-      - name: Has setup already finished?
-        id: finished
-        if: github.event_name == 'push'
-        shell: bash
-        run: |
-          if [ -f .factory-trusted/.factory/sandbox/manifest.json ]; then
-            echo "done=true" >> "$GITHUB_OUTPUT"
-            {
-              echo "### Setup already finished"
-              echo
-              echo "This repository has a frozen sandbox, so a change to the factory's runner or"
-              echo "definition does not design it again. To redo setup on purpose, run"
-              echo "**factory-setup** from the Actions tab."
-            } >> "$GITHUB_STEP_SUMMARY"
-          fi
       - name: Put the trusted runner on PATH
-        if: steps.finished.outputs.done != 'true'
         shell: bash
         run: |
           mkdir -p "$RUNNER_TEMP/bsf"
           cp -R .factory-trusted/.factory/bin/. "$RUNNER_TEMP/bsf/"
           echo "$RUNNER_TEMP/bsf" >> "$GITHUB_PATH"
-      # The job token can read the checkout. It cannot list Actions secrets, so
-      # doctor records "could not be read" and would otherwise say nothing is
-      # broken. These three expressions are true or false only; the values
-      # never enter the script.
-      - name: Are the App and the model key present?
-        id: creds
-        if: steps.finished.outputs.done != 'true'
+          chmod +x "$RUNNER_TEMP/bsf/"*
+          "$RUNNER_TEMP/bsf/bsf" --version
+      - name: Can setup start?
+        id: go
         env:
+          GH_TOKEN: ${{ github.token }}
           HAS_MODEL: ${{ secrets.ANTHROPIC_API_KEY != '' }}
           HAS_APP_ID: ${{ vars.FACTORY_APP_CLIENT_ID != '' }}
           HAS_APP_KEY: ${{ secrets.FACTORY_APP_PRIVATE_KEY != '' }}
-        run: |
-          {
-            echo "model=$HAS_MODEL"
-            echo "app_id=$HAS_APP_ID"
-            echo "app_key=$HAS_APP_KEY"
-          } >> "$GITHUB_OUTPUT"
-      - name: Is the App installed and the model key set?
-        id: doctor
-        if: steps.finished.outputs.done != 'true'
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          HAS_MODEL: ${{ steps.creds.outputs.model }}
-          HAS_APP_ID: ${{ steps.creds.outputs.app_id }}
-          HAS_APP_KEY: ${{ steps.creds.outputs.app_key }}
-        run: |
-          missing=""
-          [ "$HAS_MODEL" = "true" ] || missing="${missing}"$'\n'"- \`ANTHROPIC_API_KEY\` is not set"
-          [ "$HAS_APP_ID" = "true" ] || missing="${missing}"$'\n'"- the GitHub App is not installed (\`FACTORY_APP_CLIENT_ID\`)"
-          [ "$HAS_APP_KEY" = "true" ] || missing="${missing}"$'\n'"- the GitHub App private key is not set (\`FACTORY_APP_PRIVATE_KEY\`)"
-          if [ -z "$missing" ] && bsf doctor --repo "$GITHUB_REPOSITORY" --root .factory-trusted --quiet; then
-            echo "ready=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "ready=false" >> "$GITHUB_OUTPUT"
-            {
-              echo "### Setup is waiting on you"
-              echo
-              echo "The factory's definition is on \`$GITHUB_REF_NAME\`, but it cannot run yet:"
-              echo
-              if [ -n "$missing" ]; then
-                echo "$missing"
-                echo
-              fi
-              bsf doctor --repo "$GITHUB_REPOSITORY" --root .factory-trusted || true
-              echo
-              echo "Finish those, then run **factory-setup** from the Actions tab — or just ask"
-              echo "your coding agent to carry on with the software factory setup."
-            } >> "$GITHUB_STEP_SUMMARY"
-          fi
+        run: bsf setup ready --trusted .factory-trusted
 
-  # Starts the journey list and the standard rules, or a repair of the recipe.
-  # It does not write the recipe and it does not boot it.
   start:
-    name: Checking the settings
+    name: Start setup
     needs: ready
     if: needs.ready.outputs.ready == 'true'
     runs-on: ubuntu-latest
@@ -162,6 +87,12 @@ jobs:
           echo "$RUNNER_TEMP/bsf" >> "$GITHUB_PATH"
           chmod +x "$RUNNER_TEMP/bsf/"*
           "$RUNNER_TEMP/bsf/bsf" --version
+      - name: Stop if the credentials this job needs are missing
+        env:
+          HAS_MODEL: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+          HAS_APP_ID: ${{ vars.FACTORY_APP_CLIENT_ID != '' }}
+          HAS_APP_KEY: ${{ secrets.FACTORY_APP_PRIVATE_KEY != '' }}
+        run: bsf credentials check --need app,model
       - name: Mint a token
         id: token
         uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1
@@ -173,39 +104,10 @@ jobs:
           permission-issues: write
           owner: ${{ github.repository_owner }}
           repositories: ${{ github.event.repository.name }}
-      - name: Settings still waiting
-        id: env
+      - name: Start the first steps
         env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
           FACTORY_SANDBOX_ENV: ${{ secrets.FACTORY_SANDBOX_ENV }}
-          GH_TOKEN: ${{ steps.token.outputs.token }}
           AMEND: ${{ inputs.amend }}
-        run: |
-          if [ -z "$AMEND" ]; then bsf setup reset; fi
-          inputs=$(jq -cn --arg amend "$AMEND" '{amend:$amend}')
-          if bsf env scan --hold factory-setup.yml --inputs "$inputs"; then
-            echo "ready=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "ready=false" >> "$GITHUB_OUTPUT"
-            {
-              echo "### Settings are waiting"
-              echo
-              echo "The dashboard has the list. Nothing starts until every name has an answer."
-            } >> "$GITHUB_STEP_SUMMARY"
-          fi
-      - name: Start the next step
-        if: steps.env.outputs.ready == 'true'
-        env:
-          GH_TOKEN: ${{ steps.token.outputs.token }}
-          AMEND: ${{ inputs.amend }}
-          REF: ${{ github.event.repository.default_branch }}
-        run: |
-          set -euo pipefail
-          if [ -n "$AMEND" ]; then
-            jq -n --arg ref "$REF" --arg amend "$AMEND" '{ref:$ref, inputs:{amend:$amend}}' \
-              | gh api -X POST "repos/${GITHUB_REPOSITORY}/actions/workflows/factory-setup-recipe.yml/dispatches" --input -
-          else
-            jq -n --arg ref "$REF" '{ref:$ref}' \
-              | gh api -X POST "repos/${GITHUB_REPOSITORY}/actions/workflows/factory-setup-journeys.yml/dispatches" --input -
-            jq -n --arg ref "$REF" '{ref:$ref}' \
-              | gh api -X POST "repos/${GITHUB_REPOSITORY}/actions/workflows/factory-setup-rules.yml/dispatches" --input -
-          fi
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: bsf setup start

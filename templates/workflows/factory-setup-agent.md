@@ -165,6 +165,12 @@ pre-agent-steps:
       echo "$RUNNER_TEMP/bsf" >> "$GITHUB_PATH"
       chmod +x "$RUNNER_TEMP/bsf/"*
       "$RUNNER_TEMP/bsf/bsf" --version
+  - name: Stop if the credentials this job needs are missing
+    env:
+      HAS_MODEL: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+      HAS_APP_ID: ${{ vars.FACTORY_APP_CLIENT_ID != '' }}
+      HAS_APP_KEY: ${{ secrets.FACTORY_APP_PRIVATE_KEY != '' }}
+    run: bsf credentials check --need app,model
   # The conventions this repository already writes down for agents. The setup
   # agent reads them so that fundamentals.md does not become a paraphrase of
   # AGENTS.md: the owners maintain theirs, nobody maintains a copy, and the
@@ -252,59 +258,78 @@ in the repo itself is kept.
 
 ## Which step you are
 
-Read `/tmp/gh-aw/agent/bsf/setup/amend.json` when it exists. It says which
-step you are. Do that step and do not do the others. Do not call
+Read `/tmp/gh-aw/agent/bsf/setup/amend.json`. It is JSON. Its `focus` field
+is which job you have. Do that job and do not do the others. Do not call
 `report_incomplete`. Saving the files is the job. If you could not boot the
 app, still write them and say what failed in `episode`.
 
-**The journey list** — the amend contains `"focus":"journeys"`. Write only
-`context/journeys.md`. The things a person does in this product, not every
-route and not the folder map (`feature-map.md` is a list of directories;
-this is not that). One `##` heading per journey, then these two lines:
+After you write the files this job asks for, you MUST run:
 
-- `How a person gets there:` the path they take.
-- `What proves it:` what on the screen or in the data shows it worked.
+```
+bsf setup submit --dir /tmp/gh-aw/agent/bsf/setup
+```
 
-An app with sign-in has a signed-in journey on that list. If the amend names
-a sign-in under `skipped_sign_in`, leave that vendor's journey off the list
-and do not add it back. Do not boot the app. Do not write `manifest.json`,
-stubs, or `guardrails.patch`. Ignore `previous/`.
+Exit 0 means accepted. Exit 1 lists what to correct; correct exactly those
+and run it again. You get three answers. Exit 2 means stop; do not change
+the files again.
 
-**The standard rules** — the amend contains `"focus":"standards"`. Install
-only the factory's standard rule pack, into the tools this repo already runs.
-Prove each rule on a bad example and a good one. Fix the violations those
-rules already report, in the same patch, until a count of them would be
-zero. Do not add rules taken from this repo's own patterns or from past
-corrections. Do not write the sandbox manifest. Ignore `previous/`.
+**The journey list** — `"focus":"journeys"`. Write only `journeys.json`:
 
-**One new journey** — `{"focus":"one-journey", ...}`. The existing launch must
-drive this one journey: seed it if the seed does not already, and add the
-clicks. Add the journey to `context/journeys.md`. Do not drop a journey that
-is already there. If it needs a new secret or a new outside account, write
-the name in `episode` and do not invent the value. Do not install guardrails.
+```json
+{"schema":"journeys/1","journeys":[{"name":"...","how_a_person_gets_there":"...","what_proves_it":"...","signed_in":false}]}
+```
 
-**The recipe** — anything else, including a journey list pasted as the amend
-text (it contains `How a person gets there`). Do these in order, and do not
-install guardrails:
+The things a person does in this product, not every route and not the folder
+map (`feature-map.md` is a list of directories; this is not that). `name` is
+one line of text, not a markdown heading. An app with sign-in has a journey
+with `"signed_in": true`. If the amend names a sign-in under
+`skipped_sign_in`, leave that vendor's journey off the list and do not add
+it back. Do not boot the app. Do not write `manifest.json`, stubs, or
+`guardrails.patch`. Ignore `previous/`.
 
-1. Read the journey list. Copy each existing `##` heading exactly. Do not drop,
-   rename, or shrink a journey to make the boot pass. A heading you omit is
-   restored from the saved list, and the recipe is still saved.
-2. If the repo already has a way to start its local services, use that. Do not
+**The standard rules** — `"focus":"standards"`. Write `guardrails.json`
+(`installed` and `skipped` arrays) and, when anything is installed,
+`guardrails.patch`. Install only the factory's standard rule pack, into the
+tools this repo already runs. Prove each rule on a bad example and a good
+one. Fix the violations those rules already report, in the same patch, until
+a count of them would be zero. Do not add rules taken from this repo's own
+patterns or from past corrections. Do not write the sandbox manifest. Ignore
+`previous/`.
+
+**One new journey** — `"focus":"one-journey"`. Write `manifest.json` and
+`new-journey.json` (`{"schema":"new-journey/1","journey":{...}}` with the
+four journey fields plus `how_the_sandbox_tests_it` and `check`). The
+existing launch must drive this one journey: seed it if the seed does not
+already, and add the clicks. Do not drop a journey that is already there. If
+it needs a new secret or a new outside account, write the name in `episode`
+and do not invent the value. Do not install guardrails.
+
+**The recipe** — `"focus":"recipe"`. Write `manifest.json` and
+`recipe-journeys.json`. The amend lists the saved journeys under `journeys`.
+`recipe-journeys.json` is `{"schema":"recipe-journeys/1","tests":{}}` with
+exactly one entry per saved journey name, each
+`{"how_the_sandbox_tests_it":"...","check":"..."}`. Do not drop, rename, or
+add a journey. `check` is the name of a `dependencies` entry whose probe
+shows the journey was clicked; empty only when this recipe starts no server.
+
+Then do these in order, and do not install guardrails:
+
+1. If the repo already has a way to start its local services, use that. Do not
    invent a second database beside the one the repo starts. `commands.seed`
    writes a marker into the empty store this boot creates, and one journey's
    probe shows that marker. An app with no stored data leaves `commands.seed`
    null. Bind the server to `127.0.0.1` and set `app_url` to that same host.
    Keep every `cd` in a subshell, as the launch rules below say.
-3. Under each journey, add `How the sandbox tests it:` the seed user, the
-   page, the click, and the side effect. Name a dependency after each journey,
-   so the boot can see that the journey was clicked.
-4. `commands.test` is the test script the repo already declares. If the repo
+2. `commands.test` is the test script the repo already declares. If the repo
    declares both a package test and pytest, run both. Do not narrow the
    command with `--`, `-k`, `-m`, `--filter`, or a path to one test file.
-5. A library, or a repo with no server, is finished when those tests run.
+3. A library, or a repo with no server, is finished when those tests run.
    Do not invent a website for it. Leave `commands.run` and `app_url` null
    and set `tier` to `build_and_test`.
+
+**An amendment** — `"focus":"amendment"`. Write `manifest.json`. Context files
+as needed. Do not install guardrails. The last failure, if any, is in the
+amend under `last_failure`.
 
 The app and the browser on the boot can reach the public internet. There is
 no list of allowed hosts. Leave `egress` empty. A local stand-in, and a hosts
@@ -331,6 +356,9 @@ waiting on a vendor login widget fails the boot.
 design. Read `trial.json` in the amend when it is there: it is the last boot.
 
 ## What to produce
+
+On the recipe, one-journey, and amendment jobs, also write these. The journey
+list and the standard rules jobs do not.
 
 1. **`context/feature-map.md`, `context/runbook.md`, `context/fundamentals.md`,
    `context/history.md`** — the templates for each are in

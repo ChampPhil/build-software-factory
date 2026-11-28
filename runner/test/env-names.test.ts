@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { fakeWebsiteProblem, namesFromBootLog, stubWithoutFake, thinnerTest, vendorLoginWaiting } from "../src/commands/boot-checks.js";
+import { envCommand } from "../src/commands/env-command.js";
 import { scanConfigNames } from "../src/commands/env-names.js";
 import { buildWait, emptyDecisions } from "../src/commands/env-state.js";
 import { looksLikePastedSecret } from "../src/lib/placeholders.js";
@@ -51,5 +52,32 @@ describe("the boot checks", () => {
     const invented = { ...manifest, commands: { ...manifest.commands, run: "python -m http.server 3000" } };
     expect(fakeWebsiteProblem(invented)).toContain("fake website");
     expect(fakeWebsiteProblem(manifest)).toBeNull();
+  });
+});
+
+describe("bsf env apply", () => {
+  it("exits 0 after the choices are saved, even when other names are still waiting", async () => {
+    const root = mkdtempSync(join(tmpdir(), "bsf-apply-"));
+    mkdirSync(join(root, "src"));
+    writeFileSync(join(root, "src", "app.ts"), "const a = process.env.CLERK_SECRET_KEY;\nconst b = process.env.OTHER_KEY;\n");
+    const prev = process.env["DECISIONS"];
+    const resume = process.env["RESUME"];
+    const repo = process.env["GITHUB_REPOSITORY"];
+    process.env["DECISIONS"] = JSON.stringify({ use: ["CLERK_SECRET_KEY"] });
+    process.env["RESUME"] = "false";
+    // A local apply must not write the factory's data ref. CI sets
+    // GITHUB_REPOSITORY, which would send this fixture at GitHub.
+    delete process.env["GITHUB_REPOSITORY"];
+    try {
+      const code = await envCommand("apply", { root });
+      expect(code).toBe(0);
+    } finally {
+      if (prev === undefined) delete process.env["DECISIONS"];
+      else process.env["DECISIONS"] = prev;
+      if (resume === undefined) delete process.env["RESUME"];
+      else process.env["RESUME"] = resume;
+      if (repo === undefined) delete process.env["GITHUB_REPOSITORY"];
+      else process.env["GITHUB_REPOSITORY"] = repo;
+    }
   });
 });

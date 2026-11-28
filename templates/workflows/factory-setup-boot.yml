@@ -23,7 +23,6 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: factory/setup-state
           fetch-depth: 0
           persist-credentials: false
       - name: Fetch the factory runner from the default branch
@@ -44,6 +43,11 @@ jobs:
           echo "$RUNNER_TEMP/bsf" >> "$GITHUB_PATH"
           chmod +x "$RUNNER_TEMP/bsf/"*
           "$RUNNER_TEMP/bsf/bsf" --version
+      - name: Stop if the credentials this job needs are missing
+        env:
+          HAS_APP_ID: ${{ vars.FACTORY_APP_CLIENT_ID != '' }}
+          HAS_APP_KEY: ${{ secrets.FACTORY_APP_PRIVATE_KEY != '' }}
+        run: bsf credentials check --need app
       - name: Mint a token
         id: token
         uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1
@@ -60,51 +64,4 @@ jobs:
           GH_TOKEN: ${{ steps.token.outputs.token }}
           FACTORY_SANDBOX_ENV: ${{ secrets.FACTORY_SANDBOX_ENV }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-        run: |
-          set -euo pipefail
-          sha=$(sha256sum .factory/setup-state/manifest.json | awk '{print $1}')
-          if ! bsf sandbox secrets --file .factory/setup-state/manifest.json; then
-            bsf setup failed --step boot --summary "a password is in the recipe $sha" --retry factory-setup-recipe.yml
-            exit 1
-          fi
-          old=""
-          if [ -f .factory/setup-state/booted.sha ]; then old=$(tr -d '[:space:]' < .factory/setup-state/booted.sha); fi
-          if [ "$old" = "$sha" ]; then
-            bsf setup failed --step boot --summary "this recipe was already booted $sha" --retry factory-setup-recipe.yml
-            exit 1
-          fi
-          mkdir -p "$RUNNER_TEMP/trial"
-          set +e
-          bsf sandbox trial --candidate .factory/setup-state/manifest.json --out "$RUNNER_TEMP/trial/trial.json"
-          set -e
-          if [ ! -f "$RUNNER_TEMP/trial/trial.json" ]; then
-            echo '{"schema":"sandbox-trial/1","claimed":"static","reached":"static","steps":[],"summary":"the boot produced no log"}' > "$RUNNER_TEMP/trial/trial.json"
-          fi
-          set +e
-          bsf setup judge --trial "$RUNNER_TEMP/trial/trial.json" --journeys .factory/setup-state/context/journeys.md --root "$GITHUB_WORKSPACE" --note "$RUNNER_TEMP/trial/note.json"
-          code=$?
-          set -e
-          if [ "$code" -eq 2 ]; then
-            DECISIONS=$(jq -c '{replace: .names}' "$RUNNER_TEMP/trial/note.json")
-            DECISIONS="$DECISIONS" RESUME=false bsf env apply
-            bsf env scan --hold factory-setup-boot.yml
-            exit 0
-          fi
-          printf '%s\n' "$sha" > .factory/setup-state/booted.sha
-          cp "$RUNNER_TEMP/trial/trial.json" .factory/setup-state/trial.json
-          git config user.name "factory[bot]"
-          git config user.email "factory[bot]@users.noreply.github.com"
-          git add .factory/setup-state/booted.sha .factory/setup-state/trial.json
-          if ! git diff --cached --quiet; then
-            git commit -q -m "Record the boot"
-            url="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-            git push "$url" HEAD:factory/setup-state
-          fi
-          if [ "$code" -eq 0 ]; then
-            gh api -X POST "repos/${GITHUB_REPOSITORY}/actions/workflows/factory-setup-pr.yml/dispatches" -f ref="$DEFAULT_BRANCH" >/dev/null
-            echo "the boot met the finish line"
-            exit 0
-          fi
-          summary=$(jq -r '.summary // "the boot did not meet the finish line"' "$RUNNER_TEMP/trial/trial.json")
-          bsf setup failed --step boot --summary "$summary $sha" --retry factory-setup-recipe.yml
-          exit 1
+        run: bsf setup boot

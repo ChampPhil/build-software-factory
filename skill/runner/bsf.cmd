@@ -2,7 +2,7 @@
 setlocal enableextensions
 set "HERE=%~dp0"
 if not defined TMPDIR set "TMPDIR=%TEMP%"
-set "CACHE=%TMPDIR%\bsf-b186da6abeec"
+set "CACHE=%TMPDIR%\bsf-3c7f9fe1ce8d"
 if exist "%CACHE%\bsf.mjs" goto run
 set "STAGE=%TMPDIR%\bsf-unpack.%RANDOM%%RANDOM%"
 mkdir "%STAGE%" >nul 2>&1

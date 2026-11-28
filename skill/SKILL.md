@@ -230,11 +230,16 @@ report_incomplete, tier, freeze, or a job id. A minute with no line means
 the watch is stuck. Start it again on the live run. Relaying the line is not the end of
 the turn: if the run has stopped, start the repair in that same turn.
 
-A failed step runs again on its own. Do not run `factory-setup.yml` again,
-and do not start the journey list again, to repair a later step. The step's
-own workflow starts the one retry. If a newer run of that step appears,
-follow it. If an open issue is titled "Setup stopped", stop. The same
-failure happened twice. Do not keep paying for the same boot.
+When you need to know where setup is, run `bsf setup status --repo OWNER/NAME`.
+It prints the current step, the last failure with its full reason, and what
+setup is waiting on. Do not guess from a job name.
+
+A failed step runs again on its own, and is given the full reason. Do not
+run `factory-setup.yml` again, and do not start the journey list again, to
+repair a later step. The step's own workflow starts the one retry. If a
+newer run of that step appears, follow it. If an open issue is titled
+"Setup stopped", stop. The same failure happened twice, or the step failed
+three times in a row. Do not keep paying for the same boot.
 
 | What failed | The one workflow to follow |
 | --- | --- |
