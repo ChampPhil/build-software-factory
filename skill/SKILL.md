@@ -145,6 +145,11 @@ resumes when the app is installed.
    or ignore this key. Use it means the value is in the env file they paste
    into the secret. Fake it is for a real production credential. Ignore this
    key means the name is not an app setting, and the factory remembers that.
+   Remember the choice before the long job. Ignore and fake are names only.
+   Set `DECISIONS` to JSON with those arrays, set `GITHUB_REPOSITORY` to the
+   repo, set `RESUME` to `false`, and run `bsf env apply`. Do not put a
+   value in that JSON. For use it, the value belongs in a local env file;
+   run the screen again so it saves that file. Do not print the file.
    A journey that logs in on someone else's site is on this screen too. They
    connect the test account once, or paste the token that vendor gives for
    tests. If they skip it, that journey comes off the finish line. The rest
