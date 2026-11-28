@@ -115,7 +115,9 @@ The chores, in this order:
    `node scripts/create-app.mjs --repo <owner>/<repo>`
    in the background. It prints one link and does not open a browser. Put
    that link in the message once. They open it and press **Create**. You
-   do not. Do not send the link again while the script is still waiting. A
+   do not. If the script says the GitHub CLI cannot reach the API, run it
+   again. A signed-in `gh` is enough; the next call usually works. Do not
+   send the link again while the script is still waiting. A
    reminder says to use the tab already open, and does not include the
    link. A second open is the page that says the manifest could not be
    found.
@@ -133,23 +135,50 @@ The chores, in this order:
 page. Do not use browser tools, computer use, or any automation on their
 desktop for this chore. They open the one link. The background loop
 resumes when the app is installed.
-4. **The development environment.** The private copy runs with a development
-   environment. Its credentials are what they paste into the GitHub secret
-   `FACTORY_SANDBOX_ENV`. They paste their whole local env file there, not in
-   the chat. Agents cannot see the values. Run
+4. **The development environment.** The private copy of the app runs on a
+   GitHub computer. It uses the env file the app already loads on their
+   machine. That file is stored as the GitHub secret `FACTORY_SANDBOX_ENV`.
+   They do not paste it in the chat. You cannot see the values. Run
    `node scripts/env-screen.mjs --development --repo <owner>/<repo>`
-   in the background. When every name the code reads is already in a local
-   env file, the script saves that file as the secret and exits 0. It does
-   not ask, and it does not mark anything to fake. When it exits 2, it has
-   printed names only. For each of those names they choose use it, fake it,
-   or ignore this key. Use it means the value is in the env file they paste
-   into the secret. Fake it is for a real production credential. Ignore this
-   key means the name is not an app setting, and the factory remembers that.
-   Remember the choice before the long job. Ignore and fake are names only.
-   Set `DECISIONS` to JSON with those arrays, set `GITHUB_REPOSITORY` to the
-   repo, set `RESUME` to `false`, and run `bsf env apply`. Do not put a
-   value in that JSON. For use it, the value belongs in a local env file;
-   run the screen again so it saves that file. Do not print the file.
+   in the background. Pass `--root` when you are not already in that
+   checkout.
+
+   When the script exits 0, every name the code reads was already in that
+   file, and the file is saved. Do not ask them to go through the names.
+   Do not replace any of those values with a stand-in. Continue.
+
+   When the script exits 2, the long job does not start. Do not invent a
+   value. Do not decide for them. Do not replace a value with a stand-in
+   on your own, and do not drop a name on your own. The script's words
+   (`missing`, and the choice names you record later) are for you. They
+   do not go in the message. Do not hand them a bare list.
+
+   Two asks, in this order, in everyday words.
+
+   First, the file you saved. One short paragraph, not a list of every
+   name in it. Say that the private copy uses the same env file their app
+   uses on this machine, that you saved it as `FACTORY_SANDBOX_ENV`, and
+   that you cannot see the values. Say you are treating every value in it
+   as a development setting. Ask them to name any one that is a real
+   production credential. Only that name gets a stand-in. If they say none
+   of them are production, leave every value as it is.
+
+   Second, the names the script printed, which are not in that file. Say
+   that the code looks these up and they are not in the env file, so the
+   private copy cannot start until each one is settled. Show the name and
+   the file it came from, then ask them to pick one of these for each name:
+   add the value to the same env file the app already uses, and do not
+   paste it in the chat; this is a real production credential, so the
+   private copy should use a stand-in for this name only; or the app does
+   not need this, so stop asking about it.
+
+   After they answer, remember it before the long job. A stand-in is
+   `fake` and "stop asking" is `ignore`, names only. Set `DECISIONS` to
+   JSON with those arrays, set `GITHUB_REPOSITORY` to the repo, set
+   `RESUME` to `false`, and run `bsf env apply`. Do not put a value in
+   that JSON, and do not say those words to them. A value they added
+   belongs in the local env file; run the screen again so it saves that
+   file. Do not print the file.
    A journey that logs in on someone else's site is on this screen too. They
    connect the test account once, or paste the token that vendor gives for
    tests. If they skip it, that journey comes off the finish line. The rest
@@ -172,8 +201,8 @@ Never write "you chose automatic merge" for them.
 
 The long GitHub setup job starts only after the secret exists, the
 development environment is saved, and the app is installed on this
-repository. A missing name that is neither used, faked, nor ignored means
-the job does not start. A bootstrap pull request merging must not
+repository. The job does not start while a name the code reads is still
+unsettled. A bootstrap pull request merging must not
 start that job. If a run appears because that pull request merged, and the
 secret or the app was not in place yet, that run has not started the job.
 Do not follow it. Do not treat its failure as the end. If that early run is
@@ -184,15 +213,21 @@ Start the job yourself only after both are true:
 gh workflow run factory-setup.yml
 ```
 
+The private copy is not finished until it has run on the GitHub computer,
+every journey still on the finish line has been clicked, the repository's
+own tests have run, and a pull request is open whose recipe contains no
+secret values. A library, or a repo with no server, is finished when its
+own tests have run. It does not get a made-up website.
+
 Before it starts, say what the long run will do, in everyday words: it
 lists the top journeys, builds a private copy and clicks those journeys,
 and checks the standard rules. Say a line will arrive every minute.
 
 The watch follows that live run, not an older one. Relay every line it
 prints, including a line that repeats the same step. Those lines are
-already everyday words. Do not add Computer 0, Computer A, Computer B, or
-any other name for the machines. A minute with no line means the watch is
-stuck. Start it again on the live run. Relaying the line is not the end of
+already everyday words. Do not add Computer 0, Computer A, Computer B,
+report_incomplete, tier, freeze, or a job id. A minute with no line means
+the watch is stuck. Start it again on the live run. Relaying the line is not the end of
 the turn: if the run has stopped, start the repair in that same turn.
 
 A failed step runs again on its own. Do not run `factory-setup.yml` again,
@@ -281,7 +316,8 @@ just so a check can see the recipe.
 | They do | You do |
 | --- | --- |
 | Paste `ANTHROPIC_API_KEY` on GitHub, not in the chat | Give them that one page, then watch for the secret |
-| Paste the local env file into `FACTORY_SANDBOX_ENV`, not in the chat | Run the screen. It does not print the values |
+| Paste the local env file into `FACTORY_SANDBOX_ENV`, not in the chat | Run the screen. It does not print the values. Values already in that file are development settings unless they say one is a production credential |
+| For a name the code reads that is not in that file: add the value to the file, say it is a production credential, or say the app does not need it | Ask that in everyday words, with the name and the file. Do not start the long job until they answer. Do not decide for them |
 | Press **Create**, then **Install**, on this repository only | Everything around it, via `scripts/create-app.mjs` |
 | Say if they want to merge setup's own pull requests by hand | Otherwise those merge on their own. The other pipelines wait for a person |
 | Merge a setup pull request, only if they said they would | Watch that pull request and wake when it merges |
@@ -348,6 +384,11 @@ on the person's own machine, and roughly half of them are on Windows.
 
 This is machine work, after they say yes. It is not part of the first
 message.
+
+Work in the checkout they already have. Do not clone a second copy of the
+repo. If a previous setup stopped partway through, uninstall it on this
+same checkout (`references/uninstalling.md`) and start again from a clean
+tree.
 
 Run `node scripts/preflight.mjs` and stop on anything it reports. It checks:
 a git repository on GitHub, `gh` signed in with admin rights, a clean tree
